@@ -22,10 +22,6 @@ That's what this does.
 
 ---
 
-https://github.com/user-attachments/assets/f3a181f8-52b9-4e18-a659-d753aa25b9b4
-
----
-
 ## Table of Contents
 
 - [Quick Start](#quick-start)
