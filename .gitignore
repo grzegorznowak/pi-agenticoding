@@ -141,3 +141,8 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Agenticoding local config (credentials, API keys)
+.chunkhound.json
+.chunkhound/
+.mcp.json
