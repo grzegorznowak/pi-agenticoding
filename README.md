@@ -79,7 +79,7 @@ The agent spawns a child with its own clean context, researches, and caches the 
 
 ### Spawn — isolate noise
 
-Delegate messy, exploratory work to an isolated child agent. The child has its own clean context, inherits your model and tools, and reports back condensed results. The parent stays focused.
+Delegate messy, exploratory work to an isolated child agent. The child has its own clean context, inherits your model and active tools except `handoff`, and only gets `spawn` when depth allows it. The parent stays focused.
 
 ```typescript
 // The agent calls spawn — you never see the child's messy exploration
@@ -90,7 +90,7 @@ spawn({
 // Returns: a concise summary. All intermediate noise stays in the child.
 ```
 
-- Max depth: 2 (parent → child → grandchild)
+- Max depth: 1 (parent → child only)
 - Real-time TUI rendering of the child session
 - Token cost and usage stats reported back
 - Ledger writes from children are visible to parent (same shared state)
@@ -182,6 +182,9 @@ interface AgenticodingState {
   lastContextPercent: number | null    // last reading from getContextUsage()
   pendingHandoff: { task, source } | null
   pendingRequestedHandoff: { direction, ... } | null
+  childSessions: Map<string, AgentSession>  // render handoff queue keyed by toolCallId
+  liveChildSessions: Map<string, AgentSession>  // live registry, including claimed sessions
+  childSessionEpoch: number             // increments on /new to invalidate stale child updates
 }
 ```
 
