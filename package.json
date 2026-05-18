@@ -1,0 +1,21 @@
+{
+  "name": "pi-agenticoding",
+  "version": "0.1.0",
+  "description": "Context management primitives for the pi coding agent — spawn, ledger, handoff",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/earendil-works/pi-agenticoding.git"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
