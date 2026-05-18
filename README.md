@@ -12,7 +12,6 @@
 ## Table of Contents
 
 - [Install](#install)
-- [30-Second Try](#30-second-try)
 - [What You Get](#what-you-get)
 - [The Problem](#the-problem)
 - [How It Works](#how-it-works)
