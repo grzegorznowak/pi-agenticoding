@@ -45,7 +45,21 @@ That's what this does.
 pi install npm:pi-agenticoding
 ```
 
-**2. You're done.**
+**2. Disable pi's built-in compaction.**
+
+Add this to `~/.pi/agent/settings.json` so handoff can manage context instead:
+
+```json
+{
+  "compaction": {
+    "enabled": false
+  }
+}
+```
+
+This prevents pi from silently compacting the conversation behind the agent's back, which interferes with handoff's deliberate context management. With compaction off, handoff is the only compaction mechanism — the agent stays in control of when and how context is trimmed.
+
+**3. You're done.**
 
 Your agent now has access to `spawn`, `ledger_add`, `ledger_get`, `ledger_list`, and `handoff` tools. The status bar will show context usage and ledger entry count.
 
