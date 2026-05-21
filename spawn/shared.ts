@@ -2,7 +2,6 @@ export type ThinkingValue = "off" | "minimal" | "low" | "medium" | "high" | "xhi
 export type SpawnOutcome = "running" | "success" | "aborted" | "error";
 
 export type SpawnResultDetails = {
-	depth: number;
 	model: string;
 	thinking: ThinkingValue;
 	truncated: boolean;

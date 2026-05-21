@@ -3,7 +3,7 @@
  *
  * Creates an isolated in-memory child AgentSession for focused subtask execution.
  * Children inherit the parent's model, thinking level, cwd, and ledger access.
- * Max nesting depth: 1 edge (parent → child only).
+ * Children do not inherit the spawn tool (recursion prevention).
  *
  * Spawn is context isolation, not a security boundary. Child agents are trusted
  * extensions of the parent and inherit parent authority by design.
@@ -39,7 +39,6 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-const MAX_SPAWN_DEPTH = 1;
 const CHILD_MAX_LINES = 2000;
 const CHILD_MAX_BYTES = 50 * 1024;
 
@@ -113,8 +112,7 @@ function truncateResult(text: string): { text: string; truncated: boolean } {
  * child custom tools defined here. Parent-only custom tools are intentionally
  * excluded so the child never advertises a tool it cannot execute.
  *
- * handoff never carries into children, and spawn is only re-added from
- * childTools when the current depth still allows nesting.
+ * handoff and spawn never carry into children.
  */
 function getInheritableParentToolNames(parentToolNames: string[], availableTools: Pick<ToolInfo, "name" | "sourceInfo">[]): string[] {
 	const activeToolNames = new Set(parentToolNames);
@@ -135,11 +133,11 @@ export function buildChildToolNames(
 	return [...new Set([...inheritedTools, ...childTools.map((tool) => tool.name)])];
 }
 
-// ── Shared spawn tool metadata (used by both parent and child tool definitions) ──
+// ── Spawn tool metadata ──
 
 const SPAWN_DESCRIPTION =
 	"Spawn an isolated child agent for a focused subtask. " +
-	"Child inherits parent model, thinking level, cwd, supported built-in tools, and shared ledger tools; spawn is only exposed when depth allows. " +
+	"Child inherits parent model, thinking level, cwd, supported built-in tools, and shared ledger tools; children cannot spawn further children. " +
 	"Reference ledger entries by name — child will ledger_get them on demand.";
 
 const SPAWN_PROMPT_SNIPPET = "Spawn a focused subtask agent";
@@ -168,85 +166,35 @@ const SPAWN_PARAMETERS = Type.Object({
 /**
  * Build the custom tool set for child agent sessions.
  *
- * Produces ledger tools (add/get/list) and conditionally includes the spawn
- * tool when currentDepth is below MAX_SPAWN_DEPTH. The spawn tool is omitted
- * at max depth to prevent the LLM from attempting illegal recursion.
+ * Produces ledger tools (add/get/list). Children do not receive the spawn
+ * tool to prevent the LLM from attempting recursion.
  *
  * All tools read/write the shared parent state so ledger entries are visible
  * across parent and child contexts.
- *
- * @param sessionFactory - Test seam for dependency-injecting createAgentSession.
  */
 export function createChildTools(
 	pi: ExtensionAPI,
 	state: AgenticodingState,
-	defaultThinking: ThinkingValue,
-	currentDepth: number,
-	sessionFactory: typeof createAgentSession = createAgentSession,
 	options?: { isStale?: () => boolean },
 ): ToolDefinition[] {
-	// Child sessions inherit only executable parent tools via
-	// buildChildToolNames(). Only built-in parent tools are carried through.
-	// handoff never carries into children, and spawn is only re-added here
-	// while depth allows it.
-
-	const childSpawnTool: ToolDefinition = {
-		name: "spawn",
-		label: "Spawn",
-		description: SPAWN_DESCRIPTION,
-		promptSnippet: SPAWN_PROMPT_SNIPPET,
-		promptGuidelines: SPAWN_PROMPT_GUIDELINES,
-		parameters: SPAWN_PARAMETERS,
-		async execute(
-			toolCallId: string,
-			params: { prompt: string; thinking?: ThinkingValue },
-			signal: AbortSignal | undefined,
-			onUpdate:
-				| ((result: {
-						content: { type: string; text: string }[];
-						details?: unknown;
-				  }) => void)
-				| undefined,
-			ctx: ExtensionContext,
-		) {
-			return executeSpawn(toolCallId, pi, ctx, state, params, signal, onUpdate, defaultThinking, currentDepth, sessionFactory);
-		},
-		renderCall: renderSpawnCall,
-		renderResult(result, { expanded }, theme, context) {
-			return renderSpawnResult(result, expanded, theme, context, state);
-		},
-	};
-
-	const childLedgerTools = createLedgerToolDefinitions(pi, state, { isStale: options?.isStale });
-
-	return [
-		...(currentDepth < MAX_SPAWN_DEPTH ? [childSpawnTool] : []),
-		...childLedgerTools,
-	];
+	return createLedgerToolDefinitions(pi, state, { isStale: options?.isStale });
 }
 
 
 
 // ── Shared spawn execution logic ──────────────────────────────────────
-// Used by both the parent-registered spawn tool and child custom spawn tools.
 
 /**
  * Creates an isolated child agent session, runs the given prompt, and returns
  * the result with usage stats.
  *
- * Errors (all thrown, not returned):
- *   - "Max spawn depth reached"          → currentDepth >= MAX_SPAWN_DEPTH
- *   - "No model configured..."           → ctx.model is undefined
- *   - "Child agent produced no output."  → no assistant text after prompt
+ * Error: "No model configured..." → ctx.model is undefined
  *
  * Side effects on state:
  *   - state.childSessions.set(toolCallId, session) on creation
  *   - state.liveChildSessions.set(toolCallId, session) on creation
  *   - both registries delete(toolCallId) on error and completion paths
  *
- * @param onUpdate - Callback that fires once after session creation with
- *   empty content + initial details (depth, model, thinking). Pi uses this
- *   to render the component before the child produces output.
  * @param sessionFactory - Test seam for mocking createAgentSession.
  */
 export async function executeSpawn(
@@ -263,12 +211,8 @@ export async function executeSpawn(
 		  }) => void)
 		| undefined,
 	defaultThinking: ThinkingValue,
-	currentDepth: number,
 	sessionFactory: typeof createAgentSession = createAgentSession,
 ) {
-	if (currentDepth >= MAX_SPAWN_DEPTH) {
-		throw new Error(`Max spawn depth (${MAX_SPAWN_DEPTH}) reached. Cannot spawn further children.`);
-	}
 
 	const childModel = ctx.model;
 	if (!childModel) {
@@ -276,7 +220,6 @@ export async function executeSpawn(
 	}
 
 	const childThinking: ThinkingValue = params.thinking ?? defaultThinking;
-	const depth = currentDepth + 1;
 
 	const listing = formatEntryList(state);
 	const ledgerListing = listing
@@ -285,7 +228,7 @@ export async function executeSpawn(
 	const fullPrompt =
 		`You are a focused child agent spawned by a parent agent. ` +
 		`You have the same authority as the parent. ` +
-		`You inherit the parent's supported built-in tools plus shared ledger tools, and spawn is only exposed when depth allows it. ` +
+		`Children cannot spawn further children. ` +
 		`Your result will be read by the parent, so be concise and complete.\n\n` +
 		`${ledgerListing}\n\n` +
 		`## Task\n\n${params.prompt}\n\n` +
@@ -296,7 +239,7 @@ export async function executeSpawn(
 	const modelRegistry = ModelRegistry.create(authStorage);
 	const childSessionEpoch = state.childSessionEpoch;
 	const isStale = () => state.childSessionEpoch !== childSessionEpoch;
-	const childTools = createChildTools(pi, state, childThinking, depth, sessionFactory, { isStale });
+	const childTools = createChildTools(pi, state, { isStale });
 	const parentToolNames = pi.getActiveTools();
 	const childToolNames = buildChildToolNames(parentToolNames, childTools, pi.getAllTools());
 
@@ -356,7 +299,6 @@ export async function executeSpawn(
 		onUpdate?.({
 			content: [],
 			details: {
-				depth,
 				model: childModel.id,
 				thinking: childThinking,
 				truncated: false,
@@ -420,7 +362,6 @@ export async function executeSpawn(
 	}
 
 	const details: SpawnResultDetails = {
-		depth,
 		model: childModel.id,
 		thinking: childThinking,
 		truncated,
@@ -475,7 +416,7 @@ export function registerSpawnTool(
 			ctx: ExtensionContext,
 		) {
 			const parentThinking: ThinkingValue = pi.getThinkingLevel();
-			return executeSpawn(_toolCallId, pi, ctx, state, params, signal, onUpdate, parentThinking, 0, sessionFactory);
+			return executeSpawn(_toolCallId, pi, ctx, state, params, signal, onUpdate, parentThinking, sessionFactory);
 		},
 
 		renderCall: renderSpawnCall,

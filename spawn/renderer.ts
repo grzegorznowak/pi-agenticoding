@@ -32,7 +32,7 @@ import {
 // ── Render-only constants ────────────────────────────────────────────
 
 const COLLAPSED_PREVIEW_MAX_LINES = 5;
-const INDENT_SPACES_PER_DEPTH = 4;
+const SPAWN_INDENT = 4;
 const PROMPT_PREVIEW_COLLAPSED_LINES = 3;
 const TOOL_RESULT_PREVIEW_CHARS = 60;
 const LIVE_TEXT_PREVIEW_CHARS = 80;
@@ -151,7 +151,7 @@ function safeKeyHint(action: string, fallback: string): string {
  *      live "last action" summary (tool name + result preview, or assistant
  *      text preview), 5-line preview of last assistant output when available,
  *      token/cost summary.
- *   2. Expanded view — full chat history with 4-space indent per depth level.
+ *   2. Expanded view — full chat history with 4-space indent.
  *   3. Session lifecycle — subscribes to child session events, streams tool
  *      executions and assistant messages in real time, maintains live action
  *      tracking via lastAction field updated on every event.
@@ -502,9 +502,8 @@ class NestedAgentSessionComponent extends Container {
 
 		// Identity line — distinguishes nested spawns in collapsed view
 		if (details) {
-			const depthLabel = details.depth > 0 ? `[depth ${details.depth}] ` : "";
 			lines.push(truncateToWidth(
-				color("dim", `${getOutcomeMarker(outcome)}${depthLabel}${details.model} • ${details.thinking}`),
+				color("dim", `${getOutcomeMarker(outcome)}${details.model} • ${details.thinking}`),
 				width,
 			));
 		}
@@ -554,14 +553,12 @@ class NestedAgentSessionComponent extends Container {
 
 	private renderExpanded(width: number): string[] {
 		// Renders children directly rather than via super.render() to apply
-		// depth-based indentation. Container.render() from pi-tui is a simple
+		// indentation. Container.render() from pi-tui is a simple
 		// passthrough (no layout/decoration) so this is equivalent. If it ever
 		// adds padding or inter-child spacing, switch to super.render() and
 		// post-process lines to add indentation.
-		const depth = this.details?.depth ?? 0;
-		const indent = depth * INDENT_SPACES_PER_DEPTH;
-		const childWidth = Math.max(1, width - indent);
-		const leftPad = " ".repeat(indent);
+		const childWidth = Math.max(1, width - SPAWN_INDENT);
+		const leftPad = " ".repeat(SPAWN_INDENT);
 		const lines: string[] = [];
 
 		// Show identity header when expanded — anchors which nested session this is
