@@ -193,7 +193,7 @@ interface AgenticodingState {
 <details>
 <summary><strong>Deep dive → ARCHITECTURE.md</strong></summary>
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for full module breakdown, tool schemas, lifecycle wiring, spawn depth tracking, and ledger rehydration algorithm.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full module breakdown, tool schemas, lifecycle wiring, spawn child-session lifecycle, and ledger rehydration algorithm.
 
 </details>
 
