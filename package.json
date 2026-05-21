@@ -6,7 +6,7 @@
   "keywords": ["pi-package"],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/earendil-works/pi-agenticoding.git"
+    "url": "git+https://github.com/agenticoding/pi-agenticoding.git"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

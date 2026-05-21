@@ -1,0 +1,85 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- **Microtask event batching** — rapid child session events are coalesced into a single parent invalidate per microtask boundary, preventing UI jank during bursty tool execution.
+- **Epoch-based invalidation** — the spawn renderer uses epoch counters rather than pointer comparison to detect stale sessions, making ownership checks reliable across session resets.
+
+## [0.1.0] - 2026-05-21
+
+### Added
+
+#### Context Management System Prompt
+
+- **Automatic system-prompt injection** — the LLM receives a context management primer at session start, teaching it how and when to use spawn, ledger, and handoff. No configuration needed.
+- **Live ledger listing in system prompt** — each session start injects the current ledger entries (name + first-line preview) so the agent always knows what stored knowledge is available without fetching blindly.
+
+#### Spawn — Isolate Subtasks in Clean Child Contexts
+
+- **`spawn` tool** — delegate isolated work to an in-memory child agent with its own clean context. The child inherits the parent's model, thinking level, working directory, and built-in tools. Only the condensed result is returned — no context pollution in the parent.
+- **Parallel execution** — siblings run concurrently; the parent orchestrates and merges results. Tested for independent concurrent spawns producing correct results.
+- **Child tool inheritance** — children receive ledger tools (add/get/list) and the parent's built-in tools, but never the spawn or handoff tools, preventing recursive nesting.
+- **Ledger-aware child prompts** — child sessions are told what ledger entries exist so they can fetch knowledge on demand without the parent pre-loading bodies.
+- **Child output truncation** — child results are limited to 2000 lines / 50KB to prevent runaway output from overwhelming the parent. Truncated results include an advisory message.
+- **Explicit model-required error** — spawn fails immediately with a clear message when no model is configured, rather than with a cryptic runtime error.
+- **No grandchildren** — children cannot spawn further children, preventing explosive branching.
+- **Session lifecycle management** — children are properly cleaned up on completion, error, or parent session reset. Aborted children produce explicit `aborted` outcomes.
+- **Signal-based cancellation** — spawn respects AbortSignal, allowing the parent to cancel a running child mid-flight.
+
+#### Ledger — Sparse Continuity Cache
+
+- **`ledger_add` tool** — save a named, compact continuity entry. Same-name writes overwrite (refinement). Writes are serialized via a process-local lock, preventing race conditions.
+- **`ledger_get` tool** — retrieve a full entry body by name. Returns the current entry listing alongside the body. Reports "not found" gracefully with the complete entry list.
+- **`ledger_list` tool** — list all entries with name and first-line preview. Returns empty-state placeholder when no entries exist.
+- **Persistence across sessions** — ledger entries survive context resets, handoffs, and session restarts. On session start, the extension scans the session history newest-to-oldest and rehydrates the in-memory ledger from the latest epoch.
+- **Ledger entry persistence via custom entries** — each `ledger_add` appends a versioned custom entry that survives compaction and session archival.
+- **Epoch-based staleness** — child ledger tools reject access with a clear "invalidated by reset" error when the parent session has been reset, preventing stale writes.
+
+#### Handoff — Deliberate Context Compaction
+
+- **`handoff` tool** — triggers a deliberate compaction that replaces noisy context with a clean restart. The agent drafts a handoff brief preserving knowledge still missing from the ledger, then the session restarts with the brief at the top of context.
+- **`/handoff` command** — user-facing shortcut that asks the agent to draft a handoff brief from a user direction, capture reusable state to the ledger, and call the handoff tool — all in one turn.
+- **Rich compaction summary** — the handoff brief includes inlined ledger entries referenced in the task text (up to 3 entries, 4000 chars total), and a structured handoff primer explaining the continuation contract.
+- **Clean slot handoff** — compaction replaces all pre-handoff messages with just the handoff summary. Full history remains in the session file for later reference.
+- **Post-handoff auto-resume** — the agent receives a "Proceed." message after compaction completes, keeping momentum without manual re-prompt.
+- **Enforcement tracking** — the `/handoff` command tracks whether the agent actually called the tool, preventing the command from being silently ignored. The watchdog cleans up stale enforcement state.
+
+#### Primacy-Zone Watchdog
+
+- **Advisory context-usage reminders** — a `context` hook injects a watchdog message before each LLM call when context usage exceeds 30%, 50%, or 70%. The message is advisory only — the agent decides whether to act.
+- **Tiered nudge messages** — at 30-50% the agent is reminded of the primacy-zone heuristic; at 50-70% it's advised to consider handoff soon; at 70%+ it's warned that automatic compaction may trigger soon.
+- **Hidden from user** — watchdog messages use a `custom` role with `display: false`, so they inform the LLM without cluttering the visible conversation.
+- **`agent_end` tracking** — the watchdog records the latest context usage percent after each agent run, available for diagnostic use.
+
+#### TUI and Status Indicators
+
+- **Context usage in status bar** — a live `ctx 65%` indicator in the TUI status bar, color-coded: green (<30%), yellow (30-50%), orange (50-70%), red (≥70%).
+- **Ledger count indicator** — a 📒 `N` badge in the status bar showing the number of ledger entries, hidden when the ledger is empty.
+- **`/ledger` command** — shows all ledger entries with name, line count, and first-line preview in a TUI notification overlay.
+- **Live spawn rendering** — child agent sessions render inside the parent's TUI with:
+  - **Collapsed view**: model name, thinking level, real-time "last action" summary (thinking, tool execution, or assistant text preview), 5-line preview of last assistant output, and token/cost statistics.
+  - **Expanded view**: full chat history with 4-space indent, streaming assistant messages, and tool execution components.
+  - **Ownership lifecycle**: session ownership transfers from state to the renderer on first render, with proper cleanup on dispose, reset, or reattachment.
+- **Render caching** — rendered output is cached by width/expanded/showImages, avoiding unnecessary re-renders when inputs haven't changed.
+- **Graceful degradation** — the spawn renderer recovers from malformed events, missing tool definitions, subscribe failures, and null results without crashing the parent TUI.
+
+#### Extension Wiring and Lifecycle
+
+- **Single state object** — all primitives read/write through a single `AgenticodingState` instance, shared across extension hooks, tool executions, and the TUI renderer.
+- **Session lifecycle hooks**:
+  - `before_agent_start` — injects context primer and ledger listing.
+  - `context` — injects watchdog reminders before LLM calls.
+  - `session_start` — rehydrates ledger on continuation; resets state on `/new`.
+  - `turn_end` — updates TUI indicators.
+  - `agent_end` — records context usage and manages handoff enforcement.
+  - `session_before_compact` — consumes pending handoff task as the compaction summary.
+- **One-line install** — install via `pi install npm:pi-agenticoding` and disable platform compaction in settings.
+- **Comprehensive test suite** — 50+ tests covering spawn execution and rendering (concurrency, cancellation, truncation, stale detection, ownership lifecycle, microtask batching), ledger tools (add/get/list, staleness, rehydration, empty states, prompt hints), handoff (tool, command, compaction), watchdog (nudge injection, enforcement), and extension lifecycle.
+- **MIT licensed** — open-source permissive license.
