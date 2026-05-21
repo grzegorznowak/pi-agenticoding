@@ -190,11 +190,48 @@ class NestedAgentSessionComponent extends Container {
 	private cachedLines?: string[];
 	private cachedShowImages?: boolean;
 
+	/** Tracks whether a render microtask is already queued for this batch. */
+	private renderScheduled = false;
+	/** Monotonic token: incrementing invalidates stale queued microtask callbacks. */
+	private renderScheduleToken = 0;
+
 	private clearRenderCache(): void {
 		this.cachedWidth = undefined;
 		this.cachedExpanded = undefined;
 		this.cachedLines = undefined;
 		this.cachedShowImages = undefined;
+	}
+
+	/** Reset batching guard + invalidate any queued microtask via token bump. */
+	private resetRenderBatching(): void {
+		this.renderScheduled = false;
+		this.renderScheduleToken++;
+	}
+
+	/**
+	 * Queue one microtask per event batch. The token guard prevents stale
+	 * callbacks from running after dispose or error resets the batching state.
+	 */
+	private scheduleRender(): void {
+		if (this.renderScheduled) {
+			return;
+		}
+		this.renderScheduled = true;
+		const token = ++this.renderScheduleToken;
+		queueMicrotask(() => {
+			if (!this.renderScheduled || this.renderScheduleToken !== token) {
+				return;
+			}
+			this.renderScheduled = false;
+			if (this.isStaleSession()) {
+				// Drop optimistic same-turn event mutations when ownership changed
+				// before the parent had a chance to render them.
+				this.rebuildFromSession();
+				this.clearRenderCache();
+				return;
+			}
+			this.requestRender();
+		});
 	}
 
 	setRequestRender(requestRender: () => void): void {
@@ -247,6 +284,7 @@ class NestedAgentSessionComponent extends Container {
 		this.ownedToolCallId = toolCallId;
 		this.state = state;
 		this.attachedChildSessionEpoch = state.childSessionEpoch;
+		this.resetRenderBatching();
 		this.liveOutcome = this.details?.outcome ?? "running";
 		this.toolNames.clear();
 		this.toolComponentFailures.clear();
@@ -315,6 +353,7 @@ class NestedAgentSessionComponent extends Container {
 		const session = this.session;
 		const ownedToolCallId = this.ownedToolCallId;
 		const liveChildSessions = this.state?.liveChildSessions;
+		this.resetRenderBatching();
 		this.clearRenderCache();
 		this.details = undefined;
 		this.nestTheme = undefined;
@@ -730,8 +769,13 @@ class NestedAgentSessionComponent extends Container {
 				case "tool_execution_end": this.handleToolExecutionEnd(event); break;
 			}
 			this.clearRenderCache();
-			this.requestRender();
+			// Coalesce child bursts within the current turn. The first event queues
+			// one microtask-backed parent invalidate; later same-turn events just
+			// mutate state, so the next render observes the latest snapshot.
+			this.scheduleRender();
 		} catch (error) {
+			this.clearRenderCache();
+			this.resetRenderBatching();
 			// Prevent a single bad event from killing the subscription.
 			// The TUI degrades gracefully — stale content until next successful event.
 			console.warn("[spawn] Event handler error:", event.type, this.ownedToolCallId, error);
