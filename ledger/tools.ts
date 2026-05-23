@@ -7,9 +7,11 @@
  */
 
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { AgenticodingState } from "../state.js";
-import { formatEntryList, getEntryNames, saveLedgerEntry } from "./store.js";
+import { updateIndicators } from "../tui.js";
+import { formatEntryList, formatEntryPreview, getEntryNames, saveLedgerEntry } from "./store.js";
 
 // ── Factory ───────────────────────────────────────────────────────────
 
@@ -62,18 +64,52 @@ export function createLedgerToolDefinitions(
 					"Truncated at 50KB / 2000 lines.",
 			}),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+		renderCall(args, theme, _context) {
+			const preview = formatEntryPreview(args.content).trim();
+
+			let text = theme.fg("toolTitle", theme.bold("ledger_add ")) +
+				theme.fg("accent", `"${args.name}"`);
+			if (preview) {
+				text += ": " + theme.fg("dim", preview);
+			}
+			return new Text(text, 0, 0);
+		},
+
+		renderResult(result, { expanded }, theme, context) {
+			const details = result.details as { entries: string[]; preview: string };
+
+			let text = theme.fg("success", "\u2713 Saved ") + theme.fg("accent", `"${context.args.name}"`);
+			if (details.preview) {
+				text += ": " + theme.fg("dim", details.preview);
+			}
+			if (expanded) {
+				text += "\n" + theme.fg("dim", details.entries.join("\n"));
+			}
+			return new Text(text, 0, 0);
+		},
+
+		async execute(_toolCallId, params, _signal, onUpdate, ctx) {
 			assertFresh();
-			const names = await saveLedgerEntry(pi, state, params.name, params.content, assertFresh);
+			const saved = await saveLedgerEntry(pi, state, params.name, params.content, assertFresh);
+			updateIndicators(ctx, state);
+
+			onUpdate?.({
+				content: [{
+					type: "text",
+					text: `Saved "${params.name}"` + (saved.preview ? `: ${saved.preview}` : ""),
+				}],
+				details: { entries: saved.entries, preview: saved.preview },
+			});
 			return {
 				content: [
 					{
 						type: "text",
 						text: `Saved ledger entry "${params.name}".` +
+							(saved.preview ? `\n${saved.preview}` : "") +
 							`\n\nEntries:\n${formatEntryList(state) || "(empty)"}`,
 					},
 				],
-				details: { entries: names },
+				details: { entries: saved.entries, preview: saved.preview },
 			};
 		},
 	};
@@ -92,6 +128,22 @@ export function createLedgerToolDefinitions(
 				description: "Entry name to retrieve.",
 			}),
 		}),
+		renderResult(result, { expanded }, theme, context) {
+			const details = result.details as { entries: string[]; found: boolean; body?: string };
+			if (!details.found) {
+				return new Text(
+					theme.fg("error", "\u2717 ") + theme.fg("muted", `"${context.args.name}" not found`),
+					0,
+					0,
+				);
+			}
+			let text = theme.fg("success", "\u2713 ") + theme.fg("accent", `"${context.args.name}"`);
+			if (expanded && details.body) {
+				text += "\n" + theme.fg("toolOutput", details.body.trim());
+			}
+			return new Text(text, 0, 0);
+		},
+
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			assertFresh();
 			const content = state.ledger.get(params.name);
@@ -120,7 +172,7 @@ export function createLedgerToolDefinitions(
 							`---\nEntries:\n${formatEntryList(state) || "(empty)"}`,
 					},
 				],
-				details: { entries: names, found: true },
+				details: { entries: names, found: true, body: content },
 			};
 		},
 	};
@@ -135,6 +187,18 @@ export function createLedgerToolDefinitions(
 			? { promptSnippet: "List all ledger entries" }
 			: {}),
 		parameters: Type.Object({}),
+		renderResult(result, { expanded }, theme, _context) {
+			const entries = (result.details as { entries: string[] }).entries;
+			if (entries.length === 0) {
+				return new Text(theme.fg("dim", "\u{1F4D2} (empty)"), 0, 0);
+			}
+			let text = theme.fg("muted", `\u{1F4D2} ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`);
+			if (expanded) {
+				text += "\n" + theme.fg("dim", entries.join("\n"));
+			}
+			return new Text(text, 0, 0);
+		},
+
 		async execute() {
 			assertFresh();
 			const names = getEntryNames(state);
