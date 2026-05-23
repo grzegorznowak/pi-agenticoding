@@ -13,6 +13,13 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import {
+	Container,
+	type SelectItem,
+	SelectList,
+	Text,
+} from "@earendil-works/pi-tui";
 import { createState, resetState, type AgenticodingState } from "./state.js";
 import { CONTEXT_PRIMER } from "./system-prompt.js";
 import { buildNudge, registerWatchdog } from "./watchdog.js";
@@ -22,40 +29,12 @@ import { registerHandoffTool } from "./handoff/tool.js";
 import { registerHandoffCommand } from "./handoff/command.js";
 import { registerHandoffCompaction } from "./handoff/compact.js";
 import { registerSpawnTool } from "./spawn/index.js";
-
-/** Build a status bar preview from ledger entries. */
-function formatLedgerPreview(state: AgenticodingState): string {
-	const names = Array.from(state.ledger.keys()).sort();
-	if (names.length === 0) return "(empty)";
-	return names
-		.map((name) => {
-			const content = state.ledger.get(name)!;
-			const firstLine = (content.split("\n")[0] ?? "").slice(0, 60);
-			return `${name}: ${firstLine}`;
-		})
-		.join("\n");
-}
-
-/** Update TUI indicators: context usage + ledger count. */
-function updateIndicators(ctx: ExtensionContext, state: AgenticodingState): void {
-	if (!ctx.hasUI) return;
-
-	const theme = ctx.ui.theme;
-
-	// Context usage
-	const usage = ctx.getContextUsage();
-	if (usage && usage.percent !== null) {
-		const pct = Math.round(usage.percent);
-		const tone = pct >= 70 ? "error" : pct >= 50 ? "warning" : pct >= 30 ? "accent" : "dim";
-		ctx.ui.setStatus("agenticoding-ctx", theme.fg("dim", "ctx ") + theme.fg(tone, `${pct}%`));
-	} else {
-		ctx.ui.setStatus("agenticoding-ctx", theme.fg("dim", "ctx --%"));
-	}
-
-	// Ledger count
-	const count = state.ledger.size;
-	ctx.ui.setStatus("agenticoding-ledger", count > 0 ? `\u{1F4D2} ${count}` : "");
-}
+import {
+	STATUS_KEY_HANDOFF,
+	WIDGET_KEY_WARNING,
+	updateIndicators,
+} from "./tui.js";
+import { formatEntryPreview } from "./ledger/store.js";
 
 export default function (pi: ExtensionAPI): void {
 	const state: AgenticodingState = createState();
@@ -73,12 +52,93 @@ export default function (pi: ExtensionAPI): void {
 	// ── Register commands ───────────────────────────────────────────
 	registerHandoffCommand(pi, state);
 
-	// ── /ledger command — show entries in overlay ───────────────────
+	// ── /ledger command — interactive entry selector ────────────────
 	pi.registerCommand("ledger", {
-		description: "Show ledger entries with name, line count, and first-line preview",
+		description: "Select a ledger entry to preview",
 		handler: async (_args, ctx) => {
-			const preview = formatLedgerPreview(state);
-			ctx.ui.notify(`Ledger (${state.ledger.size} entries):\n${preview}`, "info");
+			if (!ctx.hasUI) {
+				return;
+			}
+
+			await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+				const container = new Container();
+
+				container.addChild(
+					new DynamicBorder((s: string) => theme.fg("accent", s)),
+				);
+				container.addChild(
+					new Text(theme.fg("accent", theme.bold(` Ledger (${state.ledger.size} entries) `)), 1, 0),
+				);
+
+				const entries = Array.from(state.ledger.entries()).sort(([a], [b]) => a.localeCompare(b));
+				let selectList: SelectList | undefined;
+				let finished = false;
+
+				if (entries.length === 0) {
+					container.addChild(
+						new Text(theme.fg("dim", " (empty) — use ledger_add to create entries"), 1, 0),
+					);
+				} else {
+					const items: SelectItem[] = entries.map(([name, content]) => ({
+						value: name,
+						label: name,
+						description: formatEntryPreview(content),
+					}));
+
+					selectList = new SelectList(items, Math.min(items.length, 10), {
+						selectedPrefix: (t) => theme.fg("accent", t),
+						selectedText: (t) => theme.fg("accent", t),
+						description: (t) => theme.fg("muted", t),
+						scrollInfo: (t) => theme.fg("dim", t),
+						noMatch: (t) => theme.fg("warning", t),
+					});
+					selectList.onSelect = ({ value }) => {
+						// Guard: selectList is set to undefined below, so this handler
+						// cannot fire twice — no re-entrancy guard needed here.
+						const body = state.ledger.get(value);
+						if (!body) { done(); return; }
+						// Switch to body view: show the selected entry body inline
+						container.clear();
+						container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+						container.addChild(new Text(theme.fg("accent", theme.bold(` ${value} `)), 1, 0));
+						const truncated = body.length > 500 ? body.slice(0, 500) + "\n..." : body;
+						container.addChild(new Text(theme.fg("toolOutput", truncated), 1, 0));
+						container.addChild(new Text(theme.fg("dim", " press any key to close "), 1, 0));
+						container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+						selectList = undefined;
+						tui.requestRender();
+					};
+					selectList.onCancel = () => {
+						if (finished) return;
+						finished = true;
+						done();
+					};
+					container.addChild(selectList);
+				}
+
+				container.addChild(
+					new Text(theme.fg("dim", entries.length === 0
+						? " esc close "
+						: " \u2191\u2195 navigate \u2022 enter select \u2022 esc close "), 1, 0),
+				);
+				container.addChild(
+					new DynamicBorder((s: string) => theme.fg("accent", s)),
+				);
+
+				return {
+					render: (w) => container.render(w),
+					invalidate: () => container.invalidate(),
+					handleInput: (data) => {
+						if (finished) return;
+						if (!selectList) { finished = true; done(); return; }
+						selectList.handleInput?.(data);
+						// Conservative: always repaint after key input.
+						// SelectList.handleInput returns void in the current API,
+						// so we can't conditionally skip — the cost is negligible.
+						tui.requestRender();
+					},
+				};
+			});
 		},
 	});
 
@@ -138,12 +198,25 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_start", async (event, ctx: ExtensionContext) => {
 		if (event.reason === "new") {
 			resetState(state);
+			// Clear any stale TUI indicators from the previous session
+			if (ctx.hasUI) {
+				ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+				ctx.ui.setWidget(WIDGET_KEY_WARNING, undefined);
+			}
 		}
 		updateIndicators(ctx, state);
 	});
 
 	// ── update TUI indicators after each turn ───────────────────────
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
+		// Fallback: clear handoff indicator if the LLM completed a turn
+		// without calling the handoff tool (ignored the direction)
+		if (state.pendingRequestedHandoff && !state.pendingRequestedHandoff.toolCalled) {
+			state.pendingRequestedHandoff = null;
+			if (ctx.hasUI) {
+				ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+			}
+		}
 		updateIndicators(ctx, state);
 	});
 }
