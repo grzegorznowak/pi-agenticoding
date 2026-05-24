@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - No changes yet.
 
+## [0.3.0] - 2026-05-24
+
+### Changed
+
+- **Breaking:** handoff now defaults to waiting after compaction instead of auto-sending `Proceed.`. Users who want the previous auto-resume behavior can opt in with `/agenticoding-settings` or with `"handoff": { "resumeBehavior": "proceed" }` in `~/.pi/agent/settings.json` or `<project>/.pi/settings.json`.
+- Added `handoff.resumeBehavior` settings support with supported values `"wait"` (default) and `"proceed"`; unsupported values and invalid settings JSON fail safe to `wait` with a warning diagnostic.
+- Added the extension-owned `/agenticoding-settings` TUI panel for handoff resume behavior. TUI saves are global-only to `~/.pi/agent/settings.json`, preserve unrelated settings keys, and visibly warn when a project override masks the global value.
+
 ## [0.2.0] - 2026-05-21
 
 ### Added

@@ -13,6 +13,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AgenticodingState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
+import { resolveHandoffResumeBehavior } from "../settings.js";
 
 const MAX_INLINE_ENTRIES = 3;
 const MAX_INLINE_CHARS = 4000;
@@ -124,13 +125,16 @@ export function registerHandoffTool(
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const enrichedTask = buildEnrichedTask(params.task, state);
+			const resumeBehavior = await resolveHandoffResumeBehavior(ctx);
 			state.pendingHandoff = { task: enrichedTask, source: "tool" };
 			if (state.pendingRequestedHandoff) {
 				state.pendingRequestedHandoff.toolCalled = true;
 			}
 			ctx.compact({
 				onComplete: () => {
-					pi.sendUserMessage("Proceed.");
+					if (resumeBehavior === "proceed") {
+						pi.sendUserMessage("Proceed.");
+					}
 				},
 				onError: () => {
 					state.pendingHandoff = null;

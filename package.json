@@ -1,6 +1,6 @@
 {
   "name": "pi-agenticoding",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "Context management primitives for the pi coding agent — spawn, ledger, handoff",
   "license": "MIT",
