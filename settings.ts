@@ -59,21 +59,53 @@ function isPlainObject(value: unknown): value is SettingsObject {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function createSettingsObject(): SettingsObject {
+	return Object.create(null) as SettingsObject;
+}
+
+function hasOwnSetting(settings: SettingsObject, key: string): boolean {
+	return Object.prototype.hasOwnProperty.call(settings, key);
+}
+
+function getOwnSetting(settings: SettingsObject, key: string): unknown {
+	return hasOwnSetting(settings, key) ? settings[key] : undefined;
+}
+
+function setOwnSetting(settings: SettingsObject, key: string, value: unknown): void {
+	Object.defineProperty(settings, key, {
+		value,
+		enumerable: true,
+		configurable: true,
+		writable: true,
+	});
+}
+
+function cloneSettingsObject(settings: SettingsObject): SettingsObject {
+	const result = createSettingsObject();
+	for (const [key, value] of Object.entries(settings)) {
+		setOwnSetting(result, key, isPlainObject(value) ? cloneSettingsObject(value) : value);
+	}
+	return result;
+}
+
 function mergeSettings(base: SettingsObject, override: SettingsObject): SettingsObject {
-	const result: SettingsObject = { ...base };
+	const result = cloneSettingsObject(base);
 	for (const [key, value] of Object.entries(override)) {
-		const existing = result[key];
+		const existing = getOwnSetting(result, key);
 		if (isPlainObject(existing) && isPlainObject(value)) {
-			result[key] = mergeSettings(existing, value);
+			setOwnSetting(result, key, mergeSettings(existing, value));
 		} else {
-			result[key] = value;
+			setOwnSetting(result, key, isPlainObject(value) ? cloneSettingsObject(value) : value);
 		}
 	}
 	return result;
 }
 
 function extractResumeBehavior(settings: SettingsObject): unknown {
-	return isPlainObject(settings.handoff) ? settings.handoff.resumeBehavior : undefined;
+	const handoff = getOwnSetting(settings, "handoff");
+	return isPlainObject(handoff) && hasOwnSetting(handoff, "resumeBehavior")
+		? getOwnSetting(handoff, "resumeBehavior")
+		: undefined;
 }
 
 function isHandoffResumeBehavior(value: unknown): value is HandoffResumeBehavior {
@@ -100,15 +132,15 @@ async function readSettingsSource(label: SettingsSourceLabel, path: string): Pro
 	try {
 		raw = await readFile(path, "utf8");
 	} catch {
-		return { label, path, exists: false, invalid: false, settings: {}, resumeBehavior: undefined };
+		return { label, path, exists: false, invalid: false, settings: createSettingsObject(), resumeBehavior: undefined };
 	}
 
 	try {
 		const parsed = JSON.parse(raw);
-		const settings = isPlainObject(parsed) ? parsed : {};
+		const settings = isPlainObject(parsed) ? cloneSettingsObject(parsed) : createSettingsObject();
 		return { label, path, exists: true, invalid: false, settings, resumeBehavior: extractResumeBehavior(settings) };
 	} catch {
-		return { label, path, exists: true, invalid: true, settings: {}, resumeBehavior: undefined };
+		return { label, path, exists: true, invalid: true, settings: createSettingsObject(), resumeBehavior: undefined };
 	}
 }
 
@@ -156,7 +188,7 @@ export async function writeGlobalHandoffResumeBehavior(
 	ctx?: ExtensionContext,
 ): Promise<boolean> {
 	const path = getGlobalSettingsPath();
-	let settings: SettingsObject = {};
+	let settings = createSettingsObject();
 	let raw: string | undefined;
 
 	try {
@@ -172,16 +204,17 @@ export async function writeGlobalHandoffResumeBehavior(
 	if (raw !== undefined) {
 		try {
 			const parsed = JSON.parse(raw);
-			settings = isPlainObject(parsed) ? parsed : {};
+			settings = isPlainObject(parsed) ? cloneSettingsObject(parsed) : createSettingsObject();
 		} catch {
 			notify(ctx, `Invalid global settings JSON at ${path}; not writing handoff.resumeBehavior to avoid clobbering it.`, "error");
 			return false;
 		}
 	}
 
-	const handoff = isPlainObject(settings.handoff) ? { ...settings.handoff } : {};
-	handoff.resumeBehavior = value;
-	settings.handoff = handoff;
+	const existingHandoff = getOwnSetting(settings, "handoff");
+	const handoff = isPlainObject(existingHandoff) ? cloneSettingsObject(existingHandoff) : createSettingsObject();
+	setOwnSetting(handoff, "resumeBehavior", value);
+	setOwnSetting(settings, "handoff", handoff);
 
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(path, JSON.stringify(settings, null, 2) + "\n", "utf8");

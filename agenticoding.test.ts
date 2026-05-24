@@ -443,6 +443,32 @@ test("handoff resume setting proceed sends exactly one automatic continuation", 
 	assert.deepEqual(result.notifications, []);
 });
 
+test("handoff resume setting ignores prototype/meta keys unless resumeBehavior is own nested setting", async () => {
+	const topLevelPrototypeResult = await runHandoffResumeScenario({
+		globalSettings: '{"__proto__":{"handoff":{"resumeBehavior":"proceed"}}}',
+	});
+	assert.deepEqual(topLevelPrototypeResult.sentUserMessages, []);
+	assert.deepEqual(topLevelPrototypeResult.notifications, []);
+
+	const nestedPrototypeResult = await runHandoffResumeScenario({
+		globalSettings: { handoff: { other: true } },
+		projectSettings: '{"handoff":{"__proto__":{"resumeBehavior":"proceed"}}}',
+	});
+	assert.deepEqual(nestedPrototypeResult.sentUserMessages, []);
+	assert.deepEqual(nestedPrototypeResult.notifications, []);
+
+	await withIsolatedSettings(async ({ home, cwd }) => {
+		await writeSettingsFile(join(home, ".pi", "agent", "settings.json"), '{"__proto__":{"handoff":{"resumeBehavior":"proceed"}}}');
+		await writeSettingsFile(join(cwd, ".pi", "settings.json"), '{"handoff":{"__proto__":{"resumeBehavior":"proceed"}}}');
+
+		const model = await buildAgenticodingSettingsModel({ cwd, hasUI: true, ui: { notify: () => {} } } as any);
+		assert.equal(model.effectiveBehavior, "wait");
+		assert.equal(model.effectiveSource, "default");
+		assert.equal(model.projectOverride, false);
+		assert.match(getAgenticodingSettingsDisplayLines(model).join("\n"), /Resolved handoff\.resumeBehavior: wait \(default\)/);
+	});
+});
+
 test("handoff resume setting unsupported value falls back to wait with diagnostic", async () => {
 	const result = await runHandoffResumeScenario({
 		projectSettings: { handoff: { resumeBehavior: "surprise" } },
