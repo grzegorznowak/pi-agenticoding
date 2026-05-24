@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** handoff now defaults to waiting after compaction instead of auto-sending `Proceed.`. Users who want auto-resume can opt in with `/agenticoding-settings` or with `"handoff": { "resumeBehavior": "proceed" }` in `~/.pi/agent/settings.json` or `<project>/.pi/settings.json`.
+- Added `handoff.resumeBehavior` settings support with supported values `"wait"` (default) and `"proceed"`; unsupported values and invalid settings JSON fail safe to `wait` with a warning diagnostic.
+- Added the extension-owned `/agenticoding-settings` TUI panel for handoff resume behavior. TUI saves are global-only to `~/.pi/agent/settings.json`, preserve unrelated settings keys, and visibly warn when a project override masks the global value.
+
+### Fixed
+
+- Hardened raw settings JSON handling so prototype/meta keys such as `__proto__` cannot masquerade as an own `handoff.resumeBehavior` setting.
+
 ## [0.3.0] - 2026-05-23
 
 ### Added
@@ -22,14 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Stray ANSI reset codes in spawn shell** — `truncateToWidth` no longer injects escape sequences that break background color styling in collapsed spawn renderer borders and padding.
-
-## [0.3.0] - 2026-05-24
-
-### Changed
-
-- **Breaking:** handoff now defaults to waiting after compaction instead of auto-sending `Proceed.`. Users who want the previous auto-resume behavior can opt in with `/agenticoding-settings` or with `"handoff": { "resumeBehavior": "proceed" }` in `~/.pi/agent/settings.json` or `<project>/.pi/settings.json`.
-- Added `handoff.resumeBehavior` settings support with supported values `"wait"` (default) and `"proceed"`; unsupported values and invalid settings JSON fail safe to `wait` with a warning diagnostic.
-- Added the extension-owned `/agenticoding-settings` TUI panel for handoff resume behavior. TUI saves are global-only to `~/.pi/agent/settings.json`, preserve unrelated settings keys, and visibly warn when a project override masks the global value.
 
 ## [0.2.0] - 2026-05-21
 
@@ -110,12 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive test suite** — 50+ tests covering spawn execution and rendering (concurrency, cancellation, truncation, stale detection, ownership lifecycle, microtask batching), ledger tools (add/get/list, staleness, rehydration, empty states, prompt hints), handoff (tool, command, compaction), watchdog (nudge injection, enforcement), and extension lifecycle.
 - **MIT licensed** — open-source permissive license.
 
+[Unreleased]: https://github.com/agenticoding/pi-agenticoding/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/agenticoding/pi-agenticoding/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agenticoding/pi-agenticoding/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/agenticoding/pi-agenticoding/releases/tag/v0.1.0
 
-## [Unreleased]
-
-### Added
-
-- No changes yet.
