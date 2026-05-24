@@ -5,11 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-05-23
 
 ### Added
 
-- No changes yet.
+- **Interactive `/ledger` TUI overlay** — replaced the static notification popup with a full interactive overlay. Use arrow keys to navigate entries, press Enter to preview a selected entry body (truncated at 500 chars with `...`), and Escape to close. Empty state shows a discoverability hint.
+- **Visual handoff indicator** — when `/handoff` is invoked, a live `🤝 Handoff in progress` badge appears in the TUI status bar. Clears automatically when compaction completes, or when the agent finishes a turn without calling the handoff tool.
+- **Ledger tool TUI renderers** — `ledger_add` calls now render inline with a styled preview (`✓ Saved "entry-name": first line...`) in the conversation. Shows the full entry body when expanded.
+- **Write-lock reentrancy detection** — nested calls to `saveLedgerEntry` now throw an explicit error instead of silently corrupting the serialization chain.
+
+### Changed
+
+- **Frame-based spawn scheduler** — replaced the microtask-per-event render model with a scheduler that batches expensive component work at ~30 FPS. High-frequency streaming events (50–100+/sec) accumulate state cheaply per-event; layout, cache invalidation, and TUI invalidates are deferred to the next frame tick. Eliminates UI jank during bursty LLM streaming in child sessions.
+- **ESM module type** — added `"type": "module"` to `package.json` for compatibility with strict ESM projects.
+
+### Fixed
+
+- **Stray ANSI reset codes in spawn shell** — `truncateToWidth` no longer injects escape sequences that break background color styling in collapsed spawn renderer borders and padding.
 
 ## [0.3.0] - 2026-05-24
 
@@ -97,3 +109,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One-line install** — install via `pi install npm:pi-agenticoding` and disable platform compaction in settings.
 - **Comprehensive test suite** — 50+ tests covering spawn execution and rendering (concurrency, cancellation, truncation, stale detection, ownership lifecycle, microtask batching), ledger tools (add/get/list, staleness, rehydration, empty states, prompt hints), handoff (tool, command, compaction), watchdog (nudge injection, enforcement), and extension lifecycle.
 - **MIT licensed** — open-source permissive license.
+
+[0.3.0]: https://github.com/agenticoding/pi-agenticoding/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/agenticoding/pi-agenticoding/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/agenticoding/pi-agenticoding/releases/tag/v0.1.0
+
+## [Unreleased]
+
+### Added
+
+- No changes yet.

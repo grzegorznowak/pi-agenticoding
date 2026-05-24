@@ -198,16 +198,30 @@ function wrapSpawnShell(lines: string[], width: number, theme: Theme | undefined
 	];
 }
 
-function formatCollapsedStats(details: SpawnResultDetails, color: (name: ThemeColor, text: string) => string): string | undefined {
+function truncatePlainText(text: string, width: number): string {
+	// truncateToWidth() may inject ANSI resets even when truncating plain
+	// unicode text. Strip them here so outer shell/background styling stays intact.
+	return truncateToWidth(text, width).replace(/\u001b\[[0-9;]*m/g, "");
+}
+
+function truncateAndColor(text: string, width: number, color: (name: ThemeColor, text: string) => string, colorName: ThemeColor): string {
+	return color(colorName, truncatePlainText(text, width));
+}
+
+
+function formatCollapsedStats(details: SpawnResultDetails): { text: string; color: ThemeColor } | undefined {
 	if (details.stats) {
 		const s = details.stats;
 		const cost = s.cost ?? 0;
 		const costStr = cost >= COST_THRESHOLD_COMPACT ? cost.toFixed(0) : cost >= COST_THRESHOLD_DECIMAL ? cost.toFixed(2) : cost.toFixed(4);
-		const truncated = details.truncated ? color("warning", " · trunc") : "";
-		return color("dim", `tok ${s.inputTokens ?? "?"}/${s.outputTokens ?? "?"} · ${s.turns ?? "?"}t · $${costStr}${truncated}`);
+		return {
+			// Intentionally dim — truncated spawns are routine, not alarming
+			text: `tok ${s.inputTokens ?? "?"}/${s.outputTokens ?? "?"} · ${s.turns ?? "?"}t · $${costStr}${details.truncated ? " · trunc" : ""}`,
+			color: "dim",
+		};
 	}
 	if (details.statsUnavailable) {
-		return color("muted", "stats unavailable");
+		return { text: "stats unavailable", color: "muted" };
 	}
 	return undefined;
 }
@@ -806,19 +820,21 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 
 		// Identity line — distinguishes nested spawns in collapsed view
 		if (details) {
-			lines.push(truncateToWidth(
-				color("dim", `${getOutcomeMarker(outcome)}${details.model} • ${details.thinking}`),
+			lines.push(truncateAndColor(
+				`${getOutcomeMarker(outcome)}${details.model} • ${details.thinking}`,
 				width,
+				color,
+				"dim",
 			));
 		}
 
 		if (outcome === "running") {
 			const liveSummary = this.lastAction || "⏳ initializing…";
-			lines.push(truncateToWidth(color("dim", liveSummary), width));
+			lines.push(truncateAndColor(liveSummary, width, color, "dim"));
 		} else if (outcome !== "success") {
 			const outcomeText = getOutcomeStatusText(outcome);
 			if (outcomeText) {
-				lines.push(truncateToWidth(color(outcome === "error" ? "warning" : "dim", outcomeText), width));
+				lines.push(truncateAndColor(outcomeText, width, color, outcome === "error" ? "warning" : "dim"));
 			}
 		}
 
@@ -829,20 +845,17 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			const maxLines = COLLAPSED_PREVIEW_MAX_LINES;
 			const shown = textLines.slice(0, maxLines);
 			for (const line of shown) {
-				lines.push(truncateToWidth(color("toolOutput", line), width));
+				lines.push(truncateAndColor(line, width, color, "toolOutput"));
 			}
 			const remaining = textLines.length - maxLines;
 			if (remaining > 0) {
-				lines.push(truncateToWidth(
-					color("muted", `... ${remaining} more lines`),
-					width,
-				));
+				lines.push(truncateAndColor(`... ${remaining} more lines`, width, color, "muted"));
 			}
 		}
 
-		const statsLine = details ? formatCollapsedStats(details, color) : undefined;
+		const statsLine = details ? formatCollapsedStats(details) : undefined;
 		if (statsLine) {
-			lines.push(truncateToWidth(statsLine, width));
+			lines.push(truncateAndColor(statsLine.text, width, color, statsLine.color));
 		}
 
 		return lines;
@@ -860,6 +873,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 
 		// Show identity header when expanded — anchors which nested session this is
 		const colorExpanded = (name: ThemeColor, text: string) => this.nestTheme ? this.nestTheme.fg(name, text) : text;
+		// Expanded mode has no shell background — safe to color before truncation
 		if (this.details) {
 			const header = `${getOutcomeMarker(this.liveOutcome)}${this.details.model} • ${this.details.thinking}`;
 			lines.push(leftPad + truncateToWidth(

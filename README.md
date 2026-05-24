@@ -120,7 +120,7 @@ Delegate messy work to an isolated child agent with clean context. The child inh
 
 ### Ledger — Continuity Across Cuts
 
-A sparse continuity cache the agent curates while working. After discovering something reusable — a fact, constraint, decision, or expensive finding — it saves a named entry. Later contexts fetch entries on demand instead of re-deriving the work. The ledger persists across handoffs, context resets, and session restarts.
+A sparse continuity cache the agent curates while working. After discovering something reusable — a fact, constraint, decision, or expensive finding — it saves a named entry. Later contexts fetch entries on demand instead of re-deriving the work. **The ledger persists across handoffs and existing-session restarts; starting a new session with `/new` resets it.**
 
 ### Handoff — Deliberate Compaction
 
@@ -206,18 +206,11 @@ interface AgenticodingState {
 
 </details>
 
-<details>
-<summary><strong>Deep dive → ARCHITECTURE.md</strong></summary>
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for full module breakdown, tool schemas, lifecycle wiring, spawn child-session lifecycle, and ledger rehydration algorithm.
-
-</details>
-
 ---
 
 ## Contributing
 
-Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the project workflow and quality expectations.
 
 ## License
 
