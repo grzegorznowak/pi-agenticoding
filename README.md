@@ -40,16 +40,7 @@ Then disable pi's built-in compaction so handoff stays in control:
 }
 ```
 
-By default, handoff waits after compaction for your next explicit input. To keep the older automatic continuation behavior, add:
-
-```json
-// ~/.pi/agent/settings.json or <project>/.pi/settings.json
-{
-  "handoff": { "resumeBehavior": "proceed" }
-}
-```
-
-Supported `handoff.resumeBehavior` values are `"wait"` (default) and `"proceed"`. You can also run `/agenticoding-settings` in the Pi TUI to open the extension-owned settings panel for this value. TUI saves are global-only to `~/.pi/agent/settings.json`; if `<project>/.pi/settings.json` contains a project override, it continues to win at runtime and the panel warns that you must edit/remove the project setting manually before the global save affects that project.
+Optional handoff resume preferences can be changed later with `/agenticoding-settings`.
 
 That's it. Your agent now has `spawn`, `ledger_add`, `ledger_get`, `ledger_list`, `handoff`, and `/agenticoding-settings`. The status bar shows context usage and ledger count.
 
@@ -126,9 +117,15 @@ A sparse continuity cache the agent curates while working. After discovering som
 
 When context degrades or the job changes, the agent saves reusable state to the ledger, writes a focused brief preserving what's still missing, and restarts clean. The new context starts with the brief front-and-center, all ledger entries accessible, and zero noise.
 
-Handoff resume behavior is controlled by raw Pi settings JSON: global `~/.pi/agent/settings.json` nested-merged with project `<cwd>/.pi/settings.json`, with project values overriding global. Set `handoff.resumeBehavior` to `"wait"` (default, no automatic continuation message) or `"proceed"` (send one `Proceed.` message after compaction to auto-resume).
+By default, handoff waits after compaction for your next input. To auto-resume, set `handoff.resumeBehavior` to `"proceed"`; valid values are `"wait"` and `"proceed"`.
 
-Run `/agenticoding-settings` to configure the setting through pi-agenticoding's extension-owned TUI panel. The panel writes only the global file (`~/.pi/agent/settings.json`) and preserves unrelated JSON keys while reserializing the file. It does not offer project-scope writes. If a project `.pi/settings.json` defines `handoff.resumeBehavior`, that project override masks the global value; the panel shows a warning and saving globally will not affect the current project until you edit or remove the project setting manually.
+```json
+{
+  "handoff": { "resumeBehavior": "proceed" }
+}
+```
+
+Run `/agenticoding-settings` to change this from the TUI. It saves global-only to `~/.pi/agent/settings.json`; project `.pi/settings.json` values still override global settings, and the panel warns when an override is active.
 
 **Rule of thumb:** The ledger holds reusable learned knowledge. Handoff carries the remaining situational context.
 
