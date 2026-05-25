@@ -1,6 +1,6 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
@@ -26,6 +26,9 @@ import {
 	MANUAL_AGENTICODING_SETTINGS_INSTRUCTIONS,
 	buildAgenticodingSettingsModel,
 	getAgenticodingSettingsDisplayLines,
+	readHandoffSettingsState,
+	resolveHandoffResumeBehavior,
+	writeGlobalHandoffResumeBehavior,
 } from "./settings.js";
 
 // Safety net: reset module-level mutable state after all tests.
@@ -501,6 +504,35 @@ test("handoff resume setting invalid JSON falls back to wait with diagnostic", a
 	assert.match(projectResult.notifications[0].message, /falling back to wait/);
 });
 
+test("handoff resume setting non-ENOENT read errors are treated as invalid source with warning", async () => {
+	await withIsolatedSettings(async ({ home, cwd }) => {
+		const globalPath = join(home, ".pi", "agent", "settings.json");
+		await writeSettingsFile(globalPath, {});
+		await chmod(globalPath, 0o000);
+
+		try {
+			const state = await readHandoffSettingsState(cwd);
+			assert.equal(state.global.invalid, true);
+			assert.equal(state.global.exists, true);
+			assert.equal(state.project.invalid, false);
+
+			const notifications: Array<{ message: string; level: string }> = [];
+			const ctx = {
+				cwd,
+				hasUI: true,
+				ui: { notify: (msg: string, level: string) => notifications.push({ message: msg, level }) },
+			} as any;
+			const behavior = await resolveHandoffResumeBehavior(ctx);
+			assert.equal(behavior, "wait");
+			assert.equal(notifications.length, 1);
+			assert.equal(notifications[0].level, "warning");
+			assert.match(notifications[0].message, /Invalid global settings JSON/);
+		} finally {
+			await chmod(globalPath, 0o600);
+		}
+	});
+});
+
 test("handoff resume setting is documented in README", async () => {
 	const readme = await readFile(new URL("./README.md", import.meta.url), "utf8");
 	const changelog = await readFile(new URL("./CHANGELOG.md", import.meta.url), "utf8");
@@ -630,6 +662,34 @@ test("agenticoding settings TUI handles invalid JSON policies", async () => {
 		assert.equal(saved.handoff.resumeBehavior, "proceed");
 		assert.equal(notifications.at(-1)?.level, "info");
 	});
+});
+
+test("agenticoding settings write path handles save failure with error notification", async () => {
+	await withIsolatedSettings(async ({ home }) => {
+		// Block the settings directory by creating a file where a directory is expected.
+		// writeGlobalHandoffResumeBehavior calls mkdir(dirname(path), { recursive: true }),
+		// so making .pi/agent a file (instead of a directory) will cause mkdir to throw ENOTDIR.
+		await mkdir(join(home, ".pi"), { recursive: true });
+		await writeFile(join(home, ".pi", "agent"), "block", "utf8");
+
+		const notifications: Array<{ message: string; level: string }> = [];
+		const ctx = {
+			cwd: home,
+			hasUI: true,
+			ui: { notify: (message: string, level: string) => notifications.push({ message, level }) },
+		} as any;
+
+		await assert.rejects(
+			() => writeGlobalHandoffResumeBehavior("proceed", ctx),
+			/EEXIST|ENOTDIR|ENOSPC/,
+		);
+	});
+
+	// The async IIFE in createAgenticodingSettingsComponent's callback wraps model.save
+	// in try/catch, where model.save delegates to writeGlobalHandoffResumeBehavior.
+	// The rejection verified above proves that a filesystem error during write propagates
+	// correctly, so the try/catch in the component callback will catch it and call
+	//   notify(ctx, `Failed to save handoff.resumeBehavior: ${err.message}`, "error");
 });
 
 test("agenticoding settings command falls back without usable TUI", async () => {

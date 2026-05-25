@@ -131,8 +131,12 @@ async function readSettingsSource(label: SettingsSourceLabel, path: string): Pro
 	let raw: string;
 	try {
 		raw = await readFile(path, "utf8");
-	} catch {
-		return { label, path, exists: false, invalid: false, settings: createSettingsObject(), resumeBehavior: undefined };
+	} catch (error) {
+		const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
+		if (code === "ENOENT") {
+			return { label, path, exists: false, invalid: false, settings: createSettingsObject(), resumeBehavior: undefined };
+		}
+		return { label, path, exists: true, invalid: true, settings: createSettingsObject(), resumeBehavior: undefined };
 	}
 
 	try {
@@ -336,14 +340,18 @@ export function createAgenticodingSettingsComponent(
 		(id, newValue) => {
 			if (id !== "handoff.resumeBehavior" || !isHandoffResumeBehavior(newValue)) return;
 			void (async () => {
-				const saved = await model.save(newValue, ctx);
-				model = await buildAgenticodingSettingsModel(ctx);
-				settingsList.updateValue("handoff.resumeBehavior", model.effectiveBehavior);
-				if (saved && model.projectOverrideWarning) {
-					notify(ctx, model.projectOverrideWarning, "warning");
+				try {
+					const saved = await model.save(newValue, ctx);
+					model = await buildAgenticodingSettingsModel(ctx);
+					settingsList.updateValue("handoff.resumeBehavior", model.effectiveBehavior);
+					if (saved && model.projectOverrideWarning) {
+						notify(ctx, model.projectOverrideWarning, "warning");
+					}
+					refreshSummary();
+					tui.requestRender();
+				} catch (err) {
+					notify(ctx, `Failed to save handoff.resumeBehavior: ${err instanceof Error ? err.message : String(err)}`, "error");
 				}
-				refreshSummary();
-				tui.requestRender();
 			})();
 		},
 		() => done("closed"),
