@@ -1,7 +1,7 @@
 # pi-agenticoding
 
 [![pi.dev package](https://img.shields.io/badge/pi.dev-package-purple)](https://pi.dev/packages/pi-agenticoding)
-[![npm version](https://img.shields.io/badge/npm-0.2.0-blue)](https://www.npmjs.com/package/pi-agenticoding)
+[![npm version](https://img.shields.io/badge/npm-0.3.0-blue)](https://www.npmjs.com/package/pi-agenticoding)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 ![Status](https://img.shields.io/badge/status-active-brightgreen)
 
@@ -40,7 +40,9 @@ Then disable pi's built-in compaction so handoff stays in control:
 }
 ```
 
-That's it. Your agent now has `spawn`, `ledger_add`, `ledger_get`, `ledger_list`, and `handoff`. The status bar shows context usage and ledger count.
+Optional handoff resume preferences can be changed later with `/agenticoding-settings`.
+
+That's it. Your agent now has `spawn`, `ledger_add`, `ledger_get`, `ledger_list`, `handoff`, and `/agenticoding-settings`. The status bar shows context usage and ledger count.
 
 ---
 
@@ -50,7 +52,8 @@ That's it. Your agent now has `spawn`, `ledger_add`, `ledger_get`, `ledger_list`
 |---------|-------------------|
 | **Context usage %** | `ctx 65%` in status bar — green < 30%, yellow < 50%, orange < 70%, red ≥ 70% |
 | **Ledger count** | 📒 `3` when entries exist, hidden when empty |
-| **`/handoff` command** | Instant pivot — agent drafts brief, compacts context, resumes |
+| **`/handoff` command** | Instant pivot — agent drafts brief, compacts context, waits for next input (configurable auto-resume) |
+| **`/agenticoding-settings` command** | TUI panel for global handoff resume behavior, with project override warnings |
 | **`/ledger` command** | Overlay showing all entries with previews |
 | **Auto-rehydration** | Ledger entries survive session restarts |
 | **Spawn transparency** | Watch child agents work in real time in the TUI |
@@ -113,6 +116,16 @@ A sparse continuity cache the agent curates while working. After discovering som
 ### Handoff — Deliberate Compaction
 
 When context degrades or the job changes, the agent saves reusable state to the ledger, writes a focused brief preserving what's still missing, and restarts clean. The new context starts with the brief front-and-center, all ledger entries accessible, and zero noise.
+
+By default, handoff waits after compaction for your next input. To auto-resume, set `handoff.resumeBehavior` to `"proceed"`; valid values are `"wait"` and `"proceed"`.
+
+```json
+{
+  "handoff": { "resumeBehavior": "proceed" }
+}
+```
+
+Run `/agenticoding-settings` to change this from the TUI. It saves global-only to `~/.pi/agent/settings.json`; project `.pi/settings.json` values still override global settings, and the panel warns when an override is active.
 
 **Rule of thumb:** The ledger holds reusable learned knowledge. Handoff carries the remaining situational context.
 

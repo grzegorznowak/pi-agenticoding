@@ -28,6 +28,7 @@ import { registerLedgerRehydration } from "./ledger/rehydration.js";
 import { registerHandoffTool } from "./handoff/tool.js";
 import { registerHandoffCommand } from "./handoff/command.js";
 import { registerHandoffCompaction } from "./handoff/compact.js";
+import { registerAgenticodingSettingsCommand } from "./settings.js";
 import { registerSpawnTool } from "./spawn/index.js";
 import {
 	STATUS_KEY_HANDOFF,
@@ -51,6 +52,7 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── Register commands ───────────────────────────────────────────
 	registerHandoffCommand(pi, state);
+	registerAgenticodingSettingsCommand(pi);
 
 	// ── /ledger command — interactive entry selector ────────────────
 	pi.registerCommand("ledger", {
