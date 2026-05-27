@@ -8,12 +8,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgenticodingState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
+import { temporarilyActivateHandoffTool } from "./availability.js";
 
 export function registerHandoffCommand(pi: ExtensionAPI, state: AgenticodingState): void {
 	pi.registerCommand("handoff", {
 		description:
 			"Ask the LLM to draft a handoff brief that completes the picture from " +
-			"your direction, then perform the handoff automatically.",
+			"your direction, then perform the handoff manually.",
 
 		handler: async (args, ctx) => {
 			const direction = args.trim();
@@ -27,6 +28,7 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: AgenticodingStat
 				enforcementAttempts: 0,
 				toolCalled: false,
 			};
+			temporarilyActivateHandoffTool(pi);
 
 			// Show live progress indicator in footer
 			if (ctx.hasUI && ctx.ui.theme) {

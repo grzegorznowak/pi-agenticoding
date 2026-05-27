@@ -21,7 +21,7 @@ import {
 	Text,
 } from "@earendil-works/pi-tui";
 import { createState, resetState, type AgenticodingState } from "./state.js";
-import { CONTEXT_PRIMER } from "./system-prompt.js";
+import { getContextPrimer } from "./system-prompt.js";
 import { buildNudge, registerWatchdog } from "./watchdog.js";
 import { registerNotebookTools } from "./notebook/tools.js";
 import { registerNotebookRehydration } from "./notebook/rehydration.js";
@@ -30,6 +30,7 @@ import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { registerHandoffTool } from "./handoff/tool.js";
 import { registerHandoffCommand } from "./handoff/command.js";
 import { registerHandoffCompaction } from "./handoff/compact.js";
+import { updateHandoffToolAvailability } from "./handoff/availability.js";
 import { registerAgenticodingSettingsCommand } from "./settings.js";
 import { registerSpawnTool } from "./spawn/index.js";
 import {
@@ -65,13 +66,16 @@ export default function (pi: ExtensionAPI): void {
 			const topicArg = args.trim();
 			if (topicArg) {
 				const result = setActiveNotebookTopic(state, topicArg, "human");
+				const availability = await updateHandoffToolAvailability(pi, state, ctx);
 				if (ctx.hasUI) {
 					const message = result.boundaryHint
-						? `Active notebook topic changed: ${result.boundaryHint.from} → ${result.boundaryHint.to}. This is a likely task boundary; handoff is recommended before continuing.`
+						? (availability.automaticEnabled
+							? `Active notebook topic changed: ${result.boundaryHint.from} → ${result.boundaryHint.to}. This is a likely task boundary; handoff is recommended before continuing.`
+							: `Active notebook topic changed: ${result.boundaryHint.from} → ${result.boundaryHint.to}. This is a likely task boundary; save notebook findings and tell the operator if a clean transition is needed.`)
 						: `Active notebook topic: ${result.current}`;
 					ctx.ui.notify(message, result.boundaryHint ? "warning" : "info");
 				}
-				updateIndicators(ctx, state);
+				updateIndicators(ctx, state, availability.automaticEnabled);
 				return;
 			}
 			if (!ctx.hasUI) {
@@ -162,19 +166,23 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── before_agent_start: inject context primer + notebook ───────
 	pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
+		const availability = await updateHandoffToolAvailability(pi, state, ctx);
+
 		// Update TUI indicators before each user-prompt agent run
-		updateIndicators(ctx, state);
+		updateIndicators(ctx, state, availability.automaticEnabled);
 
 		const parts: string[] = [event.systemPrompt];
 
 		// Inject context management primer at the end of the system prompt
-		parts.push("\n" + CONTEXT_PRIMER);
+		parts.push("\n" + getContextPrimer(availability.automaticEnabled));
 
 		if (state.activeNotebookTopic) {
 			parts.push(
 				`\n## Active Notebook Topic\n` +
 				`Current topic: \`${state.activeNotebookTopic}\` (${state.activeNotebookTopicSource ?? "unknown"}-set).\n` +
-				`Treat this as the current semantic frame. If new work fits it, prefer spawn for isolated noisy subtasks. If it does not fit it, prefer handoff over dragging stale context forward.`,
+				(availability.automaticEnabled
+					? `Treat this as the current semantic frame. If new work fits it, prefer spawn for isolated noisy subtasks. If it does not fit it, prefer handoff over dragging stale context forward.`
+					: `Treat this as the current semantic frame. If new work fits it, prefer spawn for isolated noisy subtasks. If it does not fit it, save durable notebook findings, continue inline only if safe, or tell the operator.`),
 			);
 		} else {
 			parts.push(
@@ -214,7 +222,8 @@ export default function (pi: ExtensionAPI): void {
 			return;
 		}
 
-		const nudge = buildNudge(state, percent);
+		const availability = await updateHandoffToolAvailability(pi, state, ctx);
+		const nudge = buildNudge(state, percent, availability.automaticEnabled);
 		state.pendingTopicBoundaryHint = null;
 		return {
 			messages: [
@@ -241,7 +250,8 @@ export default function (pi: ExtensionAPI): void {
 				ctx.ui.setWidget(WIDGET_KEY_WARNING, undefined);
 			}
 		}
-		updateIndicators(ctx, state);
+		const availability = await updateHandoffToolAvailability(pi, state, ctx);
+		updateIndicators(ctx, state, availability.automaticEnabled);
 	});
 
 	// ── update TUI indicators after each turn ───────────────────────
@@ -253,7 +263,9 @@ export default function (pi: ExtensionAPI): void {
 			if (ctx.hasUI) {
 				ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
 			}
+			await updateHandoffToolAvailability(pi, state, ctx);
 		}
-		updateIndicators(ctx, state);
+		const availability = await updateHandoffToolAvailability(pi, state, ctx);
+		updateIndicators(ctx, state, availability.automaticEnabled);
 	});
 }

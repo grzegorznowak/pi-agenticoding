@@ -40,7 +40,7 @@ Then disable pi's built-in compaction so handoff stays in control:
 }
 ```
 
-Optional handoff resume preferences can be changed later with `/agenticoding-settings`.
+Optional automatic handoff availability can be changed later with `/agenticoding-settings`.
 
 That's it. Your agent now has `spawn`, `notebook_write`, `notebook_read`, `notebook_index`, `handoff`, and `/agenticoding-settings`. The status bar shows context usage and notebook count.
 
@@ -52,8 +52,8 @@ That's it. Your agent now has `spawn`, `notebook_write`, `notebook_read`, `noteb
 |---------|-------------------|
 | **Context usage %** | `ctx 65%` in status bar — green < 30%, yellow < 50%, orange < 70%, red ≥ 70% |
 | **Notebook count** | 📒 `3` when pages exist, dim `📒 0` when empty |
-| **`/handoff` command** | Instant pivot — agent drafts brief, compacts context, waits for next input (configurable auto-resume) |
-| **`/agenticoding-settings` command** | TUI panel for global handoff resume behavior, with project override warnings |
+| **`/handoff` command** | Explicit manual pivot — agent drafts brief, compacts context, then waits for your next input |
+| **`/agenticoding-settings` command** | TUI panel for global `handoff.automaticEnabled`, with project override warnings |
 | **`/notebook` command** | Overlay showing all notebook pages with previews |
 | **Auto-rehydration** | Notebook pages survive session restarts |
 | **Spawn transparency** | Watch child agents work in real time in the TUI |
@@ -117,15 +117,21 @@ A sparse pocket notebook the agent curates while working. After discovering some
 
 When context degrades or the job changes, the agent saves reusable state to the notebook, writes a focused brief preserving what's still missing, and restarts clean. The new context starts with the brief front-and-center, all notebook pages accessible, and zero noise.
 
-By default, handoff waits after compaction for your next input. To auto-resume, set `handoff.resumeBehavior` to `"proceed"`; valid values are `"wait"` and `"proceed"`.
+By default, automatic handoff is enabled: the agent can see the `handoff` tool and may use it at context/job boundaries. Handoff completion always waits for your next explicit input; there is no configurable auto-`Proceed.` behavior.
+
+To make handoff human-driven only, set `handoff.automaticEnabled` to `false` in raw Pi settings JSON. Supported persisted values are JSON booleans `true` and `false`; missing settings default to `true`.
 
 ```json
 {
-  "handoff": { "resumeBehavior": "proceed" }
+  "handoff": { "automaticEnabled": false }
 }
 ```
 
-Run `/agenticoding-settings` to change this from the TUI. It saves global-only to `~/.pi/agent/settings.json`; project `.pi/settings.json` values still override global settings, and the panel warns when an override is active.
+Settings are read from `~/.pi/agent/settings.json` and `<project>/.pi/settings.json`, with project settings overriding global settings. When automatic handoff is disabled, the agent-facing `handoff` tool and handoff-call guidance are removed from normal turns. The explicit operator command `/handoff <direction>` still works: it temporarily enables the tool for that requested handoff, compacts, restores the disabled state, and then waits for your next input.
+
+Run `/agenticoding-settings` to change the global value from the TUI. It saves global-only to `~/.pi/agent/settings.json`, preserves unrelated JSON keys, shows the effective runtime value separately, and warns when a project override masks the global value. Edit or remove project overrides manually.
+
+Migration note: the superseded PR-only `handoff.resumeBehavior` (`"wait"`/`"proceed"`) setting is ignored and cannot trigger automatic continuation. Remove it when convenient.
 
 **Rule of thumb:** The notebook holds reusable learned knowledge. Handoff carries the remaining situational context.
 

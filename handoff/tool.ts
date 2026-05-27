@@ -13,7 +13,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AgenticodingState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
-import { resolveHandoffResumeBehavior } from "../settings.js";
+import { updateHandoffToolAvailability } from "./availability.js";
 
 /**
  * Build the enriched task that becomes the compaction summary.
@@ -80,27 +80,32 @@ export function registerHandoffTool(
 		}),
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const availability = await updateHandoffToolAvailability(pi, state, ctx);
+			const manualRequest = state.pendingRequestedHandoff;
+			if (!availability.automaticEnabled && !manualRequest) {
+				if (ctx.hasUI) {
+					ctx.ui.notify("Automatic handoff is disabled by handoff.automaticEnabled=false; use the explicit /handoff <direction> command to request a manual handoff.", "warning");
+				}
+				return {
+					content: [{ type: "text", text: "Automatic handoff is disabled, and there is no active manual /handoff request. No compaction was started." }],
+					details: { automaticEnabled: false, manualRequest: false },
+				};
+			}
+
 			const enrichedTask = buildEnrichedTask(params.task);
-			const resumeBehavior = await resolveHandoffResumeBehavior(ctx);
 			state.pendingHandoff = { task: enrichedTask, source: "tool" };
-			if (state.pendingRequestedHandoff) {
-				state.pendingRequestedHandoff.toolCalled = true;
+			if (manualRequest) {
+				manualRequest.toolCalled = true;
 			}
 			ctx.compact({
-				onComplete: () => {
-					if (resumeBehavior === "proceed") {
-						pi.sendUserMessage("Proceed.");
-					}
-				},
+				onComplete: () => {},
 				onError: () => {
 					state.pendingHandoff = null;
-					// Safe: pendingRequestedHandoff may already be cleaned up by watchdog
-					if (state.pendingRequestedHandoff) {
-						state.pendingRequestedHandoff.toolCalled = false;
-					}
+					state.pendingRequestedHandoff = null;
 					if (ctx.hasUI) {
 						ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
 					}
+					void updateHandoffToolAvailability(pi, state, ctx);
 				},
 			});
 
