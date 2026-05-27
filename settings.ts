@@ -314,7 +314,8 @@ export function getAgenticodingSettingsDisplayLines(model: AgenticodingSettingsM
 	const lines = [
 		`Resolved handoff.automaticEnabled: ${model.effectiveAutomaticEnabled} (${model.effectiveSource})`,
 		`Supported values: true, false. Default: true (automatic handoff enabled).`,
-		`When false, the agent-facing handoff tool is inactive for normal turns; manual /handoff <direction> still works.`,
+		`When false, the agent-facing handoff tool is inactive for normal turns; manual /handoff <direction> still works from an idle prompt.`,
+		`Setting changes affect future fresh agent turns; in-flight queued follow-ups keep their existing tool schema.`,
 		`Handoff completion waits for your next explicit input; handoff.resumeBehavior is ignored and no automatic Proceed. message is sent.`,
 		`Global settings: ${model.state.global.path} (${model.state.global.invalid ? "invalid JSON" : describeValue(model.state.global.automaticEnabled)})`,
 		`Project settings: ${model.state.project.path} (${model.state.project.invalid ? "invalid JSON" : describeValue(model.state.project.automaticEnabled)})`,

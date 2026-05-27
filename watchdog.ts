@@ -10,8 +10,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgenticodingState } from "./state.js";
-import { STATUS_KEY_HANDOFF } from "./tui.js";
-import { updateHandoffToolAvailability } from "./handoff/availability.js";
+import { clearStaleRequestedHandoff } from "./handoff/cleanup.js";
 
 export function buildNudge(state: Pick<AgenticodingState, "activeNotebookTopic" | "pendingTopicBoundaryHint">, percent: number | null, handoffAutomaticEnabled = true): string {
 	const pct = percent === null ? null : Math.round(percent);
@@ -74,12 +73,8 @@ export function registerWatchdog(pi: ExtensionAPI, state: AgenticodingState): vo
 		const requestedHandoff = state.pendingRequestedHandoff;
 		if (requestedHandoff) {
 			requestedHandoff.enforcementAttempts += 1;
-			if (!requestedHandoff.toolCalled) {
-				state.pendingRequestedHandoff = null;
-				if (ctx.hasUI) {
-					ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
-				}
-				await updateHandoffToolAvailability(pi, state, ctx);
+			if (!requestedHandoff.toolCalled && !requestedHandoff.awaitingAgentTurn) {
+				await clearStaleRequestedHandoff(pi, state, ctx);
 			}
 		}
 

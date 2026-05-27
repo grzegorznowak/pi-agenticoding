@@ -2,14 +2,16 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { AgenticodingState } from "../state.js";
 import { resolveHandoffAutomaticAvailability, type HandoffAutomaticAvailability } from "../settings.js";
 
-function getActiveTools(pi: ExtensionAPI): string[] {
-	return typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
+function getActiveTools(pi: ExtensionAPI): string[] | null {
+	return typeof pi.getActiveTools === "function" ? pi.getActiveTools() : null;
 }
 
-function setActiveTools(pi: ExtensionAPI, tools: string[]): void {
-	if (typeof pi.setActiveTools === "function") {
-		pi.setActiveTools(tools);
+function setActiveTools(pi: ExtensionAPI, tools: string[]): boolean {
+	if (typeof pi.setActiveTools !== "function") {
+		return false;
 	}
+	pi.setActiveTools(tools);
+	return true;
 }
 
 export function applyHandoffToolAvailability(
@@ -19,6 +21,9 @@ export function applyHandoffToolAvailability(
 ): void {
 	const shouldBeActive = automaticEnabled || manualRequested;
 	const active = getActiveTools(pi);
+	if (!active) {
+		return;
+	}
 	const hasHandoff = active.includes("handoff");
 
 	if (shouldBeActive && !hasHandoff) {
@@ -41,9 +46,16 @@ export async function updateHandoffToolAvailability(
 	return availability;
 }
 
-export function temporarilyActivateHandoffTool(pi: ExtensionAPI): void {
+export function temporarilyActivateHandoffTool(pi: ExtensionAPI): boolean {
 	const active = getActiveTools(pi);
-	if (!active.includes("handoff")) {
-		setActiveTools(pi, [...active, "handoff"]);
+	if (!active) {
+		return false;
 	}
+	if (active.includes("handoff")) {
+		return true;
+	}
+	if (!setActiveTools(pi, [...active, "handoff"])) {
+		return false;
+	}
+	return getActiveTools(pi)?.includes("handoff") ?? false;
 }

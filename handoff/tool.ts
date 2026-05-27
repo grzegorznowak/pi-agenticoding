@@ -102,6 +102,7 @@ export function registerHandoffTool(
 				onError: () => {
 					state.pendingHandoff = null;
 					state.pendingRequestedHandoff = null;
+					state.pendingRequestedHandoffPrompt = null;
 					if (ctx.hasUI) {
 						ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
 					}

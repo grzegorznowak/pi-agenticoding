@@ -31,6 +31,7 @@ import { registerHandoffTool } from "./handoff/tool.js";
 import { registerHandoffCommand } from "./handoff/command.js";
 import { registerHandoffCompaction } from "./handoff/compact.js";
 import { updateHandoffToolAvailability } from "./handoff/availability.js";
+import { clearStaleRequestedHandoff } from "./handoff/cleanup.js";
 import { registerAgenticodingSettingsCommand } from "./settings.js";
 import { registerSpawnTool } from "./spawn/index.js";
 import {
@@ -166,6 +167,13 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── before_agent_start: inject context primer + notebook ───────
 	pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
+		if (
+			state.pendingRequestedHandoff?.awaitingAgentTurn &&
+			state.pendingRequestedHandoffPrompt !== null &&
+			event.prompt === state.pendingRequestedHandoffPrompt
+		) {
+			state.pendingRequestedHandoff.awaitingAgentTurn = false;
+		}
 		const availability = await updateHandoffToolAvailability(pi, state, ctx);
 
 		// Update TUI indicators before each user-prompt agent run
@@ -254,16 +262,25 @@ export default function (pi: ExtensionAPI): void {
 		updateIndicators(ctx, state, availability.automaticEnabled);
 	});
 
+	pi.on("turn_start", async (_event, _ctx: ExtensionContext) => {
+		// Manual /handoff follow-up detection is intentionally handled in
+		// before_agent_start by matching the extension-injected user message.
+		// turn_start fires for every internal LLM/tool turn in an already-running
+		// agent loop, so using it here would prematurely consume queued follow-ups.
+	});
+
 	// ── update TUI indicators after each turn ───────────────────────
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
-		// Fallback: clear handoff indicator if the LLM completed a turn
-		// without calling the handoff tool (ignored the direction)
+		// Fallback: clear handoff indicator if the LLM completed the requested
+		// /handoff turn without calling the handoff tool. If /handoff was queued
+		// as a follow-up while another turn was streaming, keep the temporary tool
+		// activation through that current turn_end until the requested turn starts.
 		if (state.pendingRequestedHandoff && !state.pendingRequestedHandoff.toolCalled) {
-			state.pendingRequestedHandoff = null;
-			if (ctx.hasUI) {
-				ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+			if (!state.pendingRequestedHandoff.awaitingAgentTurn) {
+				await clearStaleRequestedHandoff(pi, state, ctx);
+			} else {
+				await updateHandoffToolAvailability(pi, state, ctx);
 			}
-			await updateHandoffToolAvailability(pi, state, ctx);
 		}
 		const availability = await updateHandoffToolAvailability(pi, state, ctx);
 		updateIndicators(ctx, state, availability.automaticEnabled);
