@@ -98,7 +98,9 @@ export function registerHandoffTool(
 				manualRequest.toolCalled = true;
 			}
 			ctx.compact({
-				onComplete: () => {},
+				onComplete: () => {
+					pi.sendUserMessage("Proceed.");
+				},
 				onError: () => {
 					state.pendingHandoff = null;
 					state.pendingRequestedHandoff = null;

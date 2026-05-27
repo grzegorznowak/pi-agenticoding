@@ -408,7 +408,7 @@ test("/handoff requires a direction", async () => {
 	assert.deepEqual(pi.sentUserMessages, []);
 });
 
-test("handoff automatic setting defaults to enabled without automatic continuation", async () => {
+test("handoff automatic setting defaults to enabled with post-compaction Proceed", async () => {
 	const pi = new MockPi();
 	const state = createState();
 	state.notebookPages.set("auth-refresh", "sensitive notebook body");
@@ -441,11 +441,11 @@ test("handoff automatic setting defaults to enabled without automatic continuati
 	assert.equal(result.terminate, true);
 
 	compactOptions.onComplete({});
-	assert.deepEqual(pi.sentUserMessages, []);
+	assert.deepEqual(pi.sentUserMessages, [{ content: "Proceed.", options: undefined }]);
 	assert.ok(pi.activeTools.includes("handoff"));
 });
 
-test("handoff automatic setting true keeps handoff active without automatic continuation", async () => {
+test("handoff automatic setting true keeps handoff active and proceeds after compaction", async () => {
 	const result = await runHandoffResumeScenario({
 		globalSettings: { handoff: { automaticEnabled: false } },
 		projectSettings: { handoff: { automaticEnabled: true } },
@@ -453,7 +453,7 @@ test("handoff automatic setting true keeps handoff active without automatic cont
 
 	assert.ok(result.compactOptions);
 	result.compactOptions.onComplete({});
-	assert.deepEqual(result.sentUserMessages, []);
+	assert.deepEqual(result.sentUserMessages, [{ content: "Proceed.", options: undefined }]);
 	assert.deepEqual(result.notifications, []);
 	assert.ok(result.activeTools.includes("handoff"));
 });
@@ -558,14 +558,14 @@ test("handoff automatic setting non-ENOENT read errors are treated as invalid so
 	});
 });
 
-test("handoff resumeBehavior is ignored and cannot trigger automatic continuation", async () => {
+test("handoff resumeBehavior is ignored and completion still uses fixed Proceed", async () => {
 	const result = await runHandoffResumeScenario({
 		globalSettings: { handoff: { resumeBehavior: "proceed" } },
 	});
 
 	assert.ok(result.compactOptions);
 	result.compactOptions.onComplete({});
-	assert.deepEqual(result.sentUserMessages, []);
+	assert.deepEqual(result.sentUserMessages, [{ content: "Proceed.", options: undefined }]);
 	assert.deepEqual(result.notifications, []);
 });
 
@@ -593,6 +593,9 @@ test("manual slash handoff temporarily activates handoff when automatic handoff 
 		});
 		assert.ok(compactOptions);
 		assert.equal(state.pendingRequestedHandoff?.toolCalled, true);
+
+		compactOptions.onComplete({});
+		assert.equal(pi.sentUserMessages.at(-1)?.content, "Proceed.");
 	});
 });
 
