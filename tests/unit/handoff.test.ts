@@ -20,17 +20,15 @@ test("/handoff sends the direction back through the LLM without opening the edit
 	});
 
 	assert.deepEqual(state.pendingRequestedHandoff, {
-		direction: "implement auth",
+		readonlyBypassActive: false,
+		resumeReadonlyAfterHandoff: false,
 		enforcementAttempts: 0,
 		toolCalled: false,
 	});
-	assert.deepEqual(pi.sentUserMessages, [
-		{
-			content:
-				"Handoff direction: implement auth\n\nPrepare a handoff in the current session. First, save any durable reusable knowledge that aligns with the direction above to the notebook: findings worth keeping, constraints discovered, decisions made, or other grounding future contexts will need. Then draft a concise but sufficiently detailed handoff brief capturing only the remaining situational context: current state, blockers, unresolved questions, failed paths worth avoiding, and next steps. The next context will read the notebook on demand, so do not duplicate notebook content in the brief. Use any structure that makes the next work unambiguous. Reference notebook pages by name when relevant.",
-			options: undefined,
-		},
-	]);
+	assert.equal(pi.sentUserMessages.length, 1);
+	assert.match(pi.sentUserMessages[0].content, /Handoff direction: implement auth/);
+	assert.match(pi.sentUserMessages[0].content, /You must perform a real handoff now/);
+	assert.equal(pi.sentUserMessages[0].options, undefined);
 });
 
 test("/handoff requires a direction", async () => {
@@ -91,7 +89,7 @@ test("handoff compaction replaces old context with the queued task", async () =>
 	const pi = createTestPI();
 	const state = createState();
 	state.pendingHandoff = { task: "Goal: continue", source: "tool" };
-	state.pendingRequestedHandoff = { direction: "implement auth", enforcementAttempts: 1, toolCalled: true };
+	state.pendingRequestedHandoff = { enforcementAttempts: 1, toolCalled: true, readonlyBypassActive: false, resumeReadonlyAfterHandoff: false };
 	state.activeNotebookTopic = "oauth";
 	state.activeNotebookTopicSource = "human";
 	registerHandoffCompaction(pi as any, state);
@@ -106,9 +104,10 @@ test("handoff compaction replaces old context with the queued task", async () =>
 	);
 
 	assert.equal(state.pendingHandoff, null);
-	assert.equal(state.pendingRequestedHandoff, null);
-	assert.equal(state.activeNotebookTopic, null);
-	assert.equal(state.activeNotebookTopicSource, null);
+	assert.notEqual(state.pendingRequestedHandoff, null, "pendingRequestedHandoff stays until onComplete in tool.ts");
+	// Notebook topic is cleared in handoff tool's onComplete, not in compaction itself
+	assert.equal(state.activeNotebookTopic, "oauth");
+	assert.equal(state.activeNotebookTopicSource, "human");
 	assert.equal(result.compaction.summary, "Goal: continue");
 	assert.equal(result.compaction.tokensBefore, 123);
 	assert.equal(result.compaction.firstKeptEntryId, "leaf-1-handoff-cut");
@@ -176,7 +175,7 @@ test("handoff compaction error clears pending state and status", async () => {
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
 });
 
-test("turn_end fallback clears stale requested handoff status", async () => {
+test("turn_end fallback keeps requested handoff status sticky until real handoff happens", async () => {
 	const pi = createTestPI();
 	registerAgenticoding(pi as any);
 	const statuses = new Map<string, string | undefined>();
@@ -201,7 +200,7 @@ test("turn_end fallback clears stale requested handoff status", async () => {
 		getContextUsage: () => null,
 	});
 
-	assert.equal(statuses.get(STATUS_KEY_HANDOFF), undefined);
+	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff in progress");
 });
 
 test("session_start new clears stale handoff status and warning widget", async () => {

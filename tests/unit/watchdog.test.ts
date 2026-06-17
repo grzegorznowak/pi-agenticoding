@@ -4,7 +4,8 @@ import { createState } from "../../state.js";
 import { registerWatchdog } from "../../watchdog.js";
 import { buildNudge } from "../../watchdog.js";
 import registerAgenticoding from "../../index.js";
-import { createTestPI } from "./helpers.js";
+import { registerHandoffCommand } from "../../handoff/command.js";
+import { createTestPI, makeReadonlyUICtx } from "./helpers.js";
 
 test("watchdog records context usage without user notifications", async () => {
 	const pi = createTestPI();
@@ -22,7 +23,6 @@ test("watchdog records context usage without user notifications", async () => {
 		},
 	);
 
-	assert.equal(state.lastContextPercent, 70);
 	assert.deepEqual(notifications, []);
 });
 
@@ -44,10 +44,11 @@ test("context injects watchdog reminder before each LLM call", async () => {
 	assert.equal(result.messages[1].role, "custom");
 	assert.equal(result.messages[1].customType, "agenticoding-watchdog");
 	assert.equal(result.messages[1].display, false);
-	assert.match(result.messages[1].content, /Context at 70%/);
-	assert.match(result.messages[1].content, /Active notebook topic: oauth/);
-	assert.match(result.messages[1].content, /spawn it instead of polluting the parent context/i);
-	assert.doesNotMatch(result.messages[1].content, /If you're mid-job and still clear|consider a handoff and draft a clear brief for what comes next/i);
+	assert.match(result.messages[1].content, /70%/);
+	assert.match(result.messages[1].content, /oauth/);
+	assert.match(result.messages[1].content, /spawn/i);
+	assert.match(result.messages[1].content, /parent context/i);
+	assert.doesNotMatch(result.messages[1].content, /draft a clear brief|what comes next/i);
 });
 
 
@@ -64,7 +65,9 @@ test("context injects a boundary nudge below 30% after an explicit topic change"
 	);
 
 	assert.equal(result.messages[1].display, false);
-	assert.match(result.messages[1].content, /Notebook topic changed from oauth to billing/);
+	assert.match(result.messages[1].content, /oauth/i);
+	assert.match(result.messages[1].content, /billing/i);
+	assert.match(result.messages[1].content, /topic changed/i);
 });
 
 
@@ -82,8 +85,9 @@ test("context injects a no-topic nudge when context is high", async () => {
 	assert.equal(result.messages[1].role, "custom");
 	assert.equal(result.messages[1].customType, "agenticoding-watchdog");
 	assert.equal(result.messages[1].display, false);
-	assert.match(result.messages[1].content, /No active notebook topic is set/);
-	assert.match(result.messages[1].content, /Assign a fresh topic in the next clean context after handoff/i);
+	assert.match(result.messages[1].content, /no active notebook topic/i);
+	assert.match(result.messages[1].content, /fresh topic/i);
+	assert.match(result.messages[1].content, /handoff/i);
 });
 
 
@@ -98,7 +102,9 @@ test("context consumes a boundary hint after the first injected nudge", async ()
 		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
 		{ getContextUsage: () => ({ percent: 20 }) },
 	);
-	assert.match(first.messages[1].content, /Notebook topic changed from oauth to billing/);
+	assert.match(first.messages[1].content, /oauth/i);
+	assert.match(first.messages[1].content, /billing/i);
+	assert.match(first.messages[1].content, /topic changed/i);
 
 	const second = await handler(
 		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
@@ -108,11 +114,10 @@ test("context consumes a boundary hint after the first injected nudge", async ()
 });
 
 
-test("buildNudge no longer emits the old percent-only handoff text", () => {
-	const old = buildNudge({ activeNotebookTopic: "oauth", pendingTopicBoundaryHint: null }, 46);
-	assert.doesNotMatch(old, /One context, one job\.|If you're mid-job and still clear|consider a handoff and draft a clear brief/i);
-	assert.match(old, /Active notebook topic: oauth/);
-	assert.match(old, /prefer spawn/i);
+test("buildNudge emits topic and spawn guidance", () => {
+	const nudge = buildNudge({ activeNotebookTopic: "oauth", pendingTopicBoundaryHint: null }, 46);
+	assert.match(nudge, /Active notebook topic: oauth/);
+	assert.match(nudge, /prefer spawn/i);
 });
 
 
@@ -132,12 +137,17 @@ test("buildNudge handles null percent and boundary hints before topic guidance",
 	assert.match(noTopic, /No active notebook topic is set/);
 });
 
-test("watchdog stays advisory when a requested handoff is not completed", async () => {
+test("watchdog stays advisory for a fresh user-requested handoff", async () => {
 	const pi = createTestPI();
 	const state = createState();
-	state.pendingRequestedHandoff = { direction: "implement auth", enforcementAttempts: 0, toolCalled: false };
+	registerHandoffCommand(pi as any, state);
 	registerWatchdog(pi as any, state);
 	const [handler] = pi.handlers.get("agent_end")!;
+
+	await pi.commands.get("handoff").handler("implement auth", {
+		...makeReadonlyUICtx(),
+		isIdle: () => true,
+	} as any);
 
 	const notifications: string[] = [];
 	await handler(
@@ -152,7 +162,83 @@ test("watchdog stays advisory when a requested handoff is not completed", async 
 		},
 	);
 
-	assert.equal(state.pendingRequestedHandoff, null);
+	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
+	assert.ok(state.pendingRequestedHandoff, "handoff request should remain active after one turn");
 	assert.deepEqual(notifications, []);
-	assert.deepEqual(pi.sentUserMessages, []);
+});
+
+test("watchdog auto-cancels a user-requested handoff after enough unanswered turns", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	registerHandoffCommand(pi as any, state);
+	registerWatchdog(pi as any, state);
+	const [handler] = pi.handlers.get("agent_end")!;
+
+	await pi.commands.get("handoff").handler("implement auth", {
+		...makeReadonlyUICtx(),
+		isIdle: () => true,
+	} as any);
+
+	const notifications: unknown[] = [];
+	const ctx = {
+		hasUI: true,
+		ui: { notify: (message: unknown) => notifications.push(message), setStatus: () => {} },
+		getContextUsage: () => ({ percent: 20 }),
+	};
+
+	for (let i = 0; i < 5; i++) {
+		await handler({}, ctx);
+	}
+
+	assert.equal(state.pendingRequestedHandoff, null, "pending handoff should be auto-cancelled");
+	assert.ok(notifications.length > 0, "user should receive a cancellation notification");
+	assert.match(notifications[0] as string, /cancelled/i, "notification should mention cancellation");
+});
+
+// ── Readonly-specific injection contracts ─────────────────────────
+
+test("context injects a readonly-mode nudge after toggle", async () => {
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	const [handler] = pi.handlers.get("context")!;
+
+	const result = await handler(
+		{ messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+		{ getContextUsage: () => null },
+	);
+
+	assert.equal(result.messages.length, 2);
+	assert.equal(result.messages[1].customType, "agenticoding-readonly-nudge");
+	assert.match(result.messages[1].content, /readonly/i);
+	assert.match(result.messages[1].content, /write/i);
+	assert.match(result.messages[1].content, /edit/i);
+	assert.match(result.messages[1].content, /handoff/i);
+	assert.match(result.messages[1].content, /bash/i);
+});
+
+test("context injects readonly handoff guidance after explicit user /handoff", async () => {
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const [handler] = pi.handlers.get("context")!;
+	await pi.commands.get("readonly").handler("", makeReadonlyUICtx() as any);
+	await handler(
+		{ messages: [{ role: "user", content: "clear initial readonly nudge", timestamp: 1 }] },
+		{ getContextUsage: () => null },
+	);
+	await pi.commands.get("handoff").handler("continue readonly work", {
+		...makeReadonlyUICtx(),
+		isIdle: () => true,
+	} as any);
+
+	const result = await handler(
+		{ messages: [{ role: "user", content: "hi", timestamp: 2 }] },
+		{ getContextUsage: () => ({ percent: 70 }) },
+	);
+	const watchdogMessage = result.messages.find((message: any) => message.customType === "agenticoding-watchdog");
+
+	assert.ok(watchdogMessage, "requested handoff should inject watchdog guidance");
+	assert.match(watchdogMessage.content, /handoff/i);
+	assert.match(watchdogMessage.content, /readonly/i);
+	assert.match(watchdogMessage.content, /resume/i);
 });

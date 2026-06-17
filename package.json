@@ -31,6 +31,7 @@
     "@earendil-works/pi-ai": "^0.78.1",
     "@earendil-works/pi-coding-agent": "^0.78.1",
     "@earendil-works/pi-tui": "^0.78.1",
+    "@types/node": "^25.9.3",
     "fast-check": "^4.8.0",
     "typebox": "^1.2.2",
     "typescript": "^6.0.3"

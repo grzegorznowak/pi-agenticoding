@@ -36,9 +36,13 @@ export interface AgenticodingState {
 
 	/** User-requested handoff that must result in a real tool-driven compaction. */
 	pendingRequestedHandoff: {
-		direction: string;
-		enforcementAttempts: number;
 		toolCalled: boolean;
+		/** Temporary readonly exception: allow only the handoff tool for this request. */
+		readonlyBypassActive: boolean;
+		/** Fresh context after compaction resumes in readonly mode. */
+		resumeReadonlyAfterHandoff: boolean;
+		/** Turn counter for enforcement nudge. Cleared after N consecutive failed attempts. */
+		enforcementAttempts: number;
 	} | null;
 
 	/** Boot-time Model Groups validation snapshot used by /model-groups. */
@@ -70,6 +74,20 @@ export interface AgenticodingState {
 	 * Increment on /new so stale child updates/results cannot touch fresh state.
 	 */
 	childSessionEpoch: number;
+
+	/** Whether readonly mode is active — blocks write/edit and bash writes outside temp; handoff requires explicit /handoff. */
+	readonlyEnabled: boolean;
+
+	/** One-shot flag: deliver a readonly ON or OFF nudge via context hook, then clear. */
+	readonlyNudgePending: boolean;
+
+	/**
+	 * Last context-percentage band at which the watchdog nudge was delivered.
+	 * null = never delivered. Bands: null (<30), 0 (30-49), 1 (50-69), 2 (70+).
+	 * Used to throttle nudges — only nudge when crossing into a higher band.
+	 */
+	lastWatchdogBand: number | null;
+
 }
 
 /** Create a fresh state instance. Call reset() on /new. */
@@ -89,6 +107,9 @@ export function createState(): AgenticodingState {
 		childSessions,
 		liveChildSessions,
 		childSessionEpoch: 0,
+		readonlyEnabled: false,
+		readonlyNudgePending: false,
+		lastWatchdogBand: null,
 	};
 	// Prevent replacement — spawn lifecycle code and renderer ownership checks
 	// depend on stable map identity. Only .clear() and .delete() are valid —
@@ -121,6 +142,9 @@ export function resetState(state: AgenticodingState): void {
 	state.pendingRequestedHandoff = null;
 	state.modelGroups.groups = [];
 	state.modelGroups.validation = null;
+	state.readonlyEnabled = false;
+	state.readonlyNudgePending = false;
+	state.lastWatchdogBand = null;
 	abortAndClearChildSessions(state);
 }
 
@@ -133,6 +157,6 @@ export function abortAndClearChildSessions(state: AgenticodingState): void {
 	state.childSessions.clear();
 	state.liveChildSessions.clear();
 	for (const [session, id] of seen) {
-		session.abort().catch((e: unknown) => console.warn("[spawn] abort failed:", id, e));
+		session.abort().catch(() => {});
 	}
 }
