@@ -52,6 +52,7 @@ That's it. Your agent now has `spawn`, `notebook_write`, `notebook_read`, `noteb
 | **Notebook count** | 📒 `3` when pages exist, dim `📒 0` when empty |
 | **`/handoff` command** | Instant pivot — agent drafts brief, compacts context, resumes |
 | **`/notebook` command** | Overlay showing all notebook pages with previews |
+| **`/model-groups` command** | Manage named model groups with CRUD — global and project scope, boot validation, spawn routing |
 | **Auto-rehydration** | Notebook pages survive session restarts |
 | **Spawn transparency** | Watch child agents work in real time in the TUI |
 | **Token cost visibility** | Each spawn reports input/output tokens, cache hits, and cost |
@@ -115,6 +116,12 @@ A sparse pocket notebook the agent curates while working. After discovering some
 When context degrades or the job changes, the agent saves reusable state to the notebook, writes a focused brief preserving what's still missing, and restarts clean. The new context starts with the brief front-and-center, all notebook pages accessible, and zero noise.
 
 **Rule of thumb:** The notebook holds reusable learned knowledge. Handoff carries the remaining situational context.
+
+### Model Groups — Spawn Model Routing
+
+Define named groups of models (with optional thinking levels) that `spawn` can route child agents through. Groups persist to project and global scope, with project groups overriding same-name global groups. Use `/model-groups` to create, edit, rename, and delete groups and their model entries. On session start, all group definitions are validated against the configured model registry, and health issues (unavailable models, project overrides) are surfaced.
+
+When spawning with a group, the plugin picks one configured, authenticated model at random from the group. The child inherits the group entry's thinking level when set, otherwise the parent's thinking level, then clamps to model capability.
 
 ---
 
