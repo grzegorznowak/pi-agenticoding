@@ -32,6 +32,7 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Container, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
+import { escapeDisplayLabel } from "../model-groups/display.js";
 import type { AgenticodingState } from "../state.js";
 import {
 	__setSingletons,
@@ -165,6 +166,26 @@ function equalStats(a?: Record<string, number>, b?: Record<string, number>): boo
 	if (!a || !b) return false;
 	const keys = Object.keys(a);
 	return keys.length === Object.keys(b).length && keys.every(key => a[key] === b[key]);
+}
+
+function equalRoute(a: SpawnResultDetails["route"], b: SpawnResultDetails["route"]): boolean {
+	return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+function formatSpawnIdentity(details: Pick<SpawnResultDetails, "model" | "thinking" | "route">): string {
+	if (details.route?.status === "routed") {
+		const group = escapeDisplayLabel(details.route.group);
+		const provider = escapeDisplayLabel(details.route.provider);
+		const modelId = escapeDisplayLabel(details.route.modelId);
+		return `${group} → ${provider}/${modelId} • ${details.thinking}`;
+	}
+	if (details.route?.status === "unknown-fallback") {
+		const requestedGroup = escapeDisplayLabel(details.route.requestedGroup);
+		const provider = escapeDisplayLabel(details.route.provider);
+		const modelId = escapeDisplayLabel(details.route.modelId);
+		return `${requestedGroup}? fallback → ${provider}/${modelId} • ${details.thinking}`;
+	}
+	return `${escapeDisplayLabel(details.model)} • ${details.thinking}`;
 }
 
 function padVisibleWidth(text: string, width: number): string {
@@ -525,6 +546,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 			|| prior.thinking !== details.thinking
 			|| prior.truncated !== details.truncated
 			|| prior.outcome !== details.outcome
+			|| !equalRoute(prior.route, details.route)
 			|| !equalStats(prior.stats, details.stats)
 			|| prior.statsUnavailable !== details.statsUnavailable
 			|| this.nestTheme !== theme;
@@ -880,7 +902,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		// Identity line — distinguishes nested spawns in collapsed view
 		if (details) {
 			lines.push(truncateAndColor(
-				`${getOutcomeMarker(outcome)}${details.model} • ${details.thinking}`,
+				`${getOutcomeMarker(outcome)}${formatSpawnIdentity(details)}`,
 				width,
 				color,
 				"dim",
@@ -934,7 +956,7 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		const colorExpanded = (name: ThemeColor, text: string) => this.nestTheme ? this.nestTheme.fg(name, text) : text;
 		// Expanded mode has no shell background — safe to color before truncation
 		if (this.details) {
-			const header = `${getOutcomeMarker(this.liveOutcome)}${this.details.model} • ${this.details.thinking}`;
+			const header = `${getOutcomeMarker(this.liveOutcome)}${formatSpawnIdentity(this.details)}`;
 			lines.push(leftPad + truncateToWidth(
 				colorExpanded("dim", header),
 				childWidth,
@@ -1187,6 +1209,9 @@ function renderSpawnCall(args: any, theme: Theme, context: { expanded: boolean }
 	const prompt = typeof args.prompt === "string" ? args.prompt : "...";
 	const { shown, remaining } = renderPromptPreview(prompt, context.expanded);
 	let text = theme.fg("toolTitle", theme.bold("spawn ")) + theme.fg("accent", "child");
+	if (typeof args.group === "string" && args.group.trim()) {
+		text += theme.fg("dim", ` [${escapeDisplayLabel(args.group.trim())}]`);
+	}
 	if (typeof args.thinking === "string") {
 		text += theme.fg("dim", ` [${args.thinking}]`);
 	}
@@ -1248,7 +1273,7 @@ function renderSpawnResult(
 		.trim();
 	const summary = output || "(no output)";
 	const outcome = details?.outcome ?? "running";
-	const meta = details ? `${getOutcomeMarker(outcome)}${details.model} • ${details.thinking}` : "";
+	const meta = details ? `${getOutcomeMarker(outcome)}${formatSpawnIdentity(details)}` : "";
 	const status = getOutcomeStatusText(outcome);
 	const text = [
 		meta ? theme.fg("dim", meta) : "",
@@ -1258,7 +1283,7 @@ function renderSpawnResult(
 	return new Text(text, SPAWN_SHELL_PADDING_X, SPAWN_SHELL_PADDING_Y, getShellBackground(theme, outcome));
 }
 
-export { NestedAgentSessionComponent, renderSpawnCall, renderSpawnResult };
+export { NestedAgentSessionComponent, formatSpawnIdentity, renderSpawnCall, renderSpawnResult };
 
 // ── Test support ──────────────────────────────────────────────────────
 

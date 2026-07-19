@@ -145,7 +145,9 @@ test("Pi 0.80.8 compatibility metadata and source boundaries stay exact", () => 
 
 	const spawnSource = readText(SPAWN_SOURCE_PATH);
 	assert.doesNotMatch(spawnSource, /\bAuthStorage\b|\bModelRegistry\b/);
-	assert.doesNotMatch(spawnSource, /\bauthStorage\s*:|\bmodelRegistry\s*:/);
+	assert.doesNotMatch(spawnSource, /\bauthStorage\s*:/);
+	assert.doesNotMatch(spawnSource, /sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
+	assert.match(spawnSource, /modelRegistry:\s*ctx\.modelRegistry/);
 	assert.match(spawnSource, /model:\s*childModel/);
 	assert.match(spawnSource, /session\.dispose\(\)/);
 	const rendererSource = readText(RENDERER_SOURCE_PATH);
