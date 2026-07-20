@@ -1209,10 +1209,11 @@ function renderSpawnCall(args: any, theme: Theme, context: { expanded: boolean }
 	const prompt = typeof args.prompt === "string" ? args.prompt : "...";
 	const { shown, remaining } = renderPromptPreview(prompt, context.expanded);
 	let text = theme.fg("toolTitle", theme.bold("spawn ")) + theme.fg("accent", "child");
-	if (typeof args.group === "string" && args.group.trim()) {
-		text += theme.fg("dim", ` [${escapeDisplayLabel(args.group.trim())}]`);
+	const group = typeof args.group === "string" ? args.group.trim() : "";
+	if (group) {
+		text += theme.fg("dim", ` [${escapeDisplayLabel(group)}]`);
 	}
-	if (typeof args.thinking === "string") {
+	if (!group && typeof args.thinking === "string") {
 		text += theme.fg("dim", ` [${args.thinking}]`);
 	}
 	text += `\n${theme.fg("dim", shown)}`;

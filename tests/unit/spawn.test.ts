@@ -1012,10 +1012,16 @@ test("spawn renderCall shows prompt preview and optional routing controls", () =
 	const truncatedLines = truncated.render(120);
 	assert.ok(truncatedLines.some((l: string) => l.includes("more lines")));
 
-	// Optional group and explicit thinking are rendered as routing context.
+	// Explicit thinking is shown without a group; grouped calls show only the route.
 	const withThinking = tool.renderCall({ prompt: "Do X", thinking: "high" }, theme, { expanded: false });
 	const thinkingLines = withThinking.render(120);
 	assert.ok(thinkingLines.some((l: string) => l.includes("high")));
+	const withWhitespaceGroup = tool.renderCall(
+		{ prompt: "Do X", group: " \t ", thinking: "high" },
+		theme,
+		{ expanded: false },
+	);
+	assert.ok(withWhitespaceGroup.render(120).some((l: string) => l.includes("high")));
 	const withRouting = tool.renderCall(
 		{ prompt: "Do X", group: "review", thinking: "max" },
 		theme,
@@ -1023,7 +1029,7 @@ test("spawn renderCall shows prompt preview and optional routing controls", () =
 	);
 	const routingLines = withRouting.render(120);
 	assert.ok(routingLines.some((l: string) => l.includes("review")));
-	assert.ok(routingLines.some((l: string) => l.includes("max")));
+	assert.ok(routingLines.every((l: string) => !l.includes("max")));
 	const withEscapedGroup = tool.renderCall(
 		{ prompt: "Do X", group: "review\n\u001b" },
 		theme,
