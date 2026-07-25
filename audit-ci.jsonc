@@ -3,8 +3,8 @@
   "moderate": true,
   "allowlist": [
     // npm's audit report exposes this shrinkwrapped advisory as the module path
-    // `protobufjs`; a config invariant separately rejects any vulnerable
-    // occurrence outside Pi coding agent's exact 0.81.0 shrinkwrapped path.
-    { "GHSA-j3f2-48v5-ccww|protobufjs": { "active": true, "expiry": "2026-09-01", "notes": "protobufjs 7.6.4 only in @earendil-works/pi-coding-agent's shrinkwrap via @earendil-works/pi-ai > @google/genai; consumer overrides cannot replace it, so remove when Pi publishes protobufjs 7.6.5+" } }
+    // `brace-expansion`; a config invariant separately rejects any vulnerable
+    // occurrence outside Pi coding agent's exact 0.82.0 shrinkwrapped path.
+    { "GHSA-mh99-v99m-4gvg|brace-expansion": { "active": true, "expiry": "2026-09-01", "notes": "brace-expansion 5.0.7 only in @earendil-works/pi-coding-agent's shrinkwrap via minimatch; consumer overrides cannot replace it, so remove when Pi publishes brace-expansion 5.0.8+" } }
   ]
 }
