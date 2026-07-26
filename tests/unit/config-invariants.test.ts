@@ -274,7 +274,7 @@ test("the allowlisted vulnerable brace-expansion path is reachable only through 
 		.filter(({ version }) => isVulnerableBraceExpansionVersion(version));
 	assert.deepEqual(vulnerablePaths, [{
 		path: "pi-agenticoding > @earendil-works/pi-coding-agent > minimatch > brace-expansion",
-		version: "5.0.7",
+		version: "5.0.6",
 	}]);
 });
 

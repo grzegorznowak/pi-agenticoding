@@ -6,6 +6,7 @@ import { createState, resetState } from "../../state.js";
 import {
 	buildChildToolNames,
 	createChildTools,
+	executeSpawn,
 	registerSpawnTool,
 	truncateText,
 } from "../../spawn/index.js";

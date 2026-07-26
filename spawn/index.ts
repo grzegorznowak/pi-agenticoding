@@ -278,6 +278,7 @@ export function executeSpawn(
 		  }) => void)
 		| undefined,
 	defaultThinking: ThinkingValue,
+	sessionFactory: typeof createAgentSession = createAgentSession,
 ): Promise<{ content: TextContent[]; details: SpawnResultDetails }> {
 	let execution!: Promise<{ content: TextContent[]; details: SpawnResultDetails }>;
 	execution = (async () => {
@@ -357,7 +358,7 @@ export function executeSpawn(
 
 	const effectiveToolNames = filterReadonlyToolNames(childToolNames, state.readonlyEnabled);
 
-	const { session } = await createAgentSession({
+	const { session } = await sessionFactory({
 		sessionManager: SessionManager.inMemory(ctx.cwd),
 		model: childModel,
 		thinkingLevel: requestedChildThinking,
@@ -554,6 +555,7 @@ export function executeSpawn(
 export function registerSpawnTool(
 	pi: ExtensionAPI,
 	state: AgenticodingState,
+	sessionFactory: typeof createAgentSession = createAgentSession,
 ): void {
 	pi.registerTool({
 		name: "spawn",
@@ -586,6 +588,7 @@ export function registerSpawnTool(
 				signal,
 				onUpdate,
 				parentThinking,
+				sessionFactory,
 			);
 		},
 
