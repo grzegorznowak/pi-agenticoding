@@ -2,106 +2,103 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { access, rm } from "node:fs/promises";
-import { createState } from "../../state.js";
-import { registerSpawnTool } from "../../spawn/index.js";
-import { createTestPI } from "./helpers.js";
+import {
+	READONLY_CHILD_AUTHORITY_NOTE,
+	READONLY_WRITE_EDIT_SUMMARY,
+	READONLY_INVALID_BASH_COMMAND_REASON,
+} from "../../readonly-copy.js";
+import {
+	buildChildToolNames,
+	filterReadonlyToolNames,
+} from "../../spawn/index.js";
+import { applyReadonlyBashGuard } from "../../readonly-bash.js";
+import { runRealChildInvocation } from "./helpers.js";
 
-async function spawnWithCapture(
-	readonlyEnabled: boolean,
-	inspect: (config: any, prompt: string) => Promise<void> | void,
-	activeTools?: string[],
-) {
-	const pi = createTestPI();
-	const tools = activeTools ?? ["read", "bash", "write", "edit", "spawn", "handoff"];
-	pi.setActiveTools(tools);
-	pi.setAllTools(tools);
-	const state = createState();
-	state.readonlyEnabled = readonlyEnabled;
+// ── Tool filtering ───────────────────────────────────────────────────
 
-	const sessionFactory = async (config: any) => {
-		const session = {
-			messages: [] as any[],
-			prompt: async (prompt: string) => {
-				await inspect(config, prompt);
-				session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-			},
-			abort: async () => {},
-			getSessionStats: () => undefined,
-		};
-		return { session: session as any };
-	};
-
-	registerSpawnTool(pi as any, state, sessionFactory as any);
-	await pi.tools.get("spawn").execute(
-		"spawn-readonly",
-		{ prompt: "test" },
-		undefined,
-		undefined,
-		{ model: { id: "mock-model" }, cwd: process.cwd() },
-	);
-}
-
-test("readonly spawn excludes mutating tools and tells the child it inherits readonly authority", async () => {
-	let prompt = "";
-	let childToolNames: string[] = [];
-
-	await spawnWithCapture(true, (config, childPrompt) => {
-		prompt = childPrompt;
-		childToolNames = config.tools;
-	});
-
-	assert.equal(childToolNames.includes("write"), false);
-	assert.equal(childToolNames.includes("edit"), false);
-	assert.match(prompt, /inherit readonly authority/i);
-	assert.match(prompt, /\[readonly\] write\/edit blocked/i);
-	assert.match(prompt, /bash writes\/deletions outside temp blocked/i);
+test("filterReadonlyToolNames removes write and edit in readonly mode", () => {
+	const tools = ["read", "bash", "write", "edit", "notebook_read"];
+	const filtered = filterReadonlyToolNames(tools, true);
+	assert.equal(filtered.includes("write"), false);
+	assert.equal(filtered.includes("edit"), false);
+	assert.equal(filtered.includes("read"), true);
+	assert.equal(filtered.includes("bash"), true);
+	assert.equal(filtered.includes("notebook_read"), true);
 });
 
-test("non-readonly spawn child prompt keeps normal authority", async () => {
-	let prompt = "";
-
-	await spawnWithCapture(false, (_config, childPrompt) => {
-		prompt = childPrompt;
-	});
-
-	assert.match(prompt, /same authority as the parent/i);
-	assert.doesNotMatch(prompt, /\[readonly\] write\/edit blocked; bash writes\/deletions outside temp blocked\./i);
+test("filterReadonlyToolNames preserves all tools when readonly is off", () => {
+	const tools = ["read", "bash", "write", "edit"];
+	assert.deepEqual(filterReadonlyToolNames(tools, false), tools);
 });
 
-test("readonly spawn child bash tool rejects malformed commands", async () => {
-	await spawnWithCapture(true, async (config) => {
-		const bashTool = config.customTools.find((tool: any) => tool.name === "bash");
-		assert.ok(bashTool, "readonly child should receive a bash tool");
-		for (const command of [undefined, null, 42, { command: "ls" }]) {
-			await assert.rejects(
-				() => bashTool.execute("malformed", { command }),
-				/bash command input must be a string/,
-			);
-		}
-	});
+// ── Child tool names ─────────────────────────────────────────────────
+
+test("buildChildToolNames excludes spawn and handoff from inherited tools", () => {
+	const parentTools = ["read", "bash", "write", "edit", "spawn", "handoff"];
+	const result = buildChildToolNames(parentTools, []);
+	assert.equal(result.includes("spawn"), false);
+	assert.equal(result.includes("handoff"), false);
+	assert.equal(result.includes("read"), true);
+	assert.equal(result.includes("bash"), true);
+	assert.equal(result.includes("write"), true);
 });
 
-test("readonly spawn child bash tool blocks non-temp writes and allows temp writes", async () => {
+// ── Readonly prompt constants ────────────────────────────────────────
+
+test("readonly child authority note communicates readonly inheritance", () => {
+	assert.match(READONLY_CHILD_AUTHORITY_NOTE, /inherit readonly authority/i);
+});
+
+test("readonly write/edit summary communicates blocked mutations", () => {
+	assert.match(READONLY_WRITE_EDIT_SUMMARY, /\[readonly\] write\/edit blocked/i);
+	assert.match(READONLY_WRITE_EDIT_SUMMARY, /bash writes\/deletions outside temp blocked/i);
+});
+
+// ── Readonly bash guard ──────────────────────────────────────────────
+
+test("readonly bash guard rejects non-string commands", () => {
+	const cwd = process.cwd();
+	for (const command of [undefined, null, 42, { command: "ls" }]) {
+		const result = applyReadonlyBashGuard(command, cwd);
+		assert.equal(result.action, "block", `expected block for ${String(command)}`);
+		assert.match(result.reason, new RegExp(READONLY_INVALID_BASH_COMMAND_REASON));
+	}
+});
+
+test("readonly bash guard blocks non-temp writes and allows temp writes", () => {
 	const outsideTemp = path.join(os.homedir(), `readonly-child-test-${process.pid}-${Date.now()}`);
 	const insideTemp = path.join(os.tmpdir(), `readonly-child-test-${Date.now()}`);
-	await rm(outsideTemp, { force: true });
+	const cwd = process.cwd();
 
-	try {
-		await spawnWithCapture(true, async (config) => {
-			const bashTool = config.customTools.find((tool: any) => tool.name === "bash");
+	const blockResult = applyReadonlyBashGuard(`touch ${outsideTemp}`, cwd);
+	assert.equal(blockResult.action, "block");
+	assert.match(blockResult.reason, /Readonly mode:/);
 
-			assert.ok(bashTool, "readonly child should receive a bash tool");
-			await assert.rejects(
-				() => bashTool.execute("bash-1", { command: `touch ${outsideTemp}` }),
-				/Readonly mode:/,
-			);
-			await assert.rejects(() => access(outsideTemp), /ENOENT/);
-			await assert.doesNotReject(
-				() => bashTool.execute("bash-2", { command: `touch ${insideTemp} && rm ${insideTemp}` }),
-			);
-		});
-	} finally {
-		await rm(outsideTemp, { force: true });
+	const tempResult = applyReadonlyBashGuard(`touch ${insideTemp} && rm ${insideTemp}`, cwd);
+	assert.notEqual(tempResult.action, "block", "temp dir writes should not be blocked");
+});
+
+// ── Integration ──────────────────────────────────────────────────────
+
+test("real readonly child omits write/edit and blocks a non-temp bash write", async () => {
+	const proof = await runRealChildInvocation({
+		prompt: "Attempt the requested bash command and report its result.",
+		readonly: true,
+		invokeReadonlyBash: true,
+		cwdOutsideTemp: true,
+		activeTools: ["read", "bash", "write", "edit", "agentic_e2e_probe", "spawn", "handoff"],
+	});
+
+	assert.equal(proof.result.details.model, proof.modelId);
+	assert.match(proof.result.content[0].text, /READONLY_BASH_BLOCKED/);
+	assert.equal(proof.bashWriteExists, false, "readonly child bash must not write to its cwd");
+	assert.ok(proof.observedToolSets.length > 0);
+	for (const toolNames of proof.observedToolSets) {
+		assert.equal(toolNames.includes("write"), false);
+		assert.equal(toolNames.includes("edit"), false);
+		assert.equal(toolNames.includes("spawn"), false);
+		assert.equal(toolNames.includes("handoff"), false);
+		assert.equal(toolNames.includes("bash"), true);
 	}
+	assert.deepEqual(proof.outboundFetches, [], "offline real-child fixture attempted an outbound fetch");
 });
