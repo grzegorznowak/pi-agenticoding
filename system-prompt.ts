@@ -26,7 +26,8 @@ even far from the window limit. Treat the first ~30% as the optimal working zone
 ### Spawn — isolate noise
 Delegate isolated work to child agents. They are trusted extensions of you,
 with their own context and the same authority. You receive only condensed
-results. Your context stays at orchestration level. Siblings run in parallel.
+results; overlong child output is truncated, so ask for concise summaries. Your
+context stays at orchestration level. Siblings run in parallel.
 
 ### Notebook — durable cross-context grounding
 Treat the notebook as durable grounding for future contexts. Each page covers
@@ -61,7 +62,9 @@ remains in the session file for the user.
 The next context should use the notebook for grounding and the handoff brief
 for direction. Reference notebook pages by name; do not duplicate their content
 in the brief. The handoff should help the next context start well without
-re-deriving what you already learned.
+re-deriving what you already learned. Use discardPages only to remove stale
+notebook pages that are no longer relevant to the next task; pages are removed
+only when the handoff compaction succeeds.
 
 ### Rules
 - Maintain the notebook deliberately; update it when you learn durable knowledge worth carrying across contexts
@@ -77,4 +80,5 @@ re-deriving what you already learned.
 - Call handoff at job boundaries: research→execution, planning→execution
 - Use handoff to pass the distilled next task and immediate starting state
 - After handoff, fetch only the pages you need and assign a fresh topic again
+- Before handoff, save durable knowledge to the notebook and remaining situational context to the brief
 `.trim();

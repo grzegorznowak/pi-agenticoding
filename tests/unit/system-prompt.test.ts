@@ -34,6 +34,11 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.match(CONTEXT_PRIMER, /When the job changes, call the handoff tool\./i);
 	assert.match(CONTEXT_PRIMER, /Call handoff at job boundaries:/i);
 	assert.match(rulesSection, /one subject, thread, or subsystem/i);
+	assert.match(handoffSection, /situational context/i);
+	assert.match(rulesSection, /Keep pages compact/i);
+	assert.match(handoffSection, /discardPages/i);
+	assert.match(handoffSection, /only when the handoff compaction succeeds/i);
+	assert.match(CONTEXT_PRIMER, /overlong child output is truncated/i);
 });
 
 test("before_agent_start injects notebook contracts plus live topic and page data", async () => {
