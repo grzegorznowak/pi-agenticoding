@@ -28,8 +28,9 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.match(topicSection, /semantic frame/i);
 	assert.match(topicSection, /prefer spawn/i);
 	assert.match(topicSection, /prefer handoff/i);
-	assert.match(handoffSection, /handoff/i);
+	assert.match(handoffSection, /handoff prompt/i);
 	assert.match(handoffSection, /notebook/i);
+	assert.doesNotMatch(handoffSection, /\bbrief\b/i);
 	assert.match(rulesSection, /planning→execution/i);
 	assert.match(CONTEXT_PRIMER, /When the job changes, call the handoff tool\./i);
 	assert.match(CONTEXT_PRIMER, /Call handoff at job boundaries:/i);

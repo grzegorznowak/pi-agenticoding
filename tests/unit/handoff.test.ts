@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { Value } from "typebox/value";
 import { createState, resetState } from "../../state.js";
 import { registerHandoffCommand } from "../../handoff/command.js";
 import { registerHandoffTool } from "../../handoff/tool.js";
@@ -73,7 +74,7 @@ test("handoff tool triggers compaction and resumes with the compacted task", asy
 	);
 
 	assert.equal(state.pendingHandoff?.source, "tool");
-	// Queue only the user brief. The compaction hook renders the primer at the
+	// Queue only the user prompt. The compaction hook renders the primer at the
 	// cut so it can include readonly mode as it exists at that moment.
 	assert.equal(state.pendingHandoff?.task, "Goal: continue auth-refresh");
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, true);
@@ -601,7 +602,7 @@ test("turn_end fallback keeps requested handoff status sticky until real handoff
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff requested — waiting for eligible context");
 });
 
-test("handoff tool metadata describes when to use and the call-handoff rule", () => {
+test("handoff tool metadata and schema describe the prompt contract", () => {
 	const pi = createTestPI();
 	const state = createState();
 	registerHandoffTool(pi as any, state);
@@ -609,23 +610,37 @@ test("handoff tool metadata describes when to use and the call-handoff rule", ()
 	const tool = pi.tools.get("handoff");
 	assert.match(tool.description, /past ~30%/i);
 	assert.match(tool.description, /call handoff/i);
+	assert.match(tool.description, /current notebook/i);
+	assert.match(tool.promptGuidelines.join(" "), /draft .*prompt/i);
+	assert.doesNotMatch(`${tool.description} ${tool.promptGuidelines.join(" ")} ${JSON.stringify(tool.parameters)}`, /\bbrief\b/i);
+	assert.equal(Value.Check(tool.parameters, { task: "continue work" }), true);
+	assert.equal(Value.Check(tool.parameters, {}), false);
+	assert.match(JSON.stringify(tool.parameters), /handoff prompt/i);
 });
 
-test("buildEnrichedTask includes execution constraints when resumeReadonlyAfterHandoff is true", () => {
-	const task = buildEnrichedTask("continue billing work", { resumeReadonlyAfterHandoff: true });
-	assert.match(task, /Execution Constraints/i);
-	assert.match(task, /readonly mode/i);
-	assert.match(task, /handoff-only exception.*no longer active/i);
+test("buildEnrichedTask preserves the continuation contract and task", () => {
+	const task = "continue billing work";
+	const summary = buildEnrichedTask(task);
+
+	assert.match(summary, /continuing a previous agent's work in a clean context/i);
+	assert.match(summary, /notebook_read/);
+	assert.match(summary, /notebook_index/);
+	assert.match(summary, /spawn/);
+	assert.match(summary, /handoff prompt/i);
+	assert.match(summary, /## Task/);
+	assert.ok(summary.endsWith(task));
+	assert.doesNotMatch(summary, /\bbrief\b/i);
+	assert.doesNotMatch(summary, /Execution Constraints/i);
+	assert.doesNotMatch(buildEnrichedTask(task, { resumeReadonlyAfterHandoff: false }), /Execution Constraints/i);
 });
 
-test("buildEnrichedTask omits execution constraints when resumeReadonlyAfterHandoff is false", () => {
-	const task = buildEnrichedTask("continue billing work", { resumeReadonlyAfterHandoff: false });
-	assert.doesNotMatch(task, /Execution Constraints/i);
-});
+test("buildEnrichedTask adds readonly constraints only when the fresh context resumes readonly", () => {
+	const summary = buildEnrichedTask("continue billing work", { resumeReadonlyAfterHandoff: true });
 
-test("buildEnrichedTask omits execution constraints by default", () => {
-	const task = buildEnrichedTask("continue billing work");
-	assert.doesNotMatch(task, /Execution Constraints/i);
+	assert.match(summary, /## Execution Constraints\n\n- Fresh context resumes in readonly mode\./);
+	assert.match(summary, /handoff-only exception.*no longer active/i);
+	assert.match(summary, /non-temp bash filesystem mutations remain blocked/);
+	assert.ok(summary.indexOf("## Execution Constraints") < summary.indexOf("## Task"));
 });
 
 test("handoff tool rejects empty task with context usage", async () => {
