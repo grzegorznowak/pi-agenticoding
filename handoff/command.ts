@@ -2,7 +2,7 @@
  * /handoff command for the agenticoding extension.
  *
  * Collects a user direction, asks the LLM to complete the picture in a
- * handoff brief, and lets the handoff tool perform the actual compaction.
+ * handoff prompt, and lets the handoff tool perform the actual compaction.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -18,7 +18,7 @@ import { STATUS_KEY_HANDOFF } from "../tui.js";
 export function registerHandoffCommand(pi: ExtensionAPI, state: AgenticodingState): void {
 	pi.registerCommand("handoff", {
 		description:
-			"Ask the LLM to draft a handoff brief that completes the picture from " +
+			"Ask the LLM to draft a handoff prompt that completes the picture from " +
 			"your direction, then perform the handoff automatically.",
 
 		handler: async (args, ctx) => {
@@ -63,7 +63,7 @@ export function registerHandoffCommand(pi: ExtensionAPI, state: AgenticodingStat
 				: "\n\nA real handoff is required in the current session. Do not continue normal work instead.";
 
 			pi.sendUserMessage(
-				`Handoff direction: ${direction}\n\nPrepare a handoff in the current session now. First, save any durable reusable knowledge that aligns with the direction above to the notebook: findings worth keeping, constraints discovered, decisions made, or other grounding future contexts will need. Then draft a concise but sufficiently detailed handoff brief capturing only the remaining situational context: current state, blockers, unresolved questions, failed paths worth avoiding, and next steps. The next context will read the notebook on demand, so do not duplicate notebook content in the brief. Use any structure that makes the next work unambiguous. Reference notebook pages by name when relevant.${readonlyNotice}`,
+				`Handoff direction: ${direction}\n\nPrepare a handoff in the current session now. First, save any durable reusable knowledge that aligns with the direction above to the notebook: findings worth keeping, constraints discovered, decisions made, or other grounding future contexts will need. Then draft a concise but sufficiently detailed handoff prompt capturing only the remaining situational context: current state, blockers, unresolved questions, failed paths worth avoiding, and next steps. The next context will read the notebook on demand, so do not duplicate notebook content in the prompt. Use any structure that makes the next work unambiguous. Reference notebook pages by name when relevant.${readonlyNotice}`,
 				ctx.isIdle() ? undefined : { deliverAs: "followUp" },
 			);
 		},

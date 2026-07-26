@@ -9,7 +9,7 @@ import {
 /**
  * Build the enriched task that becomes the compaction summary.
  *
- * Shape: handoff primer + original task.
+ * Shape: handoff prompt + original task.
  */
 export function buildEnrichedTask(task: string, options?: { resumeReadonlyAfterHandoff?: boolean }): string {
 	const parts: string[] = [
@@ -17,10 +17,10 @@ export function buildEnrichedTask(task: string, options?: { resumeReadonlyAfterH
 		"",
 		"You are continuing a previous agent's work in a clean context. Use the available knowledge correctly:",
 		"- Notebook pages hold durable grounding knowledge; fetch them with `notebook_read`",
-		"- This handoff brief holds the distilled next task and immediate situational context",
+		"- This handoff prompt holds the distilled next task and immediate situational context",
 		"- Use `notebook_index` to scan available pages when needed",
 		"- Use `spawn` to delegate isolated subtasks to child agents",
-		"- Build on notebook grounding and this brief rather than reconstructing old context",
+		"- Build on notebook grounding and this prompt rather than reconstructing old context",
 	];
 
 	if (options?.resumeReadonlyAfterHandoff) {

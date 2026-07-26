@@ -111,5 +111,5 @@ export function buildReadonlyHandoffWaitNotice(): string {
 
 /** Add readonly-specific instructions to the explicit /handoff command. */
 export function buildReadonlyHandoffCommandNotice(): string {
-	return `\n\n${READONLY_HANDOFF_EXCEPTION_SUMMARY} Draft the brief so the next context resumes readonly mode.`;
+	return `\n\n${READONLY_HANDOFF_EXCEPTION_SUMMARY} Draft the prompt so the next context resumes readonly mode.`;
 }

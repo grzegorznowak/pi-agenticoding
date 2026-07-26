@@ -167,7 +167,7 @@ function consumePendingReadonlyToggle(
 
 		// Keep a queued required handoff aligned with the latest resolved readonly
 		// intent even when the frontmatter decision is a no-op for current mode.
-		// Otherwise the eventual handoff brief could resume with stale readonly
+		// Otherwise the eventual handoff prompt could resume with stale readonly
 		// semantics despite the slash command itself producing no visible toggle.
 		alignPendingReadonlyHandoff(state, readonly);
 		if (state.readonlyEnabled === readonly) {

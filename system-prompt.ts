@@ -53,15 +53,15 @@ prefer handoff over dragging stale context forward. After handoff, assign a fres
 When the job changes, or when context is noisy past the ~30% heuristic, use
 handoff. Before the cut, save durable
 reusable knowledge to the notebook first, then draft a
-handoff brief that carries only the situational context still missing: current
+handoff prompt that carries only the situational context still missing: current
 state, blockers, unresolved questions, failed paths worth avoiding, and next
-steps. Handoff compacts the active session around that brief so the next turn
+steps. Handoff compacts the active session around that prompt so the next turn
 starts in a clean context with the right direction already in view. Full history
 remains in the session file for the user.
 
-The next context should use the notebook for grounding and the handoff brief
+The next context should use the notebook for grounding and the handoff prompt
 for direction. Reference notebook pages by name; do not duplicate their content
-in the brief. The handoff should help the next context start well without
+in the prompt. The handoff should help the next context start well without
 re-deriving what you already learned. Use discardPages only to remove stale
 notebook pages that are no longer relevant to the next task; pages are removed
 only when the handoff compaction succeeds.
@@ -80,5 +80,5 @@ only when the handoff compaction succeeds.
 - Call handoff at job boundaries: research→execution, planning→execution
 - Use handoff to pass the distilled next task and immediate starting state
 - After handoff, fetch only the pages you need and assign a fresh topic again
-- Before handoff, save durable knowledge to the notebook and remaining situational context to the brief
+- Before handoff, save durable knowledge to the notebook and remaining situational context to the prompt
 `.trim();
