@@ -54,7 +54,12 @@ function validateHandoffTask(task: string, ctx: ExtensionContext): void {
 	}
 }
 
-function completeHandoff(pi: ExtensionAPI, state: AgenticodingState, ctx: ExtensionContext): void {
+function completeHandoff(
+	pi: ExtensionAPI,
+	state: AgenticodingState,
+	ctx: ExtensionContext,
+	discardWarning?: string,
+): void {
 	// Finalize the two-phase clear: pendingHandoff was already cleared by compact.ts;
 	// this is the sole path that clears pendingRequestedHandoff after successful compaction.
 	state.pendingHandoff = null;
@@ -62,9 +67,12 @@ function completeHandoff(pi: ExtensionAPI, state: AgenticodingState, ctx: Extens
 	state.pendingRequestedHandoff = null;
 	if (ctx.hasUI) {
 		ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
-		ctx.ui.notify("Handoff complete. Fresh context will resume with the queued brief.", "info");
+		ctx.ui.notify(
+			discardWarning ?? "Handoff complete. Fresh context will resume with the queued brief.",
+			discardWarning ? "warning" : "info",
+		);
 	}
-	pi.sendUserMessage("Proceed.");
+	pi.sendUserMessage(discardWarning ? `Proceed. ${discardWarning}` : "Proceed.");
 }
 
 function notifyHandoffFailure(ctx: ExtensionContext, error: Error, pendingRequest: AgenticodingState["pendingRequestedHandoff"]): void {
@@ -95,6 +103,9 @@ function failHandoff(
 ): void {
 	const error = rawError instanceof Error ? rawError : new Error(String(rawError));
 	state.pendingHandoff = null;
+	state.pendingNotebookDiscard = null;
+	// An interrupted discard left staged survivors + a stray generation marker in
+	// the branch; rehydration ignores them, so the orphaned entries are harmless.
 	const pendingRequest = state.pendingRequestedHandoff;
 	if (pendingRequest) pendingRequest.toolCalled = false;
 	notifyHandoffFailure(ctx, error, pendingRequest);
@@ -106,6 +117,7 @@ function createHandoffCallbacks(
 	state: AgenticodingState,
 	ctx: ExtensionContext,
 	generation: number,
+	commitDiscard: (() => void) | undefined,
 ): { onComplete: () => void; onError: (error: unknown) => void } {
 	let settled = false;
 	const clearInFlight = () => {
@@ -121,8 +133,28 @@ function createHandoffCallbacks(
 		onComplete: () => {
 			if (settled) return;
 			settled = true;
-			clearInFlight();
-			if (isCurrent()) completeHandoff(pi, state, ctx);
+			if (!isCurrent()) return;
+			try {
+				// Pi does not await compact callbacks. The next epoch becomes visible
+				// only after compaction has succeeded.
+				commitDiscard?.();
+				clearInFlight();
+				if (isCurrent()) completeHandoff(pi, state, ctx);
+			} catch (error) {
+				clearInFlight();
+				if (!isCurrent()) return;
+				// Compaction already succeeded. Retain the current generation rather
+				// than describing this as a failed handoff when its final marker cannot
+				// be persisted.
+				state.pendingNotebookDiscard = null;
+				const message = error instanceof Error ? error.message : String(error);
+				completeHandoff(
+					pi,
+					state,
+					ctx,
+					`Handoff completed, but notebook discard was not persisted (${message}); retained all notebook pages.`,
+				);
+			}
 		},
 		onError: (error) => {
 			if (settled) return;
@@ -153,12 +185,15 @@ export function registerHandoffTool(
 			"AFTER HANDOFF the LLM sees:\n" +
 			"  • System prompt + context primer\n" +
 			"  • The handoff task — the distilled next work at the top of context\n" +
-			"  • All notebook pages — durable grounding accessible via notebook_read / notebook_index",
+			"  • Notebook pages — durable grounding accessible via notebook_read / notebook_index\n" +
+			"  • Optionally discard stale notebook pages via the discardPages parameter",
 
 		promptSnippet: "Pivot to a new job via deliberate handoff compaction",
 		promptGuidelines: [
 			"Before handoff, promote any missing durable grounding knowledge that the next context will need to the notebook. " +
 				"Then draft a concise but sufficiently detailed brief with the distilled next task and immediate starting state for the next clean context. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the brief or user direction.",
+			"Use discardPages to remove notebook pages that are stale or no longer relevant to the next task. " +
+				"This keeps the notebook fresh and prevents outdated grounding from persisting.",
 		],
 
 		executionMode: "sequential",
@@ -171,6 +206,13 @@ export function registerHandoffTool(
 					"immediate starting state, blockers, failed paths worth avoiding, and relevant notebook page names. " +
 					"The notebook is the long-term grounding store; this brief should carry only the remaining situational context.",
 			}),
+			discardPages: Type.Optional(Type.Array(Type.String({
+				description: "A notebook page name to discard.",
+			}), {
+				description:
+					"Notebook page names to permanently remove during this handoff. " +
+					"Use to prune stale pages that are no longer relevant to the next task.",
+			})),
 		}),
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -187,23 +229,27 @@ export function registerHandoffTool(
 				sendHandoffFailure(pi, error instanceof Error ? error : new Error(String(error)), state.pendingRequestedHandoff);
 				throw error;
 			}
+			const discardPages = [...new Set(params.discardPages ?? [])];
 			const requestedHandoff = state.pendingRequestedHandoff;
 			const generation = ++state.handoffGeneration;
-			state.pendingHandoff = {
-				task: params.task,
-				source: "tool",
-				generation,
-			};
+			state.pendingHandoff = { task: params.task, source: "tool", generation };
 			state.handoffCompactionGeneration = generation;
 			if (requestedHandoff) requestedHandoff.toolCalled = true;
-			if (ctx.hasUI && ctx.ui.theme) {
-				ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
-			}
 
-			const callbacks = createHandoffCallbacks(pi, state, ctx, generation);
+			let commitDiscard: (() => void) | undefined;
 			try {
+				if (discardPages.length) {
+					const store = await import("../notebook/store.js");
+					await store.prepareNotebookDiscard(pi, state, generation, discardPages);
+					commitDiscard = () => store.commitNotebookDiscard(pi, state, generation);
+				}
+				if (ctx.hasUI && ctx.ui.theme) {
+					ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
+				}
+				const callbacks = createHandoffCallbacks(pi, state, ctx, generation, commitDiscard);
 				ctx.compact(callbacks);
 			} catch (error) {
+				const callbacks = createHandoffCallbacks(pi, state, ctx, generation, undefined);
 				callbacks.onError(error);
 				throw error;
 			}

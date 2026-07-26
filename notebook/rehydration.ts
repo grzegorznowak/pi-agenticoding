@@ -19,6 +19,11 @@ interface NotebookEntryData {
 	content: string;
 }
 
+interface NotebookGenerationData {
+	version: number;
+	epoch: number;
+}
+
 interface NotebookCandidate {
 	epoch: number;
 	content: string;
@@ -26,7 +31,12 @@ interface NotebookCandidate {
 
 // ── Rehydration entry types ───────────────────────────────────────────
 
-const ENTRY_TYPES = new Set(["notebook-entry", "ledger-entry"]);
+const PAGE_ENTRY_TYPES = new Set(["notebook-entry", "ledger-entry"]);
+const GENERATION_ENTRY_TYPE = "notebook-generation";
+
+function isNotebookEpoch(value: unknown): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
 
 // ── Registration ──────────────────────────────────────────────────────
 
@@ -37,50 +47,44 @@ export function registerNotebookRehydration(
 	pi.on("session_start", async (_event, ctx) => {
 		const branch = ctx.sessionManager.getBranch();
 
-		// Scan newest-to-oldest; first occurrence of each name wins (newest).
-		const candidates = new Map<string, NotebookCandidate>();
-
-		for (let i = branch.length - 1; i >= 0; i--) {
-			const entry = branch[i];
-			if (!entry || typeof entry !== "object") continue;
-
-			if (
-				entry.type !== "custom" ||
-				!ENTRY_TYPES.has((entry as CustomEntry).customType)
-			) {
+		// A generation is visible only after its marker is appended. Staged
+		// survivor entries from an interrupted discard therefore cannot eclipse
+		// the last durable notebook generation.
+		let committedEpoch: number | null = null;
+		let legacyEpoch = 0;
+		for (const entry of branch) {
+			if (entry?.type !== "custom") continue;
+			const customEntry = entry as CustomEntry;
+			if (customEntry.customType === GENERATION_ENTRY_TYPE) {
+				const data = customEntry.data as NotebookGenerationData;
+				if (isNotebookEpoch(data?.epoch)) committedEpoch = Math.max(committedEpoch ?? 0, data.epoch);
 				continue;
 			}
-
-			const data = (entry as CustomEntry<NotebookEntryData>).data;
-			if (!data?.name || typeof data.content !== "string") continue;
-
-			// Skip if we already have a newer version of this name
-			if (candidates.has(data.name)) continue;
-
-			candidates.set(data.name, {
-				epoch: data.epoch ?? 0,
-				content: data.content,
-			});
-		}
-
-		// Rehydrate from persisted history: branch entries are the durable
-		// notebook source of truth. Pick the latest persisted epoch across the
-		// surviving names, then rebuild the in-memory view from that generation.
-		let currentEpoch = 0;
-		for (const candidate of candidates.values()) {
-			if (candidate.epoch > currentEpoch) {
-				currentEpoch = candidate.epoch;
+			if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) continue;
+			const data = customEntry.data as NotebookEntryData;
+			if (data?.name && typeof data.content === "string") {
+				legacyEpoch = Math.max(legacyEpoch, isNotebookEpoch(data.epoch) ? data.epoch : 0);
 			}
 		}
+		const currentEpoch = committedEpoch ?? legacyEpoch;
 		state.epoch = currentEpoch;
 
-		// Rebuild state.notebookPages, filtering by epoch
-		state.notebookPages.clear();
-		for (const [name, candidate] of candidates) {
-			if (candidate.epoch === currentEpoch) {
-				state.notebookPages.set(name, candidate.content);
-			}
+		// Scan newest-to-oldest, retaining only the committed generation. This
+		// order intentionally ignores newer staged entries for the same page.
+		const candidates = new Map<string, NotebookCandidate>();
+		for (let i = branch.length - 1; i >= 0; i--) {
+			const entry = branch[i];
+			if (entry?.type !== "custom") continue;
+			const customEntry = entry as CustomEntry;
+			if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) continue;
+			const data = customEntry.data as NotebookEntryData;
+			const epoch = isNotebookEpoch(data?.epoch) ? data.epoch : 0;
+			if (!data?.name || typeof data.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) continue;
+			candidates.set(data.name, { epoch, content: data.content });
 		}
+
+		state.notebookPages.clear();
+		for (const [name, candidate] of candidates) state.notebookPages.set(name, candidate.content);
 
 		// Ensure notebook_read and notebook_index are active so the LLM can fetch pages
 		const active = pi.getActiveTools();

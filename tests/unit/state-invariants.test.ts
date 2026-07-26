@@ -283,7 +283,7 @@ test("Property 4: Reset clears all state fields", async () => {
 	}
 });
 
-test("Property 5: Epoch monotonicity — non-zero after savePage", async () => {
+test("Property 5: Epoch counter — set to 1 on first savePage", async () => {
 	const h = createTestHarness();
 	try {
 		await fc.assert(
@@ -306,18 +306,15 @@ test("Property 5: Epoch monotonicity — non-zero after savePage", async () => {
 						await apply(state, action);
 
 						if (action.type === "savePage") {
-							// After first savePage, epoch transitions from 0 to Date.now() (> 0)
+							// After first savePage, epoch transitions from 0 to 1
 							// After subsequent saves, epoch is unchanged (set once)
 							assert.ok(
 								state.epoch > 0,
 								`epoch must be > 0 after savePage, got ${state.epoch}`,
 							);
 							if (prevEpoch === 0) {
-								// First write: epoch transitions from 0 to Date.now()
-								assert.ok(
-									state.epoch >= Date.now() - 5000,
-									`epoch ${state.epoch} should be recent Date.now()`,
-								);
+								// First write: epoch transitions from 0 to 1
+								assert.equal(state.epoch, 1, "epoch must be 1 after first savePage");
 							} else {
 								// Subsequent writes: epoch unchanged
 								assert.equal(state.epoch, prevEpoch, "epoch must not change on subsequent savePage");

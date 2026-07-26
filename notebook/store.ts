@@ -86,7 +86,7 @@ export async function saveNotebookPage(
 		});
 
 		if (state.epoch === 0) {
-			state.epoch = Date.now();
+			state.epoch = 1;
 		}
 
 		state.notebookPages.set(name, truncated.content);
@@ -102,4 +102,51 @@ export async function saveNotebookPage(
 			preview: formatPagePreview(truncated.content),
 		};
 	});
+}
+
+/**
+ * Stage a discard without making it visible to rehydration. The active epoch
+ * marker is durable before survivor entries are staged; only commit appends the
+ * next marker. An interrupted handoff therefore keeps the active branch on the
+ * prior generation.
+ *
+ * The agent is idle during compaction, so no notebook writes occur between
+ * prepare and commit; the next context starts only after commit advances the
+ * epoch. A write in that window would be staged at the stale epoch and dropped
+ * on rehydration.
+ */
+export async function prepareNotebookDiscard(
+	pi: ExtensionAPI,
+	state: AgenticodingState,
+	generation: number,
+	names: string[],
+): Promise<string[]> {
+	return withWriteLock(async () => {
+		const deleted = [...new Set(names)].filter((name) => state.notebookPages.has(name));
+		if (deleted.length === 0) return deleted;
+
+		const nextEpoch = state.epoch + 1;
+		pi.appendEntry("notebook-generation", { version: 1, epoch: state.epoch });
+		const deletedSet = new Set(deleted);
+		for (const [name, content] of state.notebookPages) {
+			if (!deletedSet.has(name)) {
+				pi.appendEntry("notebook-entry", { version: 1, epoch: nextEpoch, name, content });
+			}
+		}
+		state.pendingNotebookDiscard = { generation, nextEpoch, deleted };
+		return deleted;
+	});
+}
+
+/** Commit a prepared discard after Pi reports compaction success. */export function commitNotebookDiscard(
+	pi: ExtensionAPI,
+	state: AgenticodingState,
+	generation: number,
+): void {
+	const pending = state.pendingNotebookDiscard;
+	if (!pending || pending.generation !== generation) return;
+	pi.appendEntry("notebook-generation", { version: 1, epoch: pending.nextEpoch });
+	state.epoch = pending.nextEpoch;
+	for (const name of pending.deleted) state.notebookPages.delete(name);
+	state.pendingNotebookDiscard = null;
 }

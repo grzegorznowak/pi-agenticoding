@@ -85,6 +85,90 @@ test("handoff tool triggers compaction and resumes with the compacted task", asy
 	assert.deepEqual(pi.sentUserMessages, [{ content: "Proceed.", options: undefined }]);
 });
 
+test("successful handoff discards pages after compaction", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	state.epoch = 1;
+	state.notebookPages.set("stale", "obsolete");
+	let callbacks: any;
+	registerHandoffTool(pi as any, state);
+
+	const result = await pi.tools.get("handoff").execute(
+		"discard",
+		{ task: "continue without stale grounding", discardPages: ["stale"] },
+		undefined,
+		undefined,
+		{
+			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
+			compact: (options: any) => { callbacks = options; },
+		},
+	);
+
+	assert.equal(state.notebookPages.get("stale"), "obsolete", "retryable compaction must retain pages");
+	callbacks.onComplete();
+	assert.equal(state.notebookPages.size, 0);
+	assert.deepEqual(pi.appendedEntries, [
+		{ customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		{ customType: "notebook-generation", data: { version: 1, epoch: 2 } },
+	]);
+	assert.equal(result.content[0].text, "Handoff started.");
+});
+
+test("handoff onComplete fails gracefully when the discard commit marker throws", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	state.epoch = 1;
+	state.notebookPages.set("stale", "obsolete");
+	let callbacks: any;
+	registerHandoffTool(pi as any, state);
+
+	await pi.tools.get("handoff").execute(
+		"discard-fail",
+		{ task: "continue", discardPages: ["stale"] },
+		undefined,
+		undefined,
+		{
+			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
+			compact: (options: any) => { callbacks = options; },
+		},
+	);
+
+	// Patch appendEntry to throw — simulates a persistence failure during discard
+	const original = (pi as any).appendEntry;
+	(pi as any).appendEntry = () => { throw new Error("disk full"); };
+	callbacks.onComplete();
+	(pi as any).appendEntry = original;
+
+	// Compaction succeeded even though its final discard marker did not. Pages
+	// remain available and the fresh context receives an explicit warning.
+	assert.equal(state.notebookPages.get("stale"), "obsolete", "pages must survive a failed discard");
+	assert.equal(state.pendingHandoff, null);
+	assert.match(pi.sentUserMessages.at(-1)?.content ?? "", /Handoff completed, but notebook discard was not persisted/);
+});
+
+test("handoff with empty discardPages retains all pages", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	state.notebookPages.set("keep", "value");
+	let callbacks: any;
+	registerHandoffTool(pi as any, state);
+
+	const result = await pi.tools.get("handoff").execute(
+		"no-discard",
+		{ task: "continue with all pages", discardPages: [] },
+		undefined,
+		undefined,
+		{
+			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
+			compact: (options: any) => { callbacks = options; },
+		},
+	);
+
+	callbacks.onComplete();
+	assert.equal(state.notebookPages.get("keep"), "value", "pages must be retained when discardPages is empty");
+	assert.equal(result.content[0].text, "Handoff started.");
+});
+
 test("handoff compaction replaces old context with the queued task", async () => {
 	const pi = createTestPI();
 	const state = createState();
@@ -231,9 +315,10 @@ test("handoff success sends a completion notification", async () => {
 	assert.equal(pi.sentUserMessages.at(-1)?.content, "Proceed.");
 });
 
-test("handoff compaction error restores a ready retry status when eligible", async () => {
+test("async handoff compaction error retains discard pages and restores a ready retry status", async () => {
 	const pi = createTestPI();
 	const state = createState();
+	state.notebookPages.set("stale", "obsolete");
 	state.pendingRequestedHandoff = { toolCalled: false, resumeReadonlyAfterHandoff: true, enforcementAttempts: 0 };
 	registerHandoffTool(pi as any, state);
 	let compactOptions: any;
@@ -242,7 +327,7 @@ test("handoff compaction error restores a ready retry status when eligible", asy
 
 	await pi.tools.get("handoff").execute(
 		"1",
-		{ task: "Goal: continue" },
+		{ task: "Goal: continue", discardPages: ["stale"] },
 		undefined,
 		undefined,
 		{
@@ -259,6 +344,7 @@ test("handoff compaction error restores a ready retry status when eligible", asy
 	compactOptions.onError(new Error("Nothing to compact (session too small)"));
 
 	assert.equal(state.pendingHandoff, null);
+	assert.equal(state.notebookPages.get("stale"), "obsolete");
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff required — ready to compact");
 	assert.deepEqual(notifications, [{ message: "Handoff compaction failed: Nothing to compact (session too small). The handoff can be retried.", level: "error" }]);
@@ -267,9 +353,10 @@ test("handoff compaction error restores a ready retry status when eligible", asy
 	assert.match(pi.sentUserMessages[pi.sentUserMessages.length - 1].content, /Handoff failed/);
 });
 
-test("synchronous compaction failure restores a retryable pending handoff", async () => {
+test("synchronous compaction failure retains discard pages and restores a retryable handoff", async () => {
 	const pi = createTestPI();
 	const state = createState();
+	state.notebookPages.set("stale", "obsolete");
 	state.pendingRequestedHandoff = { toolCalled: false, resumeReadonlyAfterHandoff: true, enforcementAttempts: 0 };
 	registerHandoffTool(pi as any, state);
 	const statuses = new Map<string, string | undefined>([[STATUS_KEY_HANDOFF, "🤝 Handoff in progress"]]);
@@ -277,7 +364,7 @@ test("synchronous compaction failure restores a retryable pending handoff", asyn
 	await assert.rejects(
 		() => pi.tools.get("handoff").execute(
 			"sync-failure",
-			{ task: "continue work" },
+			{ task: "continue work", discardPages: ["stale"] },
 			undefined,
 			undefined,
 			{
@@ -295,6 +382,7 @@ test("synchronous compaction failure restores a retryable pending handoff", asyn
 	);
 
 	assert.equal(state.pendingHandoff, null);
+	assert.equal(state.notebookPages.get("stale"), "obsolete");
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, false);
 	assert.equal(statuses.get(STATUS_KEY_HANDOFF), "🤝 Handoff required — ready to compact");
 	assert.match(pi.sentUserMessages.at(-1)?.content ?? "", /Handoff failed/);
@@ -417,7 +505,9 @@ test("reset invalidates late handoff callbacks", async () => {
 	let callbacks: any;
 	registerHandoffTool(pi as any, state);
 
-	await pi.tools.get("handoff").execute("reset", { task: "reset" }, undefined, undefined, {
+	state.epoch = 1;
+	state.notebookPages.set("stale", "retain");
+	await pi.tools.get("handoff").execute("reset", { task: "reset", discardPages: ["stale"] }, undefined, undefined, {
 		getContextUsage: () => ({ tokens: 50000, percent: 25, contextWindow: 200000 }),
 		compact: (options: any) => { callbacks = options; },
 	});
@@ -429,6 +519,9 @@ test("reset invalidates late handoff callbacks", async () => {
 	assert.equal(state.pendingHandoff?.task, "new state");
 	assert.equal(state.pendingRequestedHandoff?.toolCalled, true);
 	assert.equal(pi.sentUserMessages.length, 0);
+	assert.deepEqual(pi.appendedEntries, [
+		{ customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+	]);
 });
 
 test("handoff terminal callbacks are idempotent", async () => {

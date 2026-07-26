@@ -4,12 +4,29 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { Text } from "@earendil-works/pi-tui";
 import { createState, resetState } from "../../state.js";
 import { registerNotebookRehydration } from "../../notebook/rehydration.js";
-import { saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
+import { commitNotebookDiscard, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
 import registerAgenticoding from "../../index.js";
 import { STATUS_KEY_TOPIC, WIDGET_KEY_WARNING } from "../../tui.js";
 import { createTestPI, makeTUICtx, createDeferred, theme, stripAnsi } from "./helpers.js";
+
+function persistedBranch(pi: ReturnType<typeof createTestPI>): object[] {
+	return pi.appendedEntries.map(({ customType, data }) => ({
+		type: "custom",
+		customType,
+		data,
+	}));
+}
+
+async function rehydratePersistedNotebook(pi: ReturnType<typeof createTestPI>) {
+	const state = createState();
+	const restoredPi = createTestPI();
+	registerNotebookRehydration(restoredPi as any, state);
+	const [handler] = restoredPi.handlers.get("session_start")!;
+	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
+	return state;
+}
 
 // ── Notebook rehydration tests ────────────────────────────────────────
 
@@ -602,26 +619,19 @@ test("saveNotebookPage truncates oversized content before persisting", async () 
 test("resetState clears epoch and the next notebook write starts a fresh generation", async () => {
 	const pi = createTestPI();
 	const state = createState();
-	const originalNow = Date.now;
 
-	try {
-		Date.now = () => 1000;
-		await saveNotebookPage(pi as any, state, "entry-a", "first");
-		await saveNotebookPage(pi as any, state, "entry-b", "second");
-		assert.equal(state.epoch, 1000);
-		assert.equal(pi.appendedEntries[0].data.epoch, 1000);
-		assert.equal(pi.appendedEntries[1].data.epoch, 1000);
+	await saveNotebookPage(pi as any, state, "entry-a", "first");
+	await saveNotebookPage(pi as any, state, "entry-b", "second");
+	assert.equal(state.epoch, 1);
+	assert.equal(pi.appendedEntries[0].data.epoch, 1);
+	assert.equal(pi.appendedEntries[1].data.epoch, 1);
 
-		resetState(state);
-		assert.equal(state.epoch, 0);
+	resetState(state);
+	assert.equal(state.epoch, 0);
 
-		Date.now = () => 2000;
-		await saveNotebookPage(pi as any, state, "entry-c", "third");
-		assert.equal(state.epoch, 2000);
-		assert.equal(pi.appendedEntries[2].data.epoch, 2000);
-	} finally {
-		Date.now = originalNow;
-	}
+	await saveNotebookPage(pi as any, state, "entry-c", "third");
+	assert.equal(state.epoch, 1);
+	assert.equal(pi.appendedEntries[2].data.epoch, 1);
 });
 
 // ── Notebook tool definition metadata tests ───────────────────────────
@@ -666,4 +676,79 @@ test("notebook tool definitions omit prompt hints by default", () => {
 		assert.equal(tool.promptSnippet, undefined, `${tool.name} should not have promptSnippet by default`);
 		assert.equal(tool.promptGuidelines, undefined, `${tool.name} should not have promptGuidelines by default`);
 	}
+});
+
+// ── Transactional handoff discard tests ───────────────────────────────
+
+test("prepared discard remains invisible to a fresh active-branch rehydration", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+
+	const deleted = await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	const restored = await rehydratePersistedNotebook(pi);
+
+	assert.deepEqual(deleted, ["page-a"]);
+	assert.equal(state.epoch, 1);
+	assert.deepEqual(Array.from(restored.notebookPages.entries()).sort(), [
+		["page-a", "content-a"], ["page-b", "content-b"],
+	]);
+	assert.equal(restored.epoch, 1);
+});
+
+test("committed discard advances the active generation and persists survivors", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+
+	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	commitNotebookDiscard(pi as any, state, 1);
+	const restored = await rehydratePersistedNotebook(pi);
+
+	assert.equal(state.epoch, 2);
+	assert.deepEqual(Array.from(state.notebookPages.entries()), [["page-b", "content-b"]]);
+	assert.deepEqual(Array.from(restored.notebookPages.entries()), [["page-b", "content-b"]]);
+	assert.deepEqual(pi.appendedEntries.filter((entry) => entry.customType === "notebook-generation").map((entry) => entry.data), [
+		{ version: 1, epoch: 1 }, { version: 1, epoch: 2 },
+	]);
+});
+
+test("partial survivor staging failure rehydrates the prior committed generation", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+	await saveNotebookPage(pi as any, state, "page-c", "content-c");
+	let calls = 0;
+	const throwingPi = {
+		...pi as any,
+		appendEntry: (...args: any[]) => {
+			if (++calls > 2) throw new Error("persist failed");
+			(pi as any).appendEntry(...args);
+		},
+	};
+
+	await assert.rejects(() => prepareNotebookDiscard(throwingPi, state, 1, ["page-a"]), /persist failed/);
+	const restored = await rehydratePersistedNotebook(pi);
+
+	assert.deepEqual(Array.from(restored.notebookPages.entries()).sort(), [
+		["page-a", "content-a"], ["page-b", "content-b"], ["page-c", "content-c"],
+	]);
+	assert.equal(restored.epoch, 1);
+});
+
+test("rehydration uses only the active session branch", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	registerNotebookRehydration(pi as any, state);
+	const [handler] = pi.handlers.get("session_start")!;
+
+	await handler({}, { sessionManager: { getBranch: () => [
+		{ type: "custom", customType: "notebook-entry", data: { epoch: 1, name: "active", content: "kept" } },
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+	] } });
+
+	assert.deepEqual(Array.from(state.notebookPages.entries()), [["active", "kept"]]);
 });

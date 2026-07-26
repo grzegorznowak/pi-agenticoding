@@ -13,7 +13,7 @@ export interface AgenticodingState {
 	/** Compact notebook pages keyed by kebab-case name */
 	notebookPages: Map<string, string>;
 
-	/** Monotonically increasing epoch, set on first notebook_write */
+	/** Notebook generation counter. 0 = no writes yet; 1 = first write; bumped on discard. */
 	epoch: number;
 
 	/** Current semantic frame for topic-aware spawn vs handoff decisions. */
@@ -40,6 +40,9 @@ export interface AgenticodingState {
 
 	/** Generation of the compaction currently in flight, if any. */
 	handoffCompactionGeneration: number | null;
+
+	/** Prepared notebook discard awaiting the matching successful handoff callback. */
+	pendingNotebookDiscard: { generation: number; nextEpoch: number; deleted: string[] } | null;
 
 	/**
 	 * Required handoff request that stays alive until a real tool-driven compaction
@@ -135,6 +138,7 @@ export function createState(): AgenticodingState {
 		pendingHandoff: null,
 		handoffGeneration: 0,
 		handoffCompactionGeneration: null,
+		pendingNotebookDiscard: null,
 		pendingRequestedHandoff: null,
 		childSessions,
 		liveChildSessions,
@@ -170,7 +174,7 @@ export function createState(): AgenticodingState {
 export function resetState(state: AgenticodingState): void {
 	state.childSessionEpoch++;
 	state.notebookPages.clear();
-	state.epoch = 0; // sentinel: 0 = not yet initialized; set to Date.now() on first write
+	state.epoch = 0; // sentinel: 0 = not yet initialized; set to 1 on first write
 	state.activeNotebookTopic = null;
 	state.activeNotebookTopicSource = null;
 	state.lastContextPercent = null;
@@ -193,6 +197,10 @@ export function invalidateHandoffState(state: AgenticodingState): void {
 	state.handoffGeneration++;
 	state.pendingHandoff = null;
 	state.handoffCompactionGeneration = null;
+	state.pendingNotebookDiscard = null;
+	// An interrupted discard left staged survivors + a stray generation marker in
+	// the branch; rehydration ignores them (currentEpoch never advances), so the
+	// orphaned entries are harmless.
 	state.pendingRequestedHandoff = null;
 	state.pendingTopicBoundaryHint = null;
 	state.lastWatchdogBand = null;
