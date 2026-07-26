@@ -6,11 +6,11 @@ pi-agenticoding is a Pi extension. It registers tools and hooks into the agent l
 
 | Hook | Role |
 |---|---|
-| `before_agent_start` | Injects the context-management primer and live notebook index; resolves deferred `readonly:` frontmatter |
+| `before_agent_start` | Refreshes Model Groups, injects the context-management primer, names-only group guidance, and live notebook index; resolves deferred `readonly:` frontmatter |
 | `context` | Advisory watchdog reminders when context is elevated; readonly toggle nudges |
 | `input` | Queues skill/prompt names for deferred readonly frontmatter resolution |
 | `tool_call` | Readonly blocks write/edit/unguarded bash; blocks handoff unless a requested bypass is active |
-| `session_start` | Rehydrates notebook pages and readonly state; resets on `/new` |
+| `session_start` | Rehydrates notebook pages and readonly state; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
 | `turn_end` | Updates TUI indicators (context %, notebook count, topic, readonly) |
 | `agent_end` | Records last context usage percent; handoff enforcement cleanup |
 | `session_before_compact` | Consumes the pending handoff task and sets it as the compaction summary |
@@ -24,6 +24,10 @@ interface AgenticodingState {
   activeNotebookTopicSource: "human" | "agent" | null
   pendingTopicBoundaryHint: { from, to } | null
   readonlyEnabled: boolean
+  modelGroups: {
+    groups: ResolvedModelGroup[]
+    validation: ModelGroupsBootValidation | null
+  }
   epoch: number
   lastContextPercent: number | null
   pendingHandoff: { task, source } | null
@@ -36,7 +40,9 @@ interface AgenticodingState {
 
 ## Behavioral notes
 
-**Spawn** — Child inherits model, thinking level, cwd, and active registered tools executable in the child session (including MCP/extension tools when registered). Child-local notebook tools remain available. Children cannot spawn grandchildren or handoff. Under readonly, children inherit the posture.
+**Spawn** — Without a Model Group, the child inherits the parent's public model and explicit/default thinking level. An exact known group randomly selects a registry-resolved, authenticated entry; an entry-specific thinking level overrides explicit/inherited thinking and is clamped for the selected model. An unknown group reports fallback and uses the parent model/thinking. A known empty group or one with no usable authenticated entries fails before child-session creation. The selected public model enters a child-owned runtime. Children also inherit cwd and active registered tools executable in that session, retain child-local notebook tools, cannot spawn or handoff, and inherit readonly posture.
+
+**Model Groups** — `/model-groups` manages versioned global and trusted-project JSON configuration. Project groups shadow same-named global groups. Configuration is loaded and validated against Pi's model registry into the `modelGroups` snapshot; only names are injected into the agent prompt. Routing uses the parent registry only to select configured/authenticated entries—the registry/auth objects are not passed into the child runtime.
 
 **Notebook** — Agent-curated named pages **scoped to the current conversation/task**, not a long-lived memory product. Stored as session custom entries so pages survive handoff and resume of the same work stream; `/new` (fresh session) clears them with the conversation. That coupling avoids the stale-entry / invalidation problem of forever-memory systems. Active topic (`notebook_topic_set` or `/notebook <topic>`) frames spawn-vs-handoff preference; human-set topics are authoritative. Topic clears after a successful handoff.
 
@@ -60,6 +66,7 @@ Coding-agent guardrail on every OS — not a hardened security boundary. Stronge
 |---|---|
 | `index.ts` | Extension entry: tools, hooks, wiring |
 | `spawn/` | Child sessions and live TUI rendering |
+| `model-groups/` | Persistence, boot validation, CRUD TUI/autocomplete, and spawn routing |
 | `notebook/` | Page store, tools, topic, rehydration |
 | `handoff/` | Eligibility, brief, compaction bridge |
 | `readonly-*.ts` / `os-sandbox.ts` | Readonly posture, bash policy, sandbox |

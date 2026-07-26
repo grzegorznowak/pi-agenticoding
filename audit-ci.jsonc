@@ -2,18 +2,9 @@
   "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
   "moderate": true,
   "allowlist": [
-    // npm's audit report exposes this hoisted advisory as the module path
-    // `protobufjs`; a config invariant separately rejects any vulnerable
-    // protobufjs occurrence outside the exact Pi 0.80.8 development path.
-    { "GHSA-f38q-mgvj-vph7|protobufjs": { "active": true, "expiry": "2026-09-01", "notes": "protobufjs 7.6.1 only via @earendil-works/pi-ai > @google/genai in the exact Pi 0.80.8 development graph" } },
-    // GHSA-3jxr-9vmj-r5cp: brace-expansion DoS via exponential-time expansion
-    // of consecutive non-expanding {} groups. In pi-coding-agent's transitive
-    // dependency tree (minimatch > brace-expansion). Not a direct dependency;
-    // no user-controlled input reaches this code path.
-    { "GHSA-3jxr-9vmj-r5cp|brace-expansion": { "active": true, "expiry": "2026-09-01", "notes": "brace-expansion <5.0.7 via @earendil-works/pi-coding-agent > minimatch; not a direct dependency" } },
-    // GHSA-j3f2-48v5-ccww: protobufjs Denial of Service via infinite loop in
-    // .proto option parsing. Same transitive path as the existing protobufjs
-    // advisory (pi-ai > @google/genai > protobufjs) but a distinct advisory.
-    { "GHSA-j3f2-48v5-ccww|protobufjs": { "active": true, "expiry": "2026-09-01", "notes": "protobufjs <=7.6.4 via @earendil-works/pi-ai > @google/genai; second protobufjs advisory on same path" } }
+    // npm's audit report exposes this shrinkwrapped advisory as the module path
+    // `brace-expansion`; a config invariant separately rejects any vulnerable
+    // occurrence outside Pi coding agent's exact 0.82.0 shrinkwrapped path.
+    { "GHSA-mh99-v99m-4gvg|brace-expansion": { "active": true, "expiry": "2026-09-01", "notes": "brace-expansion 5.0.7 only in @earendil-works/pi-coding-agent's shrinkwrap via minimatch; consumer overrides cannot replace it, so remove when Pi publishes brace-expansion 5.0.8+" } }
   ]
 }

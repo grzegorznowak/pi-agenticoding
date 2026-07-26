@@ -49,9 +49,7 @@ const EXPECTED_MATRIX = new Set([
 	"windows-latest@24",
 ]);
 const EXPECTED_ALLOWLIST_KEYS = new Set([
-	"GHSA-f38q-mgvj-vph7|protobufjs",
-	"GHSA-3jxr-9vmj-r5cp|brace-expansion",
-	"GHSA-j3f2-48v5-ccww|protobufjs",
+	"GHSA-mh99-v99m-4gvg|brace-expansion",
 ]);
 
 function readText(url: URL): string {
@@ -124,14 +122,14 @@ function collectPackagePaths(graph: any, packageName: string): Array<{ path: str
 	return found;
 }
 
-function isVulnerableProtobufVersion(version: string): boolean {
+function isVulnerableBraceExpansionVersion(version: string): boolean {
 	const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-	assert.ok(match, `unexpected protobufjs version: ${version}`);
+	assert.ok(match, `unexpected brace-expansion version: ${version}`);
 	const [, major, minor, patch] = match.map(Number);
-	return major < 7 || (major === 7 && (minor < 6 || (minor === 6 && patch <= 4)));
+	return major < 5 || (major === 5 && minor === 0 && patch <= 7);
 }
 
-test("Pi 0.80.8 compatibility metadata and source boundaries stay exact", () => {
+test("Pi 0.82.0 compatibility metadata and source boundaries stay exact", () => {
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
 	assert.equal(packageJson.engines.node, ">=22.19.0");
@@ -139,15 +137,17 @@ test("Pi 0.80.8 compatibility metadata and source boundaries stay exact", () => 
 		assert.equal(packageJson.peerDependencies[name], "*", `${name} peer must remain host-provided`);
 	}
 	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
-		assert.equal(packageJson.devDependencies[name], "0.80.8");
-		assert.equal(lock.packages[`node_modules/${name}`]?.version, "0.80.8");
+		assert.equal(packageJson.devDependencies[name], "0.82.0");
+		assert.equal(lock.packages[`node_modules/${name}`]?.version, "0.82.0");
 	}
 	assert.equal(packageJson.devDependencies.typebox, "1.1.38");
 	assert.equal(lock.packages["node_modules/typebox"]?.version, "1.1.38");
 
 	const spawnSource = readText(SPAWN_SOURCE_PATH);
 	assert.doesNotMatch(spawnSource, /\bAuthStorage\b|\bModelRegistry\b/);
-	assert.doesNotMatch(spawnSource, /\bauthStorage\s*:|\bmodelRegistry\s*:/);
+	assert.doesNotMatch(spawnSource, /\bauthStorage\s*:/);
+	assert.doesNotMatch(spawnSource, /sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
+	assert.match(spawnSource, /modelRegistry:\s*ctx\.modelRegistry/);
 	assert.match(spawnSource, /model:\s*childModel/);
 	assert.match(spawnSource, /session\.dispose\(\)/);
 	const rendererSource = readText(RENDERER_SOURCE_PATH);
@@ -172,18 +172,18 @@ test("audit-ci config keeps an expiry-tracked advisory-module path allowlist", (
 	}
 });
 
-test("the allowlisted vulnerable protobufjs path is reachable only through the exact Pi floor graph", () => {
-	const npmArgs = ["ls", "protobufjs", "--all", "--json"];
+test("the allowlisted vulnerable brace-expansion path is reachable only through the exact Pi floor graph", () => {
+	const npmArgs = ["ls", "brace-expansion", "--all", "--json"];
 	const npmExecPath = process.env.npm_execpath;
 	const invocation = npmExecPath
 		? [process.execPath, npmExecPath, ...npmArgs].join(" ")
-		: "npm ls protobufjs --all --json";
+		: "npm ls brace-expansion --all --json";
 	const result = npmExecPath
 		? spawnSync(process.execPath, [npmExecPath, ...npmArgs], {
 				cwd: REPO_ROOT,
 				encoding: "utf8",
 			})
-		: spawnSync("npm ls protobufjs --all --json", {
+		: spawnSync("npm ls brace-expansion --all --json", {
 				cwd: REPO_ROOT,
 				encoding: "utf8",
 				shell: true,
@@ -200,19 +200,12 @@ test("the allowlisted vulnerable protobufjs path is reachable only through the e
 	assert.equal(result.error, undefined, diagnostics);
 	assert.equal(result.signal, null, diagnostics);
 	assert.equal(result.status, 0, diagnostics);
-	const vulnerablePaths = collectPackagePaths(JSON.parse(result.stdout), "protobufjs")
-		.filter(({ version }) => isVulnerableProtobufVersion(version))
-		.sort((a, b) => a.path.localeCompare(b.path));
-	assert.deepEqual(vulnerablePaths, [
-		{
-			path: "pi-agenticoding > @earendil-works/pi-ai > @google/genai > protobufjs",
-			version: "7.6.1",
-		},
-		{
-			path: "pi-agenticoding > @earendil-works/pi-coding-agent > @earendil-works/pi-ai > @google/genai > protobufjs",
-			version: "7.6.4",
-		},
-	].sort((a, b) => a.path.localeCompare(b.path)));
+	const vulnerablePaths = collectPackagePaths(JSON.parse(result.stdout), "brace-expansion")
+		.filter(({ version }) => isVulnerableBraceExpansionVersion(version));
+	assert.deepEqual(vulnerablePaths, [{
+		path: "pi-agenticoding > @earendil-works/pi-coding-agent > minimatch > brace-expansion",
+		version: "5.0.7",
+	}]);
 });
 
 test("workflow keeps the expected matrix and audit/test order", () => {

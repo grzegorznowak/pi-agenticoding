@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Model Groups manager** — added `/model-groups` with durable project/global JSON persistence, boot validation, CRUD TUI flows, per-model thinking levels, and operator notifications for invalid configs or unavailable model refs.
+- **Model Groups spawn routing** — `spawn` can route children through an optional exact Model Group name with names-only prompt guidance, `#group` autocomplete sugar that shows model/thinking details, authenticated random entry selection, thinking inheritance/clamping, and routed/fallback result identity lines.
+
+### Changed
+
+- Migrated child spawning to Pi's public selected-model and child-owned runtime APIs, added `max` thinking support, and disposed every created child session exactly once across completion, failure, abort, and reset races. Pi 0.82.0 and Node 22.19.0 are now the documented minimums; parent-only transient provider/auth state fails explicitly without model fallback.
+
+### Fixed
+
+- Model Groups add-model navigation now uses Pi's key matcher for Escape/left-arrow handling and filters provider/model choices to authenticated models.
+
 ## [0.4.0] - 2026-07-22
 
 ### Breaking Changes
