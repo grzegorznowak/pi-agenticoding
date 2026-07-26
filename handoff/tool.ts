@@ -2,9 +2,9 @@
  * Handoff tool for the agenticoding extension.
  *
  * Tools can trigger compaction directly, so handoff is implemented as a
- * deliberate compaction that replaces noisy context with a clean restart brief.
+ * deliberate compaction that replaces noisy context with a clean restart prompt.
  *
- * The brief should complete the picture: preserve the important situational
+ * The prompt should complete the picture: preserve the important situational
  * context that is still only present in the current turn, while notebook pages
  * remain durable grounding fetched on demand in the next context.
  */
@@ -33,7 +33,7 @@ function validateHandoffTask(task: string, ctx: ExtensionContext): void {
 	if (!trimmed) {
 		const pct = normalizeContextPercent(ctx.getContextUsage()?.percent);
 		throw new Error(
-			`Context at ${pct === null ? "?" : Math.round(pct) + "%"}. Empty handoff rejected. Save findings to notebook, then draft a substantive brief.`,
+			`Context at ${pct === null ? "?" : Math.round(pct) + "%"}. Empty handoff rejected. Save findings to notebook, then draft a substantive prompt.`,
 		);
 	}
 
@@ -68,7 +68,7 @@ function completeHandoff(
 	if (ctx.hasUI) {
 		ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
 		ctx.ui.notify(
-			discardWarning ?? "Handoff complete. Fresh context will resume with the queued brief.",
+			discardWarning ?? "Handoff complete. Fresh context will resume with the queued prompt.",
 			discardWarning ? "warning" : "info",
 		);
 	}
@@ -173,27 +173,20 @@ export function registerHandoffTool(
 		name: "handoff",
 		label: "Handoff",
 		description:
-			"Replace the active context with a compact task brief at the end of " +
-			"the current turn while keeping full history in the session file. Handoff clears the active notebook topic so the next clean context can assign a fresh one.\n\n" +
+			"Clears the current context while keeping the notebook and clearing its topic.\n\n" +
 			"WHEN TO USE:\n" +
-			"  1. Context past ~30% and the current job is no longer cleanly " +
-			"represented near the front of attention.\n" +
+			"  1. Context past ~30% and the current job is no longer cleanly represented.\n" +
 			"  2. Context is filled with mechanics irrelevant to what comes " +
 			"next (research traces, planning deliberation, dead ends).\n" +
 			"  3. The current job is complete and a new distinct task starts.\n\n" +
 			"Rule: one context, one job. When the job changes, call handoff.\n\n" +
-			"AFTER HANDOFF the LLM sees:\n" +
-			"  • System prompt + context primer\n" +
-			"  • The handoff task — the distilled next work at the top of context\n" +
-			"  • Notebook pages — durable grounding accessible via notebook_read / notebook_index\n" +
-			"  • Optionally discard stale notebook pages via the discardPages parameter",
-
+			"AFTER HANDOFF the agent sees: the handoff prompt and the current notebook with optional pages discarded\n",
 		promptSnippet: "Pivot to a new job via deliberate handoff compaction",
 		promptGuidelines: [
-			"Before handoff, promote any missing durable grounding knowledge that the next context will need to the notebook. " +
-				"Then draft a concise but sufficiently detailed brief with the distilled next task and immediate starting state for the next clean context. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the brief or user direction.",
-			"Use discardPages to remove notebook pages that are stale or no longer relevant to the next task. " +
-				"This keeps the notebook fresh and prevents outdated grounding from persisting.",
+			"Before handoff, promote any missing knowledge that the next context will need to the notebook. " +
+				"Then draft a concise but sufficiently detailed prompt for the next clean context. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the prompt or user direction.",
+			"Use discardPages to remove notebook pages that are stale or no longer relevant to the next context. " +
+				"This keeps the notebook fresh and prevents outdated information from persisting.",
 		],
 
 		executionMode: "sequential",
@@ -201,17 +194,17 @@ export function registerHandoffTool(
 		parameters: Type.Object({
 			task: Type.String({
 				description:
-					"What to do next. A concise but sufficiently detailed handoff brief. " +
-					"This becomes the FIRST thing the LLM sees after handoff. Capture the distilled next task, " +
-					"immediate starting state, blockers, failed paths worth avoiding, and relevant notebook page names. " +
-					"The notebook is the long-term grounding store; this brief should carry only the remaining situational context.",
+					"What to do next. A concise but sufficiently detailed handoff prompt.\n" +
+					"This becomes the FIRST thing the agent sees after handoff. Capture anything the next context " +
+					"will need that's not included in the notebook.\n" +
+					"The notebook is the long-term knowledge store; this prompt should carry only the remaining situational information.",
 			}),
 			discardPages: Type.Optional(Type.Array(Type.String({
 				description: "A notebook page name to discard.",
 			}), {
 				description:
 					"Notebook page names to permanently remove during this handoff. " +
-					"Use to prune stale pages that are no longer relevant to the next task.",
+					"Use to prune stale pages that are no longer relevant to the next context.",
 			})),
 		}),
 
