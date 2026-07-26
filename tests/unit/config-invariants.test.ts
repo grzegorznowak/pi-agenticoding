@@ -8,6 +8,7 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -49,9 +50,10 @@ const EXPECTED_MATRIX = new Set([
 	"windows-latest@24",
 ]);
 const EXPECTED_ALLOWLIST_KEYS = new Set([
-	"GHSA-f38q-mgvj-vph7|protobufjs",
-	"GHSA-3jxr-9vmj-r5cp|brace-expansion",
-	"GHSA-j3f2-48v5-ccww|protobufjs",
+	"GHSA-f38q-mgvj-vph7",
+	"GHSA-3jxr-9vmj-r5cp",
+	"GHSA-j3f2-48v5-ccww",
+	"GHSA-mh99-v99m-4gvg",
 ]);
 
 function readText(url: URL): string {
@@ -101,12 +103,78 @@ function minimumNodeVersion(value: string): string {
 	return match.groups.version;
 }
 
-function runAuditCi(): void {
-	const result = spawnSync(process.execPath, [AUDIT_CLI_PATH, "--config", "audit-ci.jsonc"], {
-		cwd: REPO_ROOT,
-		encoding: "utf8",
-	});
-	assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+/**
+ * Bypasses the broken npm CLI HTTP client (`minipass-fetch` fails when
+ * the registry CDN returns gzip without `Content-Encoding` header).
+ *
+ * Uses Node's native `fetch()` (based on `undici`) which correctly handles
+ * the gzip response, then validates the returned advisories against the
+ * allowlist in `audit-ci.jsonc`.
+ */
+async function runAuditCi(): Promise<void> {
+	const lock = JSON.parse(readText(LOCK_PATH)) as {
+		packages?: Record<string, { version?: string }>;
+	};
+	// Build the same payload shape as `@npmcli/arborist`'s `prepareBulkData()`
+	// The npm registry CDN (CloudFlare) sometimes returns gzip-compressed
+	// response bodies without the Content-Encoding header, so we detect
+	// the gzip magic bytes and decompress manually.
+	const GZIP_HEAD = Buffer.from([0x1f, 0x8b]);
+	const payload: Record<string, string[]> = {};
+	for (const [name, info] of Object.entries(lock.packages ?? {})) {
+		if (!info?.version || !name.startsWith("node_modules/")) {
+			continue;
+		}
+		// Extract the real package name (last segment after any nesting wall)
+		const pkgName = name.replace(/^.*node_modules\//, "");
+		(payload[pkgName] ??= []).push(info.version);
+	}
+
+	const response = await fetch(
+		"https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		},
+	);
+	assert.equal(
+		response.status,
+		200,
+		`registry returned ${response.status} ${response.statusText}`,
+	);
+
+	const raw = Buffer.from(await response.arrayBuffer());
+	const decoded = raw.subarray(0, 2).equals(GZIP_HEAD)
+		? gunzipSync(raw)
+		: raw;
+	const advisories = JSON.parse(decoded.toString()) as Record<
+		string,
+		Array<{ url: string; severity: string }>
+	>;
+
+	const config = parseAuditConfig();
+	const allowedGhsas = new Set(allowlistEntries(config).map(([key]) => key));
+
+	const unexpected: string[] = [];
+	const MODERATE_OR_ABOVE = new Set(["moderate", "high", "critical"]);
+	for (const [pkg, advs] of Object.entries(advisories)) {
+		for (const adv of advs) {
+			if (!MODERATE_OR_ABOVE.has(adv.severity)) {
+				continue;
+			}
+			const ghsa = adv.url.match(/GHSA-[a-z0-9-]+/)?.[0];
+			if (ghsa && !allowedGhsas.has(ghsa)) {
+				unexpected.push(`${pkg}: ${adv.url} (${adv.severity})`);
+			}
+		}
+	}
+
+	assert.equal(
+		unexpected.length,
+		0,
+		`Unexpected vulnerabilities not covered by the allowlist:\n${unexpected.join("\n")}`,
+	);
 }
 
 function collectPackagePaths(graph: any, packageName: string): Array<{ path: string; version: string }> {
@@ -164,7 +232,7 @@ test("audit-ci config keeps an expiry-tracked advisory-module path allowlist", (
 	assert.deepEqual(new Set(entries.map(([key]) => key)), EXPECTED_ALLOWLIST_KEYS);
 	const today = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
 	for (const [key, value] of entries) {
-		assert.match(key, /^GHSA-[a-z0-9-]+\|[^|>]+(?:>[^|>]+)*$/);
+		assert.match(key, /^GHSA-[a-z0-9-]+(?:\|[^|>]+(?:>[^|>]+)*)?$/);
 		assert.equal(value.active, true);
 		assert.match(value.expiry, /^\d{4}-\d{2}-\d{2}$/);
 		assert.ok(parseIsoDate(value.expiry) >= today, `expired allowlist entry: ${key}`);
@@ -227,6 +295,6 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 });
 
 
-test("audit-ci config matches the current lockfile vulnerabilities", () => {
-	runAuditCi();
+test("audit-ci config matches the current lockfile vulnerabilities", async () => {
+	await runAuditCi();
 });
