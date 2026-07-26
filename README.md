@@ -9,7 +9,7 @@
 
 ## Why
 
-Long coding sessions [degrade well before the token ceiling](https://agenticoding.ai/context-engineering). Auto-compact and manual `/compact` are lossy summarizer passes — you must fire them early, steer them well, and hope the compression step kept the right facts. The agent does not author that cut. 
+Long coding sessions [degrade well before the token ceiling](https://agenticoding.ai/context-engineering). Auto-compact and manual `/compact` are lossy summarizer passes — you must fire them early, steer them well, and hope the compression step kept the right facts. The agent does not author that cut.
 
 **pi-agenticoding flips that.** It gives the LLM tools to isolate noisy work, keep task-scoped notes across deliberate cuts, and restart clean on purpose — with optional readonly when you want research without mutating the tree.
 
@@ -20,6 +20,7 @@ Deeper rationale: [docs/why.md](docs/why.md) · companion book: [agenticoding.ai
 ## Features
 
 - **Spawn** — run research or implementation in a clean child context so the parent stays focused
+- **Model Groups** — manage durable project/global model pools with `/model-groups`; route `spawn` by an exact group name, with `#group` autocomplete showing model/thinking details
 - **Notebook** — task-scoped named pages for facts and decisions; survives handoff, dies with the conversation (`/new`) — no forever-memory rot
 - **Handoff** — deliberate clean restart with a task prompt when the job changes or context turns to noise
 - **Topic** — same problem → prefer spawn; new problem → prefer handoff (human-set topics win)
@@ -44,6 +45,10 @@ Disable pi's built-in compaction so **handoff** owns deliberate restarts:
 ```
 
 **You should get:** tools `spawn`, `notebook_write`, `notebook_read`, `notebook_index`, `notebook_topic_set`, and `handoff`. The status bar can show context usage, notebook count, active topic, and readonly when enabled.
+
+### Compatibility
+
+pi-agenticoding requires **Pi 0.82.0 or later** and **Node.js 22.19.0 or later**. Spawn passes the final selected public model into a child-owned runtime. Persisted, environment-based, and extension-rediscoverable provider/auth configuration is available to children; parent-only transient credentials, inline provider factories, or in-memory catalog changes are not guaranteed to be rediscoverable. In that unsupported case, spawn reports the child resolution/auth failure and does not silently select another model.
 
 ## How it works
 
@@ -71,7 +76,7 @@ The agent set a topic, spawned research, saved decisions, delegated implementati
 
 | | |
 |---|---|
-| **Spawn** | Subtask in a clean child context. Parent orchestrates; siblings run in parallel. Children inherit active registered parent tools executable in the child session — MCP/extension tools such as ChunkHound — plus child-local notebook tools. Children cannot spawn grandchildren or handoff. |
+| **Spawn** | Subtask in a clean child context. Parent orchestrates; siblings run in parallel. Children inherit active registered parent tools executable in the child session — MCP/extension tools such as ChunkHound — plus child-local notebook tools. Children cannot spawn grandchildren or handoff. Omit `group` to inherit the parent model/thinking. An unknown group reports fallback to the parent. A known group randomly selects among configured/authenticated usable entries and fails before child creation if none are usable. The selected entry supplies the model and, when configured, overrides explicit/inherited thinking before Pi clamps it; the final selected public model runs in the child-owned runtime. |
 | **Notebook** | Named pages coupled to this conversation/task. Carries grounding across handoff; cleared on `/new`. Not a long-lived memory store — lifetime matches the work, so it cannot go stale across unrelated sessions. |
 | **Handoff** | Write a prompt, compact, resume clean. Notebook holds reusable grounding for this task; the prompt holds only remaining situational context. |
 | **Readonly** | Blocks write/edit and guards bash while researching. Spawn inherits the posture. **macOS/Linux:** bash can run under OS sandbox (`sandbox-exec` / `bwrap`) — syscall-level write denial outside temp. **Windows:** no OS sandbox — **best-effort command classifier only** (interpreters and clever pipes can bypass). A coding guardrail on every OS — not a hardened security boundary. |

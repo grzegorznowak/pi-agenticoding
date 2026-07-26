@@ -83,11 +83,14 @@ test("concurrent real children both complete", async () => {
 	assert.equal(proof.probeCalls, 2);
 });
 
-test("spawn source uses only the public selected-model child session boundary", async () => {
+test("spawn routes through the public registry but uses only the selected-model child session boundary", async () => {
+
 	const source = await readFile(new URL("../../spawn/index.ts", import.meta.url), "utf8");
 	assert.doesNotMatch(source, /\bAuthStorage\b|\bModelRegistry\b/);
-	assert.doesNotMatch(source, /\bauthStorage\s*:|\bmodelRegistry\s*:/);
+	assert.doesNotMatch(source, /\bauthStorage\s*:/);
+	assert.doesNotMatch(source, /sessionFactory\(\{[\s\S]*?\bmodelRegistry\s*:/);
 	assert.doesNotMatch(source, /modelRuntime\s*[:.]|as\s+any[^\n]*(?:auth|runtime)/i);
+	assert.match(source, /modelRegistry:\s*ctx\.modelRegistry/);
 	assert.match(source, /model:\s*childModel/);
 });
 
@@ -100,6 +103,12 @@ test("spawn accepts max thinking parameter in schema", async () => {
 	assert.match(schemaText, /max/);
 	assert.equal(Value.Check(tool.parameters, { prompt: "work" }), true, "schema accepts prompt without thinking");
 	assert.equal(Value.Check(tool.parameters, { prompt: "work", thinking: "max" }), true, "schema accepts thinking: max");
+	assert.equal(
+		Value.Check(tool.parameters, { prompt: "work", group: "review", thinking: "max" }),
+		true,
+		"schema composes Model Group routing with explicit thinking",
+	);
+
 });
 
 test("spawn real child completes with max thinking requested", async () => {
