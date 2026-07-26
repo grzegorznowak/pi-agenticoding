@@ -37,7 +37,7 @@ The notebook is deliberately the opposite. It is **coupled to the conversation/t
 - **`/new` (or a new session) clears everything** with the conversation
 - Nothing is shared into the next unrelated job unless the agent writes it again on purpose
 
-So the agent can keep facts, decisions, constraints, and expensive findings **without** building a forever store that needs invalidation. Handoff still splits concerns: the notebook holds reusable grounding *for this task*; the brief holds only remaining situational context. That beats one summary blob that mixes both — and beats external memory that outlives the work and goes stale.
+So the agent can keep facts, decisions, constraints, and expensive findings **without** building a forever store that needs invalidation. Handoff still splits concerns: the notebook holds reusable grounding *for this task*; the prompt holds only remaining situational context. That beats one summary blob that mixes both — and beats external memory that outlives the work and goes stale.
 
 ## Awareness, not autopilot
 

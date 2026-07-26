@@ -21,7 +21,7 @@ Deeper rationale: [docs/why.md](docs/why.md) · companion book: [agenticoding.ai
 
 - **Spawn** — run research or implementation in a clean child context so the parent stays focused
 - **Notebook** — task-scoped named pages for facts and decisions; survives handoff, dies with the conversation (`/new`) — no forever-memory rot
-- **Handoff** — deliberate clean restart with a task brief when the job changes or context turns to noise
+- **Handoff** — deliberate clean restart with a task prompt when the job changes or context turns to noise
 - **Topic** — same problem → prefer spawn; new problem → prefer handoff (human-set topics win)
 - **Readonly** — explore and plan without writing the tree (`/readonly`, Ctrl+Shift+R, or `--readonly`); macOS/Linux can OS-sandbox bash, Windows is classifier-only
 - **Visibility** — status bar shows context pressure, notebook count, topic, and readonly; warning at high usage
@@ -73,7 +73,7 @@ The agent set a topic, spawned research, saved decisions, delegated implementati
 |---|---|
 | **Spawn** | Subtask in a clean child context. Parent orchestrates; siblings run in parallel. Children inherit active registered parent tools executable in the child session — MCP/extension tools such as ChunkHound — plus child-local notebook tools. Children cannot spawn grandchildren or handoff. |
 | **Notebook** | Named pages coupled to this conversation/task. Carries grounding across handoff; cleared on `/new`. Not a long-lived memory store — lifetime matches the work, so it cannot go stale across unrelated sessions. |
-| **Handoff** | Write a brief, compact, resume clean. Notebook holds reusable grounding for this task; the brief holds only remaining situational context. |
+| **Handoff** | Write a prompt, compact, resume clean. Notebook holds reusable grounding for this task; the prompt holds only remaining situational context. |
 | **Readonly** | Blocks write/edit and guards bash while researching. Spawn inherits the posture. **macOS/Linux:** bash can run under OS sandbox (`sandbox-exec` / `bwrap`) — syscall-level write denial outside temp. **Windows:** no OS sandbox — **best-effort command classifier only** (interpreters and clever pipes can bypass). A coding guardrail on every OS — not a hardened security boundary. |
 
 **Commands:** `/handoff` · `/notebook` · `/notebook <topic>` · `/readonly` · `Ctrl+Shift+R` · `--readonly`
@@ -85,7 +85,7 @@ The agent set a topic, spawned research, saved decisions, delegated implementati
 | Platform auto-compaction | Runtime (late threshold) | Blunt lossy summary |
 | `/compact` or `/clear` | User (timing + steer) | Lossy summarizer pass / paste |
 | Forever “memory” stores | Background / RAG | Accumulates, goes stale, needs invalidation |
-| **pi-agenticoding** | **Agent** | **Task-scoped notebook + handoff brief** |
+| **pi-agenticoding** | **Agent** | **Task-scoped notebook + handoff prompt** |
 
 ## Learn more
 

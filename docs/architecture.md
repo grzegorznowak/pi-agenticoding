@@ -40,7 +40,7 @@ interface AgenticodingState {
 
 **Notebook** — Agent-curated named pages **scoped to the current conversation/task**, not a long-lived memory product. Stored as session custom entries so pages survive handoff and resume of the same work stream; `/new` (fresh session) clears them with the conversation. That coupling avoids the stale-entry / invalidation problem of forever-memory systems. Active topic (`notebook_topic_set` or `/notebook <topic>`) frames spawn-vs-handoff preference; human-set topics are authoritative. Topic clears after a successful handoff.
 
-**Handoff** — Requires a real brief and a meaningful context load (rejects empty briefs, very small sessions, or missing usage). Notebook bodies are not inlined into the brief; the next context in this work stream fetches pages by name. Under readonly, handoff is blocked unless the user runs `/handoff` or crosses an eligible human topic boundary; readonly can resume after compaction. Compaction replaces the prior transcript with the brief: the next turns see a small context again (quality), and providers start a new input prefix for billing/cache (the dropped history is no longer in that prefix). Spawn runs children in separate context so their token use does not permanently inflate the parent. This extension does not configure provider cache TTLs or breakpoints.
+**Handoff** — Requires a real prompt and a meaningful context load (rejects empty prompts, very small sessions, or missing usage). Notebook bodies are not inlined into the prompt; the next context in this work stream fetches pages by name. Under readonly, handoff is blocked unless the user runs `/handoff` or crosses an eligible human topic boundary; readonly can resume after compaction. Compaction replaces the prior transcript with the prompt: the next turns see a small context again (quality), and providers start a new input prefix for billing/cache (the dropped history is no longer in that prefix). Spawn runs children in separate context so their token use does not permanently inflate the parent. This extension does not configure provider cache TTLs or breakpoints.
 
 **Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Skills/prompts may set `readonly: true` in frontmatter to defer-enable when invoked. Write/edit always blocked at the tool boundary. Bash uses a two-layer guard:
 
@@ -61,7 +61,7 @@ Coding-agent guardrail on every OS — not a hardened security boundary. Stronge
 | `index.ts` | Extension entry: tools, hooks, wiring |
 | `spawn/` | Child sessions and live TUI rendering |
 | `notebook/` | Page store, tools, topic, rehydration |
-| `handoff/` | Eligibility, brief, compaction bridge |
+| `handoff/` | Eligibility, prompt, compaction bridge |
 | `readonly-*.ts` / `os-sandbox.ts` | Readonly posture, bash policy, sandbox |
 | `watchdog.ts` / `tui.ts` / `state.ts` | Pressure advisories, status UI, shared state |
 
