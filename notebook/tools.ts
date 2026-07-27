@@ -24,7 +24,7 @@ const notebookWriteParams = Type.Object({
 	content: Type.String({
 		description:
 			"Compact markdown for one notebook page. Capture only durable, high-value " +
-			"grounding for one subject or thread, such as facts, architecture, decisions, constraints, " +
+			"memory for one subject or thread, such as facts, architecture, decisions, constraints, " +
 			"open questions, or expensive discoveries. Compact sections like Facts / Architecture / Decisions / Constraints / Open questions work well. Truncated at 50KB / 2000 lines.",
 	}),
 });
@@ -212,7 +212,7 @@ export function createNotebookToolDefinitions(
 					promptSnippet: "List pages via notebook index",
 					promptGuidelines: [
 						"Scan the index before new work, after handoff, before replanning, or when stuck.",
-						"Use the index to find relevant grounding pages, then open only those pages with notebook_read.",
+						"Use the index to find relevant memory pages, then open only those pages with notebook_read.",
 					],
 				}
 			: {}),

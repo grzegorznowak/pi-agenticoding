@@ -29,8 +29,8 @@ with their own context and the same authority. You receive only condensed
 results; overlong child output is truncated, so ask for concise summaries. Your
 context stays at orchestration level. Siblings run in parallel.
 
-### Notebook — durable cross-context grounding
-Treat the notebook as durable grounding for future contexts. Each page covers
+### Notebook — durable cross-context memory
+Treat the notebook as durable memory for future contexts. Each page covers
 one subject, thread, or subsystem. Prefer refining a few living pages organized
 by subject rather than workflow phase. Store only reusable knowledge worth
 carrying across resets: verified facts, architecture learned, decisions and
@@ -42,6 +42,8 @@ Use them to ground a fresh context, avoid repeated work, and resume a subject
 quickly. Verify stale notes before relying on them. Avoid raw transcripts, logs,
 or large tool output. Reference pages by name; fetch on demand; never pre-load
 bodies.
+
+Use the notebook as a shared memory between spawned agents and across handoff contexts.
 
 ### Active notebook topic — current semantic frame
 The active notebook topic names the current high-level frame for this session.
@@ -59,7 +61,7 @@ steps. Handoff compacts the active session around that prompt so the next turn
 starts in a clean context with the right direction already in view. Full history
 remains in the session file for the user.
 
-The next context should use the notebook for grounding and the handoff prompt
+The next context should use the notebook for memory and the handoff prompt
 for direction. Reference notebook pages by name; do not duplicate their content
 in the prompt. The handoff should help the next context start well without
 re-deriving what you already learned. Use discardPages only to remove stale
@@ -81,4 +83,5 @@ only when the handoff compaction succeeds.
 - Use handoff to pass the distilled next task and immediate starting state
 - After handoff, fetch only the pages you need and assign a fresh topic again
 - Before handoff, save durable knowledge to the notebook and remaining situational context to the prompt
+- When chaining handoffs, use the notebook as storage and state management across contexts
 `.trim();

@@ -6,7 +6,7 @@
  *
  * The prompt should complete the picture: preserve the important situational
  * context that is still only present in the current turn, while notebook pages
- * remain durable grounding fetched on demand in the next context.
+ * remain durable memory fetched on demand in the next context.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";

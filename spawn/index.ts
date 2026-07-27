@@ -329,7 +329,7 @@ export function executeSpawn(
 		`Children cannot spawn further children. ` +
 		`Your result will be read by the parent, so be concise and complete.\n\n` +
 		`${notebookListing}\n\n` +
-		`If you write notebook pages, store only durable grounding knowledge for future contexts. ` +
+		`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
 		`Keep transient task state in your final reply to the parent.\n\n` +
 		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
 		`When complete, provide a concise summary of findings. ` +

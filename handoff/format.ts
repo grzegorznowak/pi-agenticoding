@@ -16,11 +16,11 @@ export function buildEnrichedTask(task: string, options?: { resumeReadonlyAfterH
 		"## Handoff — Continue Previous Work",
 		"",
 		"You are continuing a previous agent's work in a clean context. Use the available knowledge correctly:",
-		"- Notebook pages hold durable grounding knowledge; fetch them with `notebook_read`",
+		"- Notebook pages hold durable memory; fetch them with `notebook_read`",
 		"- This handoff prompt holds the distilled next task and immediate situational context",
 		"- Use `notebook_index` to scan available pages when needed",
 		"- Use `spawn` to delegate isolated subtasks to child agents",
-		"- Build on notebook grounding and this prompt rather than reconstructing old context",
+		"- Build on notebook memory and this prompt rather than reconstructing old context",
 	];
 
 	if (options?.resumeReadonlyAfterHandoff) {
