@@ -23,21 +23,21 @@ All three manage context **around** the model. The agent stays a passive recipie
 | Move | Primitive | Prevents |
 |---|---|---|
 | **Isolate** | Spawn | Noisy subtasks polluting the parent |
-| **Ground** | Notebook | Losing reusable knowledge across deliberate cuts *in the same task* |
+| **Remember** | Notebook | Losing reusable knowledge across deliberate cuts *in the same task* |
 | **Compact** | Handoff | Waiting on `/compact`, late auto-summarize, or one mixed summary blob |
 | **Guard** | Readonly | Accidental edits during research and planning (write/edit blocked everywhere; bash OS-sandboxed on macOS/Linux — **Windows is classifier-only, not syscall-level**) |
 
-### Notebook is not “memory”
+### Notebook is task-scoped shared memory
 
 Standard agent memory systems try to be **long-lived**: they accumulate facts across days and projects, then rot. Stale entries, conflicting truths, and cache invalidation become the product.
 
 The notebook is deliberately the opposite. It is **coupled to the conversation/task**:
 
-- Pages carry grounding across **handoff** and resume of *this* work stream
+- Pages carry memory across **handoff** and resume of *this* work stream
 - **`/new` (or a new session) clears everything** with the conversation
 - Nothing is shared into the next unrelated job unless the agent writes it again on purpose
 
-So the agent can keep facts, decisions, constraints, and expensive findings **without** building a forever store that needs invalidation. Handoff still splits concerns: the notebook holds reusable grounding *for this task*; the prompt holds only remaining situational context. That beats one summary blob that mixes both — and beats external memory that outlives the work and goes stale.
+So the agent can keep facts, decisions, constraints, and expensive findings **without** building a forever store that needs invalidation. Handoff still splits concerns: the notebook holds reusable memory *for this task*; the prompt holds only remaining situational context. That beats one summary blob that mixes both — and beats external memory that outlives the work and goes stale.
 
 ## Awareness, not autopilot
 
