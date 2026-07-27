@@ -660,9 +660,12 @@ test("notebook tool definitions include prompt hints when withPromptHints is tru
 	assert.match(writeGuidelines, /subject-oriented pages/i);
 	assert.match(writeGuidelines, /fresh context/i);
 	assert.match(writeGuidelines, /belongs in handoff/i);
+	assert.match(notebookIndex.promptGuidelines!.join(" "), /relevant memory pages/i);
 
-	// Conceptual: descriptions mention the notebook-page metaphor
+	// Conceptual: descriptions mention the notebook-page metaphor and durable memory contract
 	assert.match(notebookWrite.description, /page|future contexts/i);
+	assert.match(JSON.stringify(notebookWrite.parameters), /durable, high-value memory/i);
+	assert.doesNotMatch(JSON.stringify(notebookWrite.parameters), /grounding/i);
 	assert.match(notebookRead.description, /notebook page|page/i);
 	assert.match(notebookIndex.description, /notebook index|index/i);
 });

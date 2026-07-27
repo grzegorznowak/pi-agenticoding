@@ -31,6 +31,8 @@ test("/handoff sends the direction back through the LLM without opening the edit
 	assert.equal(pi.sentUserMessages.length, 1);
 	assert.match(pi.sentUserMessages[0].content, /Handoff direction: implement auth/);
 	assert.match(pi.sentUserMessages[0].content, /Prepare a handoff in the current session now/);
+	assert.match(pi.sentUserMessages[0].content, /durable memory needed by future contexts/i);
+	assert.doesNotMatch(pi.sentUserMessages[0].content, /grounding future contexts/i);
 	assert.match(pi.sentUserMessages[0].content, /A real handoff is required in the current session/);
 	assert.doesNotMatch(pi.sentUserMessages[0].content, /User explicitly requested|\/handoff/);
 	assert.equal(pi.sentUserMessages[0].options, undefined);
@@ -627,6 +629,8 @@ test("buildEnrichedTask preserves the continuation contract and task", () => {
 	assert.match(summary, /notebook_index/);
 	assert.match(summary, /spawn/);
 	assert.match(summary, /handoff prompt/i);
+	assert.match(summary, /durable memory/i);
+	assert.doesNotMatch(summary, /durable grounding/i);
 	assert.match(summary, /## Task/);
 	assert.ok(summary.endsWith(task));
 	assert.doesNotMatch(summary, /\bbrief\b/i);

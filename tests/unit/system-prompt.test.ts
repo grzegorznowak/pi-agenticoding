@@ -25,6 +25,9 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.match(notebookSection, /notebook_index/);
 	assert.match(notebookSection, /notebook_read/);
 	assert.match(notebookSection, /future contexts/i);
+	assert.match(notebookSection, /durable cross-context memory/i);
+	assert.match(notebookSection, /shared memory/i);
+	assert.doesNotMatch(notebookSection, /durable cross-context grounding/i);
 	assert.match(topicSection, /semantic frame/i);
 	assert.match(topicSection, /prefer spawn/i);
 	assert.match(topicSection, /prefer handoff/i);
@@ -37,6 +40,7 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.match(rulesSection, /one subject, thread, or subsystem/i);
 	assert.match(handoffSection, /situational context/i);
 	assert.match(rulesSection, /Keep pages compact/i);
+	assert.match(rulesSection, /chaining handoffs/i);
 	assert.match(handoffSection, /discardPages/i);
 	assert.match(handoffSection, /only when the handoff compaction succeeds/i);
 	assert.match(CONTEXT_PRIMER, /overlong child output is truncated/i);

@@ -213,6 +213,8 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 	// Verify user-facing invariants: task text is included, notebook pages are referenced
 	assert.match(seenPrompt, /Do the task/);
 	assert.match(seenPrompt, /entry-a: preview line/);
+	assert.match(seenPrompt, /durable shared memory for the parent and future contexts/i);
+	assert.doesNotMatch(seenPrompt, /durable grounding/i);
 });
 
 test("truncateText handles multi-byte boundaries correctly", () => {
