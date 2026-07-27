@@ -6,23 +6,54 @@
  * The root cause: handoff/tool.ts had a top-level static import from
  * notebook/store.ts, which altered pi's module evaluation ordering and
  * caused SDK classes to be undefined when createAgentSession ran.
+ *
+ * Tests use a sandboxed agent directory to avoid reading real ~/.pi/agent/
+ * config. Real createAgentSession reads extensions, models, auth, and skills
+ * from the agent dir; pointing it at a sandbox prevents hangs from network
+ * timeouts (Path 1, ~27s) and filesystem I/O on real extensions (Path 2,
+ * ~12s). PI_OFFLINE=1 prevents ModelRuntime.refresh from making outbound
+ * fetch() calls that Node.js v24 does not cleanly abort.
  */
 
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import { strict as assert } from "node:assert";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import os from "node:os";
 import {
 	createAgentSession,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { createState } from "../../state.js";
 
+// Shared sandbox agent directory for all tests in this describe block.
+// createAgentSession reads extensions, models, auth, and skills from the
+// agent dir; pointing at a temp sandbox keeps tests fast and isolated.
+let sandboxAgentDir: string;
+const previousPiOffline = process.env.PI_OFFLINE;
+process.env.PI_OFFLINE = "1";
+
+before(async () => {
+	sandboxAgentDir = await mkdtemp(join(os.tmpdir(), "pi-test-agent-"));
+});
+
+after(async () => {
+	if (sandboxAgentDir) {
+		await rm(sandboxAgentDir, { recursive: true, force: true });
+	}
+	if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
+	else process.env.PI_OFFLINE = previousPiOffline;
+});
+
 describe("spawn after handoff initialization", () => {
 	it("creates a child session after loading handoff tool module", async () => {
 		// Step 1: Load the handoff module first (this triggered the bug)
 		await import("../../handoff/tool.js");
 
-		// Step 2: Now call createAgentSession as the spawn tool does
+		// Step 2: Now call createAgentSession as the spawn tool does, but
+		// pointed at a sandbox agent dir instead of real ~/.pi/agent/
 		const result = await createAgentSession({
+			agentDir: sandboxAgentDir,
 			sessionManager: SessionManager.inMemory("/tmp"),
 			model: {
 				id: "test-model",
@@ -41,9 +72,15 @@ describe("spawn after handoff initialization", () => {
 			tools: ["read"],
 		});
 
+		// The session.prompt() will fail if invoked (test-provider has no
+		// real stream implementation in the runtime), but the session object
+		// itself should be constructed and have the expected method shape.
 		assert.ok(result.session, "createAgentSession should return a session object");
 		assert.ok(typeof result.session.prompt === "function", "session should have a prompt method");
 		assert.ok(typeof result.session.abort === "function", "session should have an abort method");
+
+		// Cleanup the session to release resources
+		await result.session.abort();
 	});
 
 	it("spawn tool execute succeeds after handoff module initialization", async () => {
