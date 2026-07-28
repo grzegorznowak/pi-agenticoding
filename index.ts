@@ -51,12 +51,22 @@ import {
 	READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION,
 	READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION,
 	READONLY_WRITE_EDIT_BLOCK_REASON,
+	buildModelFrontmatterAuthErrorNotification,
+	buildModelFrontmatterErrorNotification,
+	buildModelFrontmatterNotification,
+	buildModelGroupAuthErrorNotification,
+	buildModelGroupErrorNotification,
+	buildModelGroupNotification,
+	buildModelGroupOverrideWarningNotification,
+	buildThinkingFrontmatterNotification,
 	buildReadonlyDisabledContextSuffix,
 	buildReadonlyFrontmatterNotification,
 	buildReadonlyTopicBoundaryNotification,
 } from "./readonly-copy.js";
+import { clampThinkingLevel } from "@earendil-works/pi-ai";
 import { registerSpawnTool } from "./spawn/index.js";
 import { registerModelGroupsCommand } from "./model-groups/command.js";
+import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
 import { getEffectiveModelGroupNames } from "./model-groups/router.js";
 import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
@@ -64,10 +74,16 @@ import { escapeDisplayLabel } from "./model-groups/display.js";
 import type { ModelGroupsAccess } from "./model-groups/types.js";
 import {
 	cacheLookupCommand,
+	cacheLookupCommandExplicitModel,
+	cacheLookupCommandExplicitThinking,
 	cacheLookupCommandIssue,
+	cacheLookupCommandModelGroup,
 	cacheLookupSkill,
+	cacheLookupSkillExplicitModel,
+	cacheLookupSkillExplicitThinking,
 	cacheLookupSkillIssue,
-	formatReadonlyFrontmatterIssue,
+	cacheLookupSkillModelGroup,
+	formatFrontmatterIssue,
 	populateFromSkills,
 	populatePromptCacheFromResolvedCommandsAndDirs,
 	type ReadonlyCacheIssue,
@@ -128,7 +144,7 @@ function recordReadonlyFrontmatterIssue(
 ): void {
 	pi.appendEntry("agenticoding-readonly-frontmatter-issue", { name: command.name, type: command.type, issue });
 	if (ctx.hasUI) {
-		ctx.ui.notify(formatReadonlyFrontmatterIssue(formatReadonlyCommandRef(command), issue), "warning");
+		ctx.ui.notify(formatFrontmatterIssue(formatReadonlyCommandRef(command), issue), "warning");
 	}
 }
 
@@ -189,6 +205,164 @@ function consumePendingReadonlyToggle(
 			ctx.ui.notify(buildReadonlyFrontmatterNotification(readonly, commandRef), "info");
 		}
 		return;
+	}
+}
+
+/**
+ * Consume any deferred model-group / model / thinking frontmatter recorded by the `input` handler.
+ * Must be called after `populateReadonlyCache` so the cache is populated and
+ * after `refreshModelGroupsState` so model groups are current.
+ *
+ * Resolution priority for each pending command:
+ *   1. `model` + `thinking` frontmatter — direct model switch (wins over model-group with warning)
+ *   2. `model-group` + optional `thinking` override — group resolves model, thinking overrides group
+ *   3. `thinking` only — sets thinking level on current model without changing model
+ *
+ * Unlike `consumePendingReadonlyToggle` which drains until the first real decision,
+ * this function processes at most one actionable entry per invocation. Entries without
+ * model/model-group/thinking frontmatter are skipped. Errors block execution via
+ * systemPrompt return, leaving remaining entries for the next cycle.
+ */
+async function consumePendingModelGroupToggle(
+	state: AgenticodingState,
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+): Promise<string | undefined> {
+	// Model-group/model/thinking frontmatter is a TUI-only feature. Headless/RPC sessions must not inherit.
+	if (!ctx.hasUI || !state.pendingModelGroupCommands.length || !ctx.model) {
+		state.pendingModelGroupCommands.length = 0;
+		return;
+	}
+
+	while (state.pendingModelGroupCommands.length > 0) {
+		const pending = state.pendingModelGroupCommands.shift();
+		if (!pending) return;
+
+		const commandRef = formatReadonlyCommandRef(pending);
+		const explicitModel = pending.type === "skill"
+			? cacheLookupSkillExplicitModel(state, pending.name)
+			: cacheLookupCommandExplicitModel(state, pending.name);
+		const explicitThinking = pending.type === "skill"
+			? cacheLookupSkillExplicitThinking(state, pending.name)
+			: cacheLookupCommandExplicitThinking(state, pending.name);
+		const modelGroupName = pending.type === "skill"
+			? cacheLookupSkillModelGroup(state, pending.name)
+			: cacheLookupCommandModelGroup(state, pending.name);
+
+		// ── Priority 1: explicit `model` frontmatter ───────────────
+		if (explicitModel) {
+			// Warn if `model-group` is also present — explicit model wins
+			if (modelGroupName?.trim()) {
+				ctx.ui.notify(buildModelGroupOverrideWarningNotification(modelGroupName, commandRef), "warning");
+			}
+
+			const slashIdx = explicitModel.indexOf("/");
+			const provider = explicitModel.slice(0, slashIdx);
+			const modelId = explicitModel.slice(slashIdx + 1);
+			const model = ctx.modelRegistry.find(provider, modelId);
+
+			if (!model) {
+				ctx.ui.notify(buildModelFrontmatterErrorNotification(provider, modelId, commandRef, "not found in registry"), "error");
+				return `ERROR: Cannot execute \`${commandRef}\` because model \`${provider}/${modelId}\` specified in frontmatter was not found. Report this error to the user and do not proceed.`;
+			}
+
+			if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
+				ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
+				return `ERROR: Cannot execute \`${commandRef}\` because model ${provider}/${modelId} specified in frontmatter has no configured API key. Report this error to the user and do not proceed.`;
+			}
+
+			const ok = await pi.setModel(model);
+			if (!ok) {
+				ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
+				return `ERROR: Cannot execute \`${commandRef}\` because model ${provider}/${modelId} specified in frontmatter has no configured API key. Report this error to the user and do not proceed.`;
+			}
+
+			const thinking = explicitThinking
+				? clampThinkingLevel(model, explicitThinking)
+				: null;
+			if (thinking) pi.setThinkingLevel(thinking);
+
+			ctx.ui.notify(buildModelFrontmatterNotification(provider, modelId, commandRef), "info");
+			pi.appendEntry("agenticoding-model-switch", {
+				command: commandRef,
+				provider,
+				modelId,
+				thinking,
+			});
+			return;
+		}
+
+		// ── Priority 2: `model-group` frontmatter ──────────────────
+		if (modelGroupName) {
+			try {
+				const route = resolveSpawnModelRoute({
+					requestedGroup: modelGroupName,
+					groups: state.modelGroups.groups,
+					parentModel: ctx.model,
+					parentThinking: pi.getThinkingLevel(),
+					modelRegistry: ctx.modelRegistry,
+				});
+
+				if (route.status === "unknown-fallback") {
+					const validNames = getEffectiveModelGroupNames(state.modelGroups.groups);
+					const hint = validNames.length > 5
+						? ` Run /model-groups to see all available groups.`
+						: validNames.length > 0
+							? ` Available groups: ${validNames.join(", ")}.`
+							: "";
+					ctx.ui.notify(buildModelGroupErrorNotification(modelGroupName, commandRef, `Model Group '${modelGroupName}' is not defined`), "error");
+					return `ERROR: Cannot execute \`${commandRef}\` because model group \`${modelGroupName}\` is not defined.${hint} Report this error to the user and do not proceed.`;
+				}
+
+				const ok = await pi.setModel(route.model);
+				if (!ok) {
+					ctx.ui.notify(buildModelGroupAuthErrorNotification(modelGroupName, route.provider, route.modelId, commandRef), "error");
+					return `ERROR: Cannot execute \`${commandRef}\` because the routed model ${route.provider}/${route.modelId} from model group \`${modelGroupName}\` has no configured API key. Report this error to the user and do not proceed.`;
+				}
+
+				// Frontmatter `thinking` overrides the group's computed thinking level.
+				const thinking = explicitThinking
+					? clampThinkingLevel(route.model, explicitThinking)
+					: route.thinking;
+				pi.setThinkingLevel(thinking);
+
+				ctx.ui.notify(buildModelGroupNotification(modelGroupName, route.provider, route.modelId, commandRef), "info");
+				pi.appendEntry("agenticoding-model-group-switch", {
+					command: commandRef,
+					groupName: modelGroupName,
+					provider: route.provider,
+					modelId: route.modelId,
+					thinking,
+				});
+				return;
+			} catch (error) {
+				if (error instanceof SpawnRouteError) {
+					ctx.ui.notify(buildModelGroupErrorNotification(modelGroupName, commandRef, error.message), "error");
+					return `ERROR: Cannot execute \`${commandRef}\` because model group \`${modelGroupName}\` is invalid: ${error.message}. Report this error to the user and do not proceed.`;
+				}
+				throw error;
+			}
+		}
+
+		// ── Priority 3: `thinking` only (no model, no model-group) ─
+		if (explicitThinking) {
+			const clamped = clampThinkingLevel(ctx.model, explicitThinking);
+			pi.setThinkingLevel(clamped);
+			ctx.ui.notify(buildThinkingFrontmatterNotification(clamped, commandRef), "info");
+			pi.appendEntry("agenticoding-thinking-change", {
+				command: commandRef,
+				thinking: clamped,
+			});
+			return;
+		}
+
+		// No relevant frontmatter — report issue if there's a malformed model-group value
+		const issue = pending.type === "skill"
+			? cacheLookupSkillIssue(state, pending.name)
+			: cacheLookupCommandIssue(state, pending.name);
+		if (issue) {
+			ctx.ui.notify(formatFrontmatterIssue(commandRef, issue), "warning");
+		}
 	}
 }
 
@@ -331,16 +505,16 @@ export default function (pi: ExtensionAPI): void {
 		}
 	});
 
-	// ── Readonly: record slash-command intent for deferred toggle ─
+	// ── Record slash-command intents for deferred readonly toggle and model-group change ─
 	// Input interception runs earlier than the point where Pi has resolved the
 	// authoritative skill/prompt-command metadata for this turn. Record only the
-	// slash-command token here, then resolve readonly frontmatter later in
-	// before_agent_start once the cache and registry view are current.
+	// slash-command token here, then resolve readonly frontmatter and model-group
+	// later in before_agent_start once the cache and registry view are current.
 	pi.on("input", async (event, ctx) => {
-		// Only TUI sessions should enqueue a readonly toggle. Headless/RPC runs
-		// preserve the existing contract: readonly is a UI-only feature.
-		// Extension-sourced steer/followUp text must not mutate readonly state.
-		// Only interactive slash commands have authority to enqueue a toggle.
+		// Only TUI sessions should enqueue. Headless/RPC runs preserve the existing
+		// contract: readonly and model-group are UI-only features.
+		// Extension-sourced steer/followUp text must not mutate state.
+		// Only interactive slash commands have authority to enqueue.
 		if (!ctx.hasUI || event.source === "extension") return { action: "continue" };
 
 		const text = event.text;
@@ -350,6 +524,7 @@ export default function (pi: ExtensionAPI): void {
 		const skillName = text.match(/^\/skill:([^\s/]+)/)?.[1];
 		if (skillName) {
 			state.pendingReadonlyCommands.push({ type: "skill", name: skillName });
+			state.pendingModelGroupCommands.push({ type: "skill", name: skillName });
 			return { action: "continue" };
 		}
 
@@ -365,6 +540,7 @@ export default function (pi: ExtensionAPI): void {
 		if (isBuiltinReadonlyBypassCommand(commandName)) return { action: "continue" };
 		if (isPromptCommand(commands, commandName)) {
 			state.pendingReadonlyCommands.push({ type: "command", name: commandName });
+			state.pendingModelGroupCommands.push({ type: "command", name: commandName });
 			return { action: "continue" };
 		}
 		if (commands.some((command) => command.name === commandName)) {
@@ -372,6 +548,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 
 		state.pendingReadonlyCommands.push({ type: "command", name: commandName });
+		state.pendingModelGroupCommands.push({ type: "command", name: commandName });
 		return { action: "continue" };
 	});
 
@@ -483,7 +660,7 @@ export default function (pi: ExtensionAPI): void {
 	//    queue until the first real readonly decision, then inject context
 	//    primer + notebook ─────────────────────────────────────────────
 	pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
-		if (state.pendingReadonlyCommands.length > 0) {
+		if (state.pendingReadonlyCommands.length > 0 || state.pendingModelGroupCommands.length > 0) {
 			populateReadonlyCache(state, event, ctx, pi);
 		}
 		consumePendingReadonlyToggle(state, ctx, pi);
@@ -491,6 +668,11 @@ export default function (pi: ExtensionAPI): void {
 		// Update TUI indicators before each user-prompt agent run
 		updateIndicators(ctx, state);
 		refreshModelGroupsState(state, ctx);
+
+		const modelGroupBlock = await consumePendingModelGroupToggle(state, ctx, pi);
+		if (modelGroupBlock) {
+			return { systemPrompt: modelGroupBlock };
+		}
 
 		const parts: string[] = [event.systemPrompt];
 
