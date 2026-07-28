@@ -116,6 +116,14 @@ export interface AgenticodingState {
 	pendingReadonlyCommands: Array<{ type: "skill" | "command"; name: string }>;
 
 	/**
+	 * FIFO slash-command intents for model-group frontmatter resolution.
+	 * Parallel to `pendingReadonlyCommands` — enqueued together, drained in
+	 * `before_agent_start` after the readonly cache is populated.
+	 * Cleared on session reset.
+	 */
+	pendingModelGroupCommands: Array<{ type: "skill" | "command"; name: string }>;
+
+	/**
 	 * Last context-percentage band at which the watchdog nudge was delivered.
 	 * null = never delivered. Bands: null (<30), 0 (30-49), 1 (50-69), 2 (70+).
 	 * Used to throttle nudges — only nudge when crossing into a higher band.
@@ -154,6 +162,7 @@ export function createState(): AgenticodingState {
 		readonlySkillIssues,
 		readonlyPromptIssues,
 		pendingReadonlyCommands: [],
+		pendingModelGroupCommands: [],
 		lastWatchdogBand: null,
 	};
 	// Prevent replacement — spawn lifecycle code and renderer ownership checks
@@ -195,6 +204,7 @@ export function resetState(state: AgenticodingState): void {
 	state.readonlySkillIssues.clear();
 	state.readonlyPromptIssues.clear();
 	state.pendingReadonlyCommands.length = 0;
+	state.pendingModelGroupCommands.length = 0;
 	abortAndClearChildSessions(state);
 }
 
