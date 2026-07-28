@@ -1,5 +1,5 @@
 /**
- * Readonly cache tests.
+ * Frontmatter cache tests.
  *
  * Exercises populateFromSkills, populatePromptCacheFromResolvedCommandsAndDirs,
  * and cache lookups using real temp files with frontmatter — no mocks, same
@@ -25,7 +25,7 @@ import {
 	cacheLookupSkillModelGroup,
 	populateFromSkills,
 	populatePromptCacheFromResolvedCommandsAndDirs,
-} from "../../readonly-cache.js";
+} from "../../frontmatter-cache.js";
 import { createState } from "../../state.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 
@@ -479,11 +479,11 @@ test("populateFromSkills reuses the cached entry while mtime is unchanged", asyn
 	try {
 		const filePath = await writeMd(dir, "stable-skill", { readonly: true });
 		populateFromSkills(state, [makeSkill("stable-skill", filePath)]);
-		const firstEntry = state.readonlySkillCache.get("stable-skill");
+		const firstEntry = state.frontmatterSkillCache.get("stable-skill");
 		assert.equal(firstEntry?.readonly, true);
 
 		populateFromSkills(state, [makeSkill("stable-skill", filePath)]);
-		const secondEntry = state.readonlySkillCache.get("stable-skill");
+		const secondEntry = state.frontmatterSkillCache.get("stable-skill");
 		assert.equal(secondEntry, firstEntry);
 	} finally {
 		await rm(dir, { recursive: true, force: true });

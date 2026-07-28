@@ -1,5 +1,5 @@
 /**
- * Readonly cache for skill/prompt-template frontmatter.
+ * Cache for skill/prompt-template frontmatter.
  *
  * Populated lazily in `before_agent_start` from:
  *   1. Loaded skills (via `systemPromptOptions.skills`).
@@ -23,7 +23,7 @@ import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { Skill, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
-export interface ReadonlyCacheEntry {
+export interface FrontmatterEntry {
 	readonly: boolean | null;
 	modelGroup: string | null;
 	explicitModel: string | null;
@@ -32,21 +32,21 @@ export interface ReadonlyCacheEntry {
 	filePath: string;
 }
 
-export interface ReadonlyCacheIssue {
+export interface FrontmatterIssue {
 	kind: "invalid-readonly-value" | "invalid-model-group-value" | "invalid-explicit-model-value" | "invalid-thinking-value" | "malformed-frontmatter" | "unreadable-file";
 	filePath: string;
 }
 
-export interface ReadonlyCacheStore {
-	readonlySkillCache: Map<string, ReadonlyCacheEntry>;
-	readonlyPromptCache: Map<string, ReadonlyCacheEntry>;
-	readonlySkillIssues: Map<string, ReadonlyCacheIssue>;
-	readonlyPromptIssues: Map<string, ReadonlyCacheIssue>;
+export interface FrontmatterCache {
+	frontmatterSkillCache: Map<string, FrontmatterEntry>;
+	frontmatterPromptCache: Map<string, FrontmatterEntry>;
+	frontmatterSkillIssues: Map<string, FrontmatterIssue>;
+	frontmatterPromptIssues: Map<string, FrontmatterIssue>;
 }
 
 interface CacheReadResult {
-	entry: ReadonlyCacheEntry | null;
-	issue: ReadonlyCacheIssue | null;
+	entry: FrontmatterEntry | null;
+	issue: FrontmatterIssue | null;
 }
 
 const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -68,8 +68,8 @@ function parseExplicitThinking(raw: unknown): ModelThinkingLevel | null {
 
 function readCacheEntry(
 	filePath: string,
-	previous?: ReadonlyCacheEntry,
-	previousIssue?: ReadonlyCacheIssue,
+	previous?: FrontmatterEntry,
+	previousIssue?: FrontmatterIssue,
 ): CacheReadResult {
 	let st;
 	try {
@@ -152,19 +152,19 @@ function readCacheEntry(
 	}
 }
 
-function replaceCache(target: Map<string, ReadonlyCacheEntry>, next: Map<string, ReadonlyCacheEntry>): void {
+function replaceCache(target: Map<string, FrontmatterEntry>, next: Map<string, FrontmatterEntry>): void {
 	target.clear();
 	for (const [name, entry] of next) target.set(name, entry);
 }
 
-function replaceIssues(target: Map<string, ReadonlyCacheIssue>, next: Map<string, ReadonlyCacheIssue>): void {
+function replaceIssues(target: Map<string, FrontmatterIssue>, next: Map<string, FrontmatterIssue>): void {
 	target.clear();
 	for (const [name, issue] of next) target.set(name, issue);
 }
 
 function setEntry(
-	nextCache: Map<string, ReadonlyCacheEntry>,
-	nextIssues: Map<string, ReadonlyCacheIssue>,
+	nextCache: Map<string, FrontmatterEntry>,
+	nextIssues: Map<string, FrontmatterIssue>,
 	name: string,
 	result: CacheReadResult,
 ): void {
@@ -172,48 +172,48 @@ function setEntry(
 	if (result.issue) nextIssues.set(name, result.issue);
 }
 
-export function cacheLookupSkill(store: ReadonlyCacheStore, name: string): boolean | null {
-	return store.readonlySkillCache.get(name)?.readonly ?? null;
+export function cacheLookupSkill(store: FrontmatterCache, name: string): boolean | null {
+	return store.frontmatterSkillCache.get(name)?.readonly ?? null;
 }
 
-export function cacheLookupPrompt(store: ReadonlyCacheStore, name: string): boolean | null {
-	return store.readonlyPromptCache.get(name)?.readonly ?? null;
+export function cacheLookupPrompt(store: FrontmatterCache, name: string): boolean | null {
+	return store.frontmatterPromptCache.get(name)?.readonly ?? null;
 }
 
-export function cacheLookupCommand(store: ReadonlyCacheStore, name: string): boolean | null {
+export function cacheLookupCommand(store: FrontmatterCache, name: string): boolean | null {
 	return cacheLookupPrompt(store, name);
 }
 
-export function cacheLookupSkillModelGroup(store: ReadonlyCacheStore, name: string): string | null {
-	return store.readonlySkillCache.get(name)?.modelGroup ?? null;
+export function cacheLookupSkillModelGroup(store: FrontmatterCache, name: string): string | null {
+	return store.frontmatterSkillCache.get(name)?.modelGroup ?? null;
 }
 
-export function cacheLookupCommandModelGroup(store: ReadonlyCacheStore, name: string): string | null {
-	return store.readonlyPromptCache.get(name)?.modelGroup ?? null;
+export function cacheLookupCommandModelGroup(store: FrontmatterCache, name: string): string | null {
+	return store.frontmatterPromptCache.get(name)?.modelGroup ?? null;
 }
 
-export function cacheLookupSkillExplicitModel(store: ReadonlyCacheStore, name: string): string | null {
-	return store.readonlySkillCache.get(name)?.explicitModel ?? null;
+export function cacheLookupSkillExplicitModel(store: FrontmatterCache, name: string): string | null {
+	return store.frontmatterSkillCache.get(name)?.explicitModel ?? null;
 }
 
-export function cacheLookupCommandExplicitModel(store: ReadonlyCacheStore, name: string): string | null {
-	return store.readonlyPromptCache.get(name)?.explicitModel ?? null;
+export function cacheLookupCommandExplicitModel(store: FrontmatterCache, name: string): string | null {
+	return store.frontmatterPromptCache.get(name)?.explicitModel ?? null;
 }
 
-export function cacheLookupSkillExplicitThinking(store: ReadonlyCacheStore, name: string): ModelThinkingLevel | null {
-	return store.readonlySkillCache.get(name)?.explicitThinking ?? null;
+export function cacheLookupSkillExplicitThinking(store: FrontmatterCache, name: string): ModelThinkingLevel | null {
+	return store.frontmatterSkillCache.get(name)?.explicitThinking ?? null;
 }
 
-export function cacheLookupCommandExplicitThinking(store: ReadonlyCacheStore, name: string): ModelThinkingLevel | null {
-	return store.readonlyPromptCache.get(name)?.explicitThinking ?? null;
+export function cacheLookupCommandExplicitThinking(store: FrontmatterCache, name: string): ModelThinkingLevel | null {
+	return store.frontmatterPromptCache.get(name)?.explicitThinking ?? null;
 }
 
-export function cacheLookupSkillIssue(store: ReadonlyCacheStore, name: string): ReadonlyCacheIssue | null {
-	return store.readonlySkillIssues.get(name) ?? null;
+export function cacheLookupSkillIssue(store: FrontmatterCache, name: string): FrontmatterIssue | null {
+	return store.frontmatterSkillIssues.get(name) ?? null;
 }
 
-export function cacheLookupCommandIssue(store: ReadonlyCacheStore, name: string): ReadonlyCacheIssue | null {
-	return store.readonlyPromptIssues.get(name) ?? null;
+export function cacheLookupCommandIssue(store: FrontmatterCache, name: string): FrontmatterIssue | null {
+	return store.frontmatterPromptIssues.get(name) ?? null;
 }
 
 /**
@@ -221,7 +221,7 @@ export function cacheLookupCommandIssue(store: ReadonlyCacheStore, name: string)
  * Covers invalid `readonly`, `model-group`, `model`, `thinking`,
  * malformed YAML, and unreadable source files. Missing fields are normal no-ops.
  */
-export function formatFrontmatterIssue(commandRef: string, issue: ReadonlyCacheIssue): string {
+export function formatFrontmatterIssue(commandRef: string, issue: FrontmatterIssue): string {
 	const detail = issue.kind === "invalid-readonly-value"
 		? "`readonly` frontmatter must be `true` or `false`"
 		: issue.kind === "invalid-model-group-value"
@@ -236,26 +236,26 @@ export function formatFrontmatterIssue(commandRef: string, issue: ReadonlyCacheI
 	return `Frontmatter ignored for \`${commandRef}\`: ${detail} at \`${issue.filePath}\`.`;
 }
 
-export function populateFromSkills(store: ReadonlyCacheStore, skills: Skill[]): void {
-	const nextCache = new Map<string, ReadonlyCacheEntry>();
-	const nextIssues = new Map<string, ReadonlyCacheIssue>();
+export function populateFromSkills(store: FrontmatterCache, skills: Skill[]): void {
+	const nextCache = new Map<string, FrontmatterEntry>();
+	const nextIssues = new Map<string, FrontmatterIssue>();
 	for (const skill of skills) {
 		const result = readCacheEntry(
 			skill.filePath,
-			store.readonlySkillCache.get(skill.name),
-			store.readonlySkillIssues.get(skill.name),
+			store.frontmatterSkillCache.get(skill.name),
+			store.frontmatterSkillIssues.get(skill.name),
 		);
 		setEntry(nextCache, nextIssues, skill.name, result);
 	}
-	replaceCache(store.readonlySkillCache, nextCache);
-	replaceIssues(store.readonlySkillIssues, nextIssues);
+	replaceCache(store.frontmatterSkillCache, nextCache);
+	replaceIssues(store.frontmatterSkillIssues, nextIssues);
 }
 
 function collectPromptFilesFromDir(
-	store: ReadonlyCacheStore,
+	store: FrontmatterCache,
 	dir: string,
-	nextCache: Map<string, ReadonlyCacheEntry>,
-	nextIssues: Map<string, ReadonlyCacheIssue>,
+	nextCache: Map<string, FrontmatterEntry>,
+	nextIssues: Map<string, FrontmatterIssue>,
 	blockedNames: Set<string>,
 ): void {
 	let files: string[];
@@ -270,8 +270,8 @@ function collectPromptFilesFromDir(
 		if (!name || blockedNames.has(name) || nextCache.has(name) || nextIssues.has(name)) continue;
 		const result = readCacheEntry(
 			join(dir, file),
-			store.readonlyPromptCache.get(name),
-			store.readonlyPromptIssues.get(name),
+			store.frontmatterPromptCache.get(name),
+			store.frontmatterPromptIssues.get(name),
 		);
 		setEntry(nextCache, nextIssues, name, result);
 	}
@@ -290,13 +290,13 @@ function collectPromptFilesFromDir(
  * those standard dirs must already be surfaced by `pi.getCommands()`.
  */
 export function populatePromptCacheFromResolvedCommandsAndDirs(
-	store: ReadonlyCacheStore,
+	store: FrontmatterCache,
 	commands: SlashCommandInfo[],
 	cwd: string,
 	projectTrusted: boolean,
 ): void {
-	const nextCache = new Map<string, ReadonlyCacheEntry>();
-	const nextIssues = new Map<string, ReadonlyCacheIssue>();
+	const nextCache = new Map<string, FrontmatterEntry>();
+	const nextIssues = new Map<string, FrontmatterIssue>();
 	const blockedNames = new Set<string>();
 
 	for (const command of commands) {
@@ -308,8 +308,8 @@ export function populatePromptCacheFromResolvedCommandsAndDirs(
 		if (nextCache.has(command.name) || nextIssues.has(command.name)) continue;
 		const result = readCacheEntry(
 			command.sourceInfo.path,
-			store.readonlyPromptCache.get(command.name),
-			store.readonlyPromptIssues.get(command.name),
+			store.frontmatterPromptCache.get(command.name),
+			store.frontmatterPromptIssues.get(command.name),
 		);
 		setEntry(nextCache, nextIssues, command.name, result);
 	}
@@ -319,6 +319,6 @@ export function populatePromptCacheFromResolvedCommandsAndDirs(
 	}
 	collectPromptFilesFromDir(store, join(homedir(), ".pi", "agent", "prompts"), nextCache, nextIssues, blockedNames);
 
-	replaceCache(store.readonlyPromptCache, nextCache);
-	replaceIssues(store.readonlyPromptIssues, nextIssues);
+	replaceCache(store.frontmatterPromptCache, nextCache);
+	replaceIssues(store.frontmatterPromptIssues, nextIssues);
 }

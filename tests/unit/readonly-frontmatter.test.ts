@@ -2,7 +2,7 @@
  * Readonly frontmatter integration tests.
  *
  * Exercises the full pipeline:
- *   input queue → before_agent_start → consumePendingReadonlyToggle
+ *   input queue → before_agent_start → consumePendingReadonlyCommands
  */
 
 import test from "node:test";

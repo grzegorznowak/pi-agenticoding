@@ -86,8 +86,8 @@ import {
 	formatFrontmatterIssue,
 	populateFromSkills,
 	populatePromptCacheFromResolvedCommandsAndDirs,
-	type ReadonlyCacheIssue,
-} from "./readonly-cache.js";
+	type FrontmatterIssue,
+} from "./frontmatter-cache.js";
 import {
 	STATUS_KEY_HANDOFF,
 	STATUS_KEY_READONLY,
@@ -99,11 +99,11 @@ import { applyReadonlyBashGuard } from "./readonly-bash.js";
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /**
- * Populate the readonly frontmatter cache from loaded skills and prompt
+ * Populate the frontmatter cache from loaded skills and prompt
  * commands/directories. Always called before toggle resolution so the cache
  * is fresh for the current input.
  */
-function populateReadonlyCache(
+function populateFrontmatterCache(
 	state: AgenticodingState,
 	event: { systemPromptOptions?: { skills?: Skill[] } },
 	ctx: ExtensionContext,
@@ -132,27 +132,27 @@ function alignPendingReadonlyHandoff(state: AgenticodingState, readonly: boolean
 	state.pendingRequestedHandoff.resumeReadonlyAfterHandoff = readonly;
 }
 
-function formatReadonlyCommandRef(command: { type: "skill" | "command"; name: string }): string {
+function formatCommandRef(command: { type: "skill" | "command"; name: string }): string {
 	return command.type === "skill" ? `/skill:${command.name}` : `/${command.name}`;
 }
 
-function recordReadonlyFrontmatterIssue(
+function recordFrontmatterIssue(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 	command: { type: "skill" | "command"; name: string },
-	issue: ReadonlyCacheIssue,
+	issue: FrontmatterIssue,
 ): void {
 	pi.appendEntry("agenticoding-readonly-frontmatter-issue", { name: command.name, type: command.type, issue });
 	if (ctx.hasUI) {
-		ctx.ui.notify(formatFrontmatterIssue(formatReadonlyCommandRef(command), issue), "warning");
+		ctx.ui.notify(formatFrontmatterIssue(formatCommandRef(command), issue), "warning");
 	}
 }
 
 /**
  * Consume any deferred readonly toggle recorded by the `input` handler.
- * Must be called after `populateReadonlyCache` so the cache is populated.
+ * Must be called after `populateFrontmatterCache` so the cache is populated.
  */
-function consumePendingReadonlyToggle(
+function consumePendingReadonlyCommands(
 	state: AgenticodingState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
@@ -183,7 +183,7 @@ function consumePendingReadonlyToggle(
 			const issue = pendingCommand.type === "skill"
 				? cacheLookupSkillIssue(state, pendingCommand.name)
 				: cacheLookupCommandIssue(state, pendingCommand.name);
-			if (issue) recordReadonlyFrontmatterIssue(ctx, pi, pendingCommand, issue);
+			if (issue) recordFrontmatterIssue(ctx, pi, pendingCommand, issue);
 			continue;
 		}
 
@@ -201,7 +201,7 @@ function consumePendingReadonlyToggle(
 		pi.appendEntry("agenticoding-readonly", { enabled: readonly });
 
 		if (ctx.hasUI) {
-			const commandRef = formatReadonlyCommandRef(pendingCommand);
+			const commandRef = formatCommandRef(pendingCommand);
 			ctx.ui.notify(buildReadonlyFrontmatterNotification(readonly, commandRef), "info");
 		}
 		return;
@@ -210,7 +210,7 @@ function consumePendingReadonlyToggle(
 
 /**
  * Consume any deferred model-group / model / thinking frontmatter recorded by the `input` handler.
- * Must be called after `populateReadonlyCache` so the cache is populated and
+ * Must be called after `populateFrontmatterCache` so the cache is populated and
  * after `refreshModelGroupsState` so model groups are current.
  *
  * Resolution priority for each pending command:
@@ -218,7 +218,7 @@ function consumePendingReadonlyToggle(
  *   2. `model-group` + optional `thinking` override — group resolves model, thinking overrides group
  *   3. `thinking` only — sets thinking level on current model without changing model
  *
- * Unlike `consumePendingReadonlyToggle` which drains until the first real decision,
+ * Unlike `consumePendingReadonlyCommands` which drains until the first real decision,
  * this function processes at most one actionable entry per invocation. Entries without
  * model/model-group/thinking frontmatter are skipped. Errors block execution via
  * systemPrompt return, leaving remaining entries for the next cycle.
@@ -238,7 +238,7 @@ async function consumePendingModelGroupToggle(
 		const pending = state.pendingModelGroupCommands.shift();
 		if (!pending) return;
 
-		const commandRef = formatReadonlyCommandRef(pending);
+		const commandRef = formatCommandRef(pending);
 		const explicitModel = pending.type === "skill"
 			? cacheLookupSkillExplicitModel(state, pending.name)
 			: cacheLookupCommandExplicitModel(state, pending.name);
@@ -656,14 +656,14 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── before_agent_start: populate readonly cache, consume the deferred
+	// ── before_agent_start: populate frontmatter cache, consume the deferred
 	//    queue until the first real readonly decision, then inject context
 	//    primer + notebook ─────────────────────────────────────────────
 	pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
 		if (state.pendingReadonlyCommands.length > 0 || state.pendingModelGroupCommands.length > 0) {
-			populateReadonlyCache(state, event, ctx, pi);
+			populateFrontmatterCache(state, event, ctx, pi);
 		}
-		consumePendingReadonlyToggle(state, ctx, pi);
+		consumePendingReadonlyCommands(state, ctx, pi);
 
 		// Update TUI indicators before each user-prompt agent run
 		updateIndicators(ctx, state);
