@@ -21,15 +21,19 @@ import { join, extname, basename } from "node:path";
 import { homedir } from "node:os";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { Skill, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 
 export interface ReadonlyCacheEntry {
 	readonly: boolean | null;
+	modelGroup: string | null;
+	explicitModel: string | null;
+	explicitThinking: ModelThinkingLevel | null;
 	mtimeMs: number;
 	filePath: string;
 }
 
 export interface ReadonlyCacheIssue {
-	kind: "invalid-readonly-value" | "malformed-frontmatter" | "unreadable-file";
+	kind: "invalid-readonly-value" | "invalid-model-group-value" | "invalid-explicit-model-value" | "invalid-thinking-value" | "malformed-frontmatter" | "unreadable-file";
 	filePath: string;
 }
 
@@ -45,7 +49,28 @@ interface CacheReadResult {
 	issue: ReadonlyCacheIssue | null;
 }
 
-function readCacheEntry(filePath: string, previous?: ReadonlyCacheEntry): CacheReadResult {
+const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+function parseExplicitModel(raw: unknown): string | null {
+	if (typeof raw !== "string" || raw.trim().length === 0) return null;
+	const trimmed = raw.trim();
+	// Must match provider/model-id — exactly one slash, non-empty parts
+	const slashIdx = trimmed.indexOf("/");
+	if (slashIdx === -1 || slashIdx === 0 || slashIdx === trimmed.length - 1 || trimmed.lastIndexOf("/") !== slashIdx) return null;
+	return trimmed;
+}
+
+function parseExplicitThinking(raw: unknown): ModelThinkingLevel | null {
+	if (typeof raw !== "string") return null;
+	const trimmed = raw.trim().toLowerCase() as ModelThinkingLevel;
+	return THINKING_LEVELS.includes(trimmed) ? trimmed : null;
+}
+
+function readCacheEntry(
+	filePath: string,
+	previous?: ReadonlyCacheEntry,
+	previousIssue?: ReadonlyCacheIssue,
+): CacheReadResult {
 	let st;
 	try {
 		st = statSync(filePath);
@@ -56,7 +81,7 @@ function readCacheEntry(filePath: string, previous?: ReadonlyCacheEntry): CacheR
 	}
 
 	if (previous && previous.filePath === filePath && st.mtimeMs === previous.mtimeMs) {
-		return { entry: previous, issue: null };
+		return { entry: previous, issue: previousIssue ?? null };
 	}
 
 	let content: string;
@@ -69,15 +94,55 @@ function readCacheEntry(filePath: string, previous?: ReadonlyCacheEntry): CacheR
 	try {
 		const { frontmatter } = parseFrontmatter<Record<string, unknown>>(content);
 		const readonly = frontmatter["readonly"];
-		if (readonly === undefined || typeof readonly === "boolean") {
+		const modelGroupRaw = frontmatter["model-group"];
+		const modelRaw = frontmatter["model"];
+		const thinkingRaw = frontmatter["thinking"];
+
+		// Validate readonly first - fail-fast on first invalid field.
+		// Fields are semantically ordered so fixing this typically reveals the next.
+		if (readonly !== undefined && typeof readonly !== "boolean") {
 			return {
-				entry: { readonly: readonly ?? null, mtimeMs: st.mtimeMs, filePath },
-				issue: null,
+				entry: { readonly: null, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: st.mtimeMs, filePath },
+				issue: { kind: "invalid-readonly-value", filePath },
 			};
 		}
+
+		// Validate model-group next - fail-fast pattern continues.
+		if (modelGroupRaw !== undefined && (typeof modelGroupRaw !== "string" || modelGroupRaw.trim().length === 0)) {
+			return {
+				entry: { readonly: readonly ?? null, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: st.mtimeMs, filePath },
+				issue: { kind: "invalid-model-group-value", filePath },
+			};
+		}
+
+		// Validate explicit model - fail-fast pattern continues.
+		const explicitModel = modelRaw !== undefined ? parseExplicitModel(modelRaw) : null;
+		if (modelRaw !== undefined && explicitModel === null) {
+			return {
+				entry: { readonly: readonly ?? null, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: st.mtimeMs, filePath },
+				issue: { kind: "invalid-explicit-model-value", filePath },
+			};
+		}
+
+		// Validate explicit thinking last - fail-fast pattern completes.
+		const explicitThinking = thinkingRaw !== undefined ? parseExplicitThinking(thinkingRaw) : null;
+		if (thinkingRaw !== undefined && explicitThinking === null) {
+			return {
+				entry: { readonly: readonly ?? null, modelGroup: null, explicitModel, explicitThinking: null, mtimeMs: st.mtimeMs, filePath },
+				issue: { kind: "invalid-thinking-value", filePath },
+			};
+		}
+
 		return {
-			entry: { readonly: null, mtimeMs: st.mtimeMs, filePath },
-			issue: { kind: "invalid-readonly-value", filePath },
+			entry: {
+				readonly: readonly ?? null,
+				modelGroup: (typeof modelGroupRaw === "string" ? modelGroupRaw.trim() : null) ?? null,
+				explicitModel,
+				explicitThinking,
+				mtimeMs: st.mtimeMs,
+				filePath,
+			},
+			issue: null,
 		};
 	} catch {
 		return {
@@ -119,6 +184,30 @@ export function cacheLookupCommand(store: ReadonlyCacheStore, name: string): boo
 	return cacheLookupPrompt(store, name);
 }
 
+export function cacheLookupSkillModelGroup(store: ReadonlyCacheStore, name: string): string | null {
+	return store.readonlySkillCache.get(name)?.modelGroup ?? null;
+}
+
+export function cacheLookupCommandModelGroup(store: ReadonlyCacheStore, name: string): string | null {
+	return store.readonlyPromptCache.get(name)?.modelGroup ?? null;
+}
+
+export function cacheLookupSkillExplicitModel(store: ReadonlyCacheStore, name: string): string | null {
+	return store.readonlySkillCache.get(name)?.explicitModel ?? null;
+}
+
+export function cacheLookupCommandExplicitModel(store: ReadonlyCacheStore, name: string): string | null {
+	return store.readonlyPromptCache.get(name)?.explicitModel ?? null;
+}
+
+export function cacheLookupSkillExplicitThinking(store: ReadonlyCacheStore, name: string): ModelThinkingLevel | null {
+	return store.readonlySkillCache.get(name)?.explicitThinking ?? null;
+}
+
+export function cacheLookupCommandExplicitThinking(store: ReadonlyCacheStore, name: string): ModelThinkingLevel | null {
+	return store.readonlyPromptCache.get(name)?.explicitThinking ?? null;
+}
+
 export function cacheLookupSkillIssue(store: ReadonlyCacheStore, name: string): ReadonlyCacheIssue | null {
 	return store.readonlySkillIssues.get(name) ?? null;
 }
@@ -128,24 +217,34 @@ export function cacheLookupCommandIssue(store: ReadonlyCacheStore, name: string)
 }
 
 /**
- * Format a user-facing warning message for a readonly frontmatter issue.
- * Used when a skill or prompt has invalid `readonly` frontmatter or the
- * source file cannot be read. Missing `readonly` is a normal no-op.
+ * Format a user-facing warning message for a frontmatter issue.
+ * Covers invalid `readonly`, `model-group`, `model`, `thinking`,
+ * malformed YAML, and unreadable source files. Missing fields are normal no-ops.
  */
-export function formatReadonlyFrontmatterIssue(commandRef: string, issue: ReadonlyCacheIssue): string {
+export function formatFrontmatterIssue(commandRef: string, issue: ReadonlyCacheIssue): string {
 	const detail = issue.kind === "invalid-readonly-value"
 		? "`readonly` frontmatter must be `true` or `false`"
+		: issue.kind === "invalid-model-group-value"
+			? "`model-group` frontmatter must be a non-empty string"
+		: issue.kind === "invalid-explicit-model-value"
+			? "`model` frontmatter must be in `<provider>/<model-id>` format"
+		: issue.kind === "invalid-thinking-value"
+			? "`thinking` frontmatter must be one of: off, minimal, low, medium, high, xhigh, max"
 		: issue.kind === "malformed-frontmatter"
 			? "frontmatter could not be parsed"
 			: "prompt/skill file could not be read";
-	return `Readonly frontmatter ignored for \`${commandRef}\`: ${detail} at \`${issue.filePath}\`.`;
+	return `Frontmatter ignored for \`${commandRef}\`: ${detail} at \`${issue.filePath}\`.`;
 }
 
 export function populateFromSkills(store: ReadonlyCacheStore, skills: Skill[]): void {
 	const nextCache = new Map<string, ReadonlyCacheEntry>();
 	const nextIssues = new Map<string, ReadonlyCacheIssue>();
 	for (const skill of skills) {
-		const result = readCacheEntry(skill.filePath, store.readonlySkillCache.get(skill.name));
+		const result = readCacheEntry(
+			skill.filePath,
+			store.readonlySkillCache.get(skill.name),
+			store.readonlySkillIssues.get(skill.name),
+		);
 		setEntry(nextCache, nextIssues, skill.name, result);
 	}
 	replaceCache(store.readonlySkillCache, nextCache);
@@ -169,7 +268,11 @@ function collectPromptFilesFromDir(
 		if (extname(file) !== ".md") continue;
 		const name = basename(file, ".md");
 		if (!name || blockedNames.has(name) || nextCache.has(name) || nextIssues.has(name)) continue;
-		const result = readCacheEntry(join(dir, file), store.readonlyPromptCache.get(name));
+		const result = readCacheEntry(
+			join(dir, file),
+			store.readonlyPromptCache.get(name),
+			store.readonlyPromptIssues.get(name),
+		);
 		setEntry(nextCache, nextIssues, name, result);
 	}
 }
@@ -203,7 +306,11 @@ export function populatePromptCacheFromResolvedCommandsAndDirs(
 			continue;
 		}
 		if (nextCache.has(command.name) || nextIssues.has(command.name)) continue;
-		const result = readCacheEntry(command.sourceInfo.path, store.readonlyPromptCache.get(command.name));
+		const result = readCacheEntry(
+			command.sourceInfo.path,
+			store.readonlyPromptCache.get(command.name),
+			store.readonlyPromptIssues.get(command.name),
+		);
 		setEntry(nextCache, nextIssues, command.name, result);
 	}
 

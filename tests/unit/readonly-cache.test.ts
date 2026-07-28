@@ -13,10 +13,16 @@ import { join } from "node:path";
 import { tmpDir, withTempHome } from "./helpers.js";
 import {
 	cacheLookupCommand,
+	cacheLookupCommandExplicitModel,
+	cacheLookupCommandExplicitThinking,
 	cacheLookupCommandIssue,
+	cacheLookupCommandModelGroup,
 	cacheLookupPrompt,
 	cacheLookupSkill,
+	cacheLookupSkillExplicitModel,
+	cacheLookupSkillExplicitThinking,
 	cacheLookupSkillIssue,
+	cacheLookupSkillModelGroup,
 	populateFromSkills,
 	populatePromptCacheFromResolvedCommandsAndDirs,
 } from "../../readonly-cache.js";
@@ -484,6 +490,31 @@ test("populateFromSkills reuses the cached entry while mtime is unchanged", asyn
 	}
 });
 
+test("cache rebuild preserves unchanged frontmatter issues", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const skillPath = await writeMd(dir, "broken-skill", { readonly: "yes" });
+		const promptPath = await writeMd(dir, "broken-prompt", { thinking: "turbo" });
+		const commands = [{
+			name: "broken-prompt",
+			source: "prompt" as const,
+			description: "Broken prompt",
+			sourceInfo: { path: promptPath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+		}];
+
+		populateFromSkills(state, [makeSkill("broken-skill", skillPath)]);
+		populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
+		populateFromSkills(state, [makeSkill("broken-skill", skillPath)]);
+		populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
+
+		assert.equal(cacheLookupSkillIssue(state, "broken-skill")?.kind, "invalid-readonly-value");
+		assert.equal(cacheLookupCommandIssue(state, "broken-prompt")?.kind, "invalid-thinking-value");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("populateFromSkills records malformed frontmatter issues", async () => {
 	const state = createState();
 	const dir = await tmpDir();
@@ -659,6 +690,516 @@ test("populatePromptCacheFromResolvedCommandsAndDirs clears an unreadable issue 
 		populatePromptCacheFromResolvedCommandsAndDirs(state, commands, dir, false);
 		assert.equal(cacheLookupCommand(state, "recover-readable"), false);
 		assert.equal(cacheLookupCommandIssue(state, "recover-readable"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+// ── Model-group / model / thinking frontmatter cache tests ────────
+
+test("populateFromSkills caches model-group frontmatter", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "grouped", { "model-group": "reviewer" });
+		populateFromSkills(state, [makeSkill("grouped", filePath)]);
+
+		assert.equal(cacheLookupSkillModelGroup(state, "grouped"), "reviewer");
+		assert.equal(cacheLookupSkillExplicitModel(state, "grouped"), null);
+		assert.equal(cacheLookupSkillExplicitThinking(state, "grouped"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills caches explicit model frontmatter", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "explicit", { model: "openai/gpt-4o" });
+		populateFromSkills(state, [makeSkill("explicit", filePath)]);
+
+		assert.equal(cacheLookupSkillExplicitModel(state, "explicit"), "openai/gpt-4o");
+		assert.equal(cacheLookupSkillModelGroup(state, "explicit"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills caches thinking frontmatter", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "thinker", { thinking: "high" });
+		populateFromSkills(state, [makeSkill("thinker", filePath)]);
+
+		assert.equal(cacheLookupSkillExplicitThinking(state, "thinker"), "high");
+		assert.equal(cacheLookupSkillExplicitModel(state, "thinker"), null);
+		assert.equal(cacheLookupSkillModelGroup(state, "thinker"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills returns null for all new fields when frontmatter is absent", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "bare", { description: "Test" });
+		populateFromSkills(state, [makeSkill("bare", filePath)]);
+
+		assert.equal(cacheLookupSkillModelGroup(state, "bare"), null);
+		assert.equal(cacheLookupSkillExplicitModel(state, "bare"), null);
+		assert.equal(cacheLookupSkillExplicitThinking(state, "bare"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills preserves readonly alongside new fields", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "all-fields", {
+			readonly: true,
+			"model-group": "fast",
+			model: "anthropic/claude-sonnet",
+			thinking: "low",
+		});
+		populateFromSkills(state, [makeSkill("all-fields", filePath)]);
+
+		assert.equal(cacheLookupSkill(state, "all-fields"), true);
+		assert.equal(cacheLookupSkillModelGroup(state, "all-fields"), "fast");
+		assert.equal(cacheLookupSkillExplicitModel(state, "all-fields"), "anthropic/claude-sonnet");
+		assert.equal(cacheLookupSkillExplicitThinking(state, "all-fields"), "low");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills returns null and records issue for invalid model-group value", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "bad-group", { "model-group": "" });
+		populateFromSkills(state, [makeSkill("bad-group", filePath)]);
+
+		assert.equal(cacheLookupSkillModelGroup(state, "bad-group"), null);
+		assert.equal(cacheLookupSkillIssue(state, "bad-group")?.kind, "invalid-model-group-value");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills accepts max thinking level", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "max-think", { thinking: "max" });
+		populateFromSkills(state, [makeSkill("max-think", filePath)]);
+
+		assert.equal(cacheLookupSkillExplicitThinking(state, "max-think"), "max");
+		assert.equal(cacheLookupSkillIssue(state, "max-think"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills returns null and records issue for invalid explicit model format", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const cases = [
+			{ model: "no-slash", desc: "missing slash" },
+			{ model: "/missing-provider", desc: "empty provider" },
+			{ model: "missing-id/", desc: "empty model-id" },
+			{ model: "a/b/c", desc: "multiple slashes" },
+		];
+		for (const { model, desc } of cases) {
+			const name = `bad-model-${desc.replace(/[^a-z]/g, "")}`;
+			const filePath = await writeMd(dir, name, { model });
+			populateFromSkills(state, [makeSkill(name, filePath)]);
+
+			assert.equal(cacheLookupSkillExplicitModel(state, name), null, `${desc}: model should be null`);
+			assert.equal(cacheLookupSkillIssue(state, name)?.kind, "invalid-explicit-model-value", `${desc}: issue kind`);
+		}
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills returns null and records issue for invalid thinking value", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "bad-thinking", { thinking: "ultra" });
+		populateFromSkills(state, [makeSkill("bad-thinking", filePath)]);
+
+		assert.equal(cacheLookupSkillExplicitThinking(state, "bad-thinking"), null);
+		assert.equal(cacheLookupSkillIssue(state, "bad-thinking")?.kind, "invalid-thinking-value");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills accepts all valid thinking levels", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const levels = ["off", "minimal", "low", "medium", "high", "xhigh"];
+		for (const level of levels) {
+			const name = `think-${level}`;
+			const filePath = await writeMd(dir, name, { thinking: level });
+			populateFromSkills(state, [makeSkill(name, filePath)]);
+
+			assert.equal(cacheLookupSkillExplicitThinking(state, name), level, `thinking level ${level} should be cached`);
+			assert.equal(cacheLookupSkillIssue(state, name), null, `thinking level ${level} should have no issue`);
+		}
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills normalizes thinking level case", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "case-think", { thinking: "HIGH" });
+		populateFromSkills(state, [makeSkill("case-think", filePath)]);
+
+		assert.equal(cacheLookupSkillExplicitThinking(state, "case-think"), "high");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills trims whitespace from model-group and model", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const fp1 = await writeMd(dir, "trim-group", { "model-group": "  reviewer  " });
+		const fp2 = await writeMd(dir, "trim-model", { model: "  openai/gpt-4o  " });
+		populateFromSkills(state, [makeSkill("trim-group", fp1), makeSkill("trim-model", fp2)]);
+
+		assert.equal(cacheLookupSkillModelGroup(state, "trim-group"), "reviewer");
+		assert.equal(cacheLookupSkillExplicitModel(state, "trim-model"), "openai/gpt-4o");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populatePromptCacheFromResolvedCommandsAndDirs caches model-group for prompt commands", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "cmd-group", { "model-group": "fast" });
+		populatePromptCacheFromResolvedCommandsAndDirs(state, [{
+			name: "cmd-group",
+			source: "prompt",
+			description: "Test",
+			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+		}], dir, false);
+
+		assert.equal(cacheLookupCommandModelGroup(state, "cmd-group"), "fast");
+		assert.equal(cacheLookupCommandExplicitModel(state, "cmd-group"), null);
+		assert.equal(cacheLookupCommandExplicitThinking(state, "cmd-group"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populatePromptCacheFromResolvedCommandsAndDirs caches explicit model for prompt commands", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "cmd-model", { model: "anthropic/claude-sonnet" });
+		populatePromptCacheFromResolvedCommandsAndDirs(state, [{
+			name: "cmd-model",
+			source: "prompt",
+			description: "Test",
+			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+		}], dir, false);
+
+		assert.equal(cacheLookupCommandExplicitModel(state, "cmd-model"), "anthropic/claude-sonnet");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populatePromptCacheFromResolvedCommandsAndDirs caches thinking for prompt commands", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "cmd-think", { thinking: "xhigh" });
+		populatePromptCacheFromResolvedCommandsAndDirs(state, [{
+			name: "cmd-think",
+			source: "prompt",
+			description: "Test",
+			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+		}], dir, false);
+
+		assert.equal(cacheLookupCommandExplicitThinking(state, "cmd-think"), "xhigh");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populatePromptCacheFromResolvedCommandsAndDirs records invalid model-group issue for prompts", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "bad-cmd-group", { "model-group": "" });
+		populatePromptCacheFromResolvedCommandsAndDirs(state, [{
+			name: "bad-cmd-group",
+			source: "prompt",
+			description: "Test",
+			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+		}], dir, false);
+
+		assert.equal(cacheLookupCommandModelGroup(state, "bad-cmd-group"), null);
+		assert.equal(cacheLookupCommandIssue(state, "bad-cmd-group")?.kind, "invalid-model-group-value");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populatePromptCacheFromResolvedCommandsAndDirs records invalid explicit model issue for prompts", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "bad-cmd-model", { model: "no-slash" });
+		populatePromptCacheFromResolvedCommandsAndDirs(state, [{
+			name: "bad-cmd-model",
+			source: "prompt",
+			description: "Test",
+			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+		}], dir, false);
+
+		assert.equal(cacheLookupCommandExplicitModel(state, "bad-cmd-model"), null);
+		assert.equal(cacheLookupCommandIssue(state, "bad-cmd-model")?.kind, "invalid-explicit-model-value");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populatePromptCacheFromResolvedCommandsAndDirs records invalid thinking issue for prompts", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "bad-cmd-think", { thinking: "turbo" });
+		populatePromptCacheFromResolvedCommandsAndDirs(state, [{
+			name: "bad-cmd-think",
+			source: "prompt",
+			description: "Test",
+			sourceInfo: { path: filePath, source: "test", scope: "temporary" as const, origin: "top-level" as const },
+		}], dir, false);
+
+		assert.equal(cacheLookupCommandExplicitThinking(state, "bad-cmd-think"), null);
+		assert.equal(cacheLookupCommandIssue(state, "bad-cmd-think")?.kind, "invalid-thinking-value");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("cache refresh updates model-group when mtime changes", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "mutable-group", { "model-group": "reviewer" });
+		populateFromSkills(state, [makeSkill("mutable-group", filePath)]);
+		assert.equal(cacheLookupSkillModelGroup(state, "mutable-group"), "reviewer");
+
+		await writeFile(filePath, `---\nmodel-group: "fast"\n---\n\nBody content.\n`);
+		const future = new Date(Date.now() + 2_000);
+		await utimes(filePath, future, future);
+
+		populateFromSkills(state, [makeSkill("mutable-group", filePath)]);
+		assert.equal(cacheLookupSkillModelGroup(state, "mutable-group"), "fast");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("cache refresh updates explicit model when mtime changes", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "mutable-model", { model: "openai/gpt-4o" });
+		populateFromSkills(state, [makeSkill("mutable-model", filePath)]);
+		assert.equal(cacheLookupSkillExplicitModel(state, "mutable-model"), "openai/gpt-4o");
+
+		await writeFile(filePath, `---\nmodel: "anthropic/claude-sonnet"\n---\n\nBody content.\n`);
+		const future = new Date(Date.now() + 2_000);
+		await utimes(filePath, future, future);
+
+		populateFromSkills(state, [makeSkill("mutable-model", filePath)]);
+		assert.equal(cacheLookupSkillExplicitModel(state, "mutable-model"), "anthropic/claude-sonnet");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills caches all frontmatter fields together", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "all-fields", {
+			readonly: true,
+			"model-group": "reviewer",
+			model: "openai/gpt-4o",
+			thinking: "high",
+		});
+		populateFromSkills(state, [makeSkill("all-fields", filePath)]);
+
+		assert.equal(cacheLookupSkill(state, "all-fields"), true);
+		assert.equal(cacheLookupSkillModelGroup(state, "all-fields"), "reviewer");
+		assert.equal(cacheLookupSkillExplicitModel(state, "all-fields"), "openai/gpt-4o");
+		assert.equal(cacheLookupSkillExplicitThinking(state, "all-fields"), "high");
+		assert.equal(cacheLookupSkillIssue(state, "all-fields"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills handles very long model name without crashing", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const longModel = "provider/" + "a".repeat(1000);
+		const filePath = await writeMd(dir, "long-model", { model: longModel });
+		populateFromSkills(state, [makeSkill("long-model", filePath)]);
+
+		assert.equal(cacheLookupSkillExplicitModel(state, "long-model"), longModel);
+		assert.equal(cacheLookupSkillIssue(state, "long-model"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills handles model name with special characters", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "special-model", { model: "my-provider/model-v2.5_beta" });
+		populateFromSkills(state, [makeSkill("special-model", filePath)]);
+
+		assert.equal(cacheLookupSkillExplicitModel(state, "special-model"), "my-provider/model-v2.5_beta");
+		assert.equal(cacheLookupSkillIssue(state, "special-model"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills treats whitespace-only model-group as empty/invalid", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "ws-group", { "model-group": "   " });
+		populateFromSkills(state, [makeSkill("ws-group", filePath)]);
+
+		assert.equal(cacheLookupSkillModelGroup(state, "ws-group"), null);
+		assert.equal(cacheLookupSkillIssue(state, "ws-group")?.kind, "invalid-model-group-value");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("cache refresh updates thinking when mtime changes", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "mutable-think", { thinking: "high" });
+		populateFromSkills(state, [makeSkill("mutable-think", filePath)]);
+		assert.equal(cacheLookupSkillExplicitThinking(state, "mutable-think"), "high");
+
+		await writeFile(filePath, `---\nthinking: "low"\n---\n\nBody content.\n`);
+		const future = new Date(Date.now() + 2_000);
+		await utimes(filePath, future, future);
+
+		populateFromSkills(state, [makeSkill("mutable-think", filePath)]);
+		assert.equal(cacheLookupSkillExplicitThinking(state, "mutable-think"), "low");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("cache clears invalid model issue after file is fixed", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "recover-model", { model: "no-slash" });
+		populateFromSkills(state, [makeSkill("recover-model", filePath)]);
+		assert.equal(cacheLookupSkillIssue(state, "recover-model")?.kind, "invalid-explicit-model-value");
+
+		await writeFile(filePath, `---\nmodel: "openai/gpt-4o"\n---\n\nBody content.\n`);
+		const future = new Date(Date.now() + 2_000);
+		await utimes(filePath, future, future);
+
+		populateFromSkills(state, [makeSkill("recover-model", filePath)]);
+		assert.equal(cacheLookupSkillExplicitModel(state, "recover-model"), "openai/gpt-4o");
+		assert.equal(cacheLookupSkillIssue(state, "recover-model"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("cache clears invalid thinking issue after file is fixed", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "recover-think", { thinking: "ultra" });
+		populateFromSkills(state, [makeSkill("recover-think", filePath)]);
+		assert.equal(cacheLookupSkillIssue(state, "recover-think")?.kind, "invalid-thinking-value");
+
+		await writeFile(filePath, `---\nthinking: "high"\n---\n\nBody content.\n`);
+		const future = new Date(Date.now() + 2_000);
+		await utimes(filePath, future, future);
+
+		populateFromSkills(state, [makeSkill("recover-think", filePath)]);
+		assert.equal(cacheLookupSkillExplicitThinking(state, "recover-think"), "high");
+		assert.equal(cacheLookupSkillIssue(state, "recover-think"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("validation fails fast on first invalid field (readonly)", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "multi-invalid", {
+			readonly: "yes",      // invalid: not boolean
+			"model-group": "",    // invalid: empty string
+			model: "no-slash",    // invalid: no slash
+			thinking: "ultra",    // invalid: not a valid level
+		});
+		populateFromSkills(state, [makeSkill("multi-invalid", filePath)]);
+
+		const issue = cacheLookupSkillIssue(state, "multi-invalid");
+		assert.ok(issue, "should have an issue");
+		assert.equal(issue.kind, "invalid-readonly-value", "should report readonly error first");
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("validation fails fast on first invalid field (model-group after valid readonly)", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeMd(dir, "second-invalid", {
+			readonly: true,
+			"model-group": "",    // invalid: empty string
+			model: "openai/gpt-4",
+			thinking: "high",
+		});
+		populateFromSkills(state, [makeSkill("second-invalid", filePath)]);
+
+		const issue = cacheLookupSkillIssue(state, "second-invalid");
+		assert.ok(issue, "should have an issue");
+		assert.equal(issue.kind, "invalid-model-group-value", "should report model-group error (readonly passed)");
+		// readonly should be cached since it validated before the failure
+		assert.equal(cacheLookupSkill(state, "second-invalid"), true);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
