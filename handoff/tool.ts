@@ -175,13 +175,13 @@ export function registerHandoffTool(
 		description:
 			"Clears the current context while keeping the notebook and clearing its topic.\n\n" +
 			"WHEN TO USE:\n" +
-			"  1. Context past ~30% and the current job is no longer cleanly represented.\n" +
+			"  1. Context past ~30% and the current topic is no longer cleanly represented.\n" +
 			"  2. Context is filled with mechanics irrelevant to what comes " +
 			"next (research traces, planning deliberation, dead ends).\n" +
-			"  3. The current job is complete and a new distinct task starts.\n\n" +
-			"Rule: one context, one job. When the job changes, call handoff.\n\n" +
+			"  3. The current topic is complete and a new distinct task starts.\n\n" +
+			"Rule: one context, one topic. When the topic changes, call handoff.\n\n" +
 			"AFTER HANDOFF the agent sees: the handoff prompt and the current notebook with optional pages discarded\n",
-		promptSnippet: "Pivot to a new job via deliberate handoff compaction",
+		promptSnippet: "Pivot to a new topic via deliberate handoff compaction",
 		promptGuidelines: [
 			"Before handoff, promote any missing knowledge that the next context will need to the notebook. " +
 				"Then draft a concise but sufficiently detailed prompt for the next clean context. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the prompt or user direction.",

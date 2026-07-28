@@ -22,7 +22,7 @@ Deeper rationale: [docs/why.md](docs/why.md) · companion book: [agenticoding.ai
 - **Spawn** — run research or implementation in a clean child context so the parent stays focused
 - **Model Groups** — manage durable project/global model pools with `/model-groups`; route `spawn` by an exact group name, with `#group` autocomplete showing model/thinking details
 - **Notebook** — task-scoped named pages for facts and decisions; survives handoff, dies with the conversation (`/new`) — no forever-memory rot
-- **Handoff** — deliberate clean restart with a task prompt when the job changes or context turns to noise
+- **Handoff** — deliberate clean restart with a task prompt when the topic changes or context turns to noise
 - **Topic** — same problem → prefer spawn; new problem → prefer handoff (human-set topics win)
 - **Readonly** — explore and plan without writing the tree (`/readonly`, Ctrl+Shift+R, or `--readonly`); macOS/Linux can OS-sandbox bash, Windows is classifier-only
 - **Visibility** — status bar shows context pressure, notebook count, topic, and readonly; warning at high usage
