@@ -5,6 +5,8 @@
  * prompts stay aligned.
  */
 
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+
 /** Scope of bash filesystem mutations blocked by readonly mode. */
 export const READONLY_BASH_SCOPE = "bash writes/deletions outside temp blocked";
 /** Scope of all non-temporary mutations blocked after a readonly handoff. */
@@ -112,4 +114,48 @@ export function buildReadonlyHandoffWaitNotice(): string {
 /** Add readonly-specific instructions to the explicit /handoff command. */
 export function buildReadonlyHandoffCommandNotice(): string {
 	return `\n\n${READONLY_HANDOFF_EXCEPTION_SUMMARY} Draft the brief so the next context resumes readonly mode.`;
+}
+
+// ── Model Group Frontmatter Notifications ────────────────────────────
+
+/** Notification shown when a frontmatter model-group triggers a model change. */
+export function buildModelGroupNotification(groupName: string, provider: string, modelId: string, commandRef: string): string {
+	return `Model changed to ${provider}/${modelId} via group \`${groupName}\` from \`${commandRef}\` frontmatter`;
+}
+
+/** Error notification when a frontmatter model-group cannot be resolved. */
+export function buildModelGroupErrorNotification(groupName: string, commandRef: string, detail: string): string {
+	return `Cannot execute \`${commandRef}\`: Model Group \`${groupName}\` error — ${detail}.`;
+}
+
+/** Error notification when model change fails after group resolution. */
+export function buildModelGroupAuthErrorNotification(groupName: string, provider: string, modelId: string, commandRef: string): string {
+	return `Cannot execute \`${commandRef}\`: no API key for routed model ${provider}/${modelId} from group \`${groupName}\`.`;
+}
+
+// ── Explicit Model Frontmatter Notifications ────────────────────────
+
+/** Notification shown when an explicit `model` frontmatter triggers a model change. */
+export function buildModelFrontmatterNotification(provider: string, modelId: string, commandRef: string): string {
+	return `Model switched to ${provider}/${modelId} via \`${commandRef}\` frontmatter`;
+}
+
+/** Warning when both `model` and `model-group` are in frontmatter — explicit model wins. */
+export function buildModelGroupOverrideWarningNotification(groupName: string, commandRef: string): string {
+	return `Model Group \`${groupName}\` overridden by explicit \`model\` from \`${commandRef}\` frontmatter`;
+}
+
+/** Notification shown when `thinking` frontmatter changes the thinking level. */
+export function buildThinkingFrontmatterNotification(level: ModelThinkingLevel, commandRef: string): string {
+	return `Thinking level set to ${level} via \`${commandRef}\` frontmatter`;
+}
+
+/** Error notification when an explicit `model` frontmatter cannot be resolved. */
+export function buildModelFrontmatterErrorNotification(provider: string, modelId: string, commandRef: string, detail: string): string {
+	return `Cannot execute \`${commandRef}\`: model ${provider}/${modelId} ${detail}.`;
+}
+
+/** Error notification when an explicit `model` frontmatter has no API key. */
+export function buildModelFrontmatterAuthErrorNotification(provider: string, modelId: string, commandRef: string): string {
+	return `Cannot execute \`${commandRef}\`: no API key for model ${provider}/${modelId}.`;
 }

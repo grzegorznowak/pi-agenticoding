@@ -34,6 +34,14 @@ import {
 	READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION,
 	READONLY_HANDOFF_RETRY_ADVICE,
 	READONLY_CHILD_AUTHORITY_NOTE,
+	buildModelGroupNotification,
+	buildModelGroupErrorNotification,
+	buildModelGroupAuthErrorNotification,
+	buildModelFrontmatterNotification,
+	buildModelGroupOverrideWarningNotification,
+	buildThinkingFrontmatterNotification,
+	buildModelFrontmatterErrorNotification,
+	buildModelFrontmatterAuthErrorNotification,
 	buildReadonlyBashBlockReason,
 	buildReadonlyFrontmatterNotification,
 	buildReadonlyPackageManagerBlockReason,
@@ -167,4 +175,59 @@ test("readonly command consumes the centralized description", () => {
 	const pi = createTestPI();
 	registerAgenticoding(pi as any);
 	assert.equal(pi.commands.get("readonly")?.description, READONLY_COMMAND_DESCRIPTION);
+});
+
+// ── Model group / model / thinking frontmatter builders ───────────
+
+test("buildModelGroupNotification includes group, model, and command ref", () => {
+	const msg = buildModelGroupNotification("reviewer", "openai", "gpt-4o", "/review");
+	assert.equal(msg, "Model changed to openai/gpt-4o via group `reviewer` from `/review` frontmatter");
+});
+
+test("buildModelGroupErrorNotification includes group and detail", () => {
+	const msg = buildModelGroupErrorNotification("reviewer", "/review", "not defined");
+	assert.equal(msg, "Cannot execute `/review`: Model Group `reviewer` error — not defined.");
+});
+
+test("buildModelGroupAuthErrorNotification includes group, model, and command ref", () => {
+	const msg = buildModelGroupAuthErrorNotification("reviewer", "openai", "gpt-4o", "/review");
+	assert.equal(msg, "Cannot execute `/review`: no API key for routed model openai/gpt-4o from group `reviewer`.");
+});
+
+test("buildModelFrontmatterNotification includes model and command ref", () => {
+	const msg = buildModelFrontmatterNotification("openai", "gpt-4o", "/review");
+	assert.equal(msg, "Model switched to openai/gpt-4o via `/review` frontmatter");
+});
+
+test("buildModelGroupOverrideWarningNotification includes group and command ref", () => {
+	const msg = buildModelGroupOverrideWarningNotification("reviewer", "/review");
+	assert.equal(msg, "Model Group `reviewer` overridden by explicit `model` from `/review` frontmatter");
+});
+
+test("buildThinkingFrontmatterNotification includes level and command ref", () => {
+	const msg = buildThinkingFrontmatterNotification("high", "/review");
+	assert.equal(msg, "Thinking level set to high via `/review` frontmatter");
+});
+
+test("buildModelFrontmatterErrorNotification includes model and detail", () => {
+	const msg = buildModelFrontmatterErrorNotification("openai", "gpt-4o", "/review", "not found in registry");
+	assert.equal(msg, "Cannot execute `/review`: model openai/gpt-4o not found in registry.");
+});
+
+test("buildModelFrontmatterAuthErrorNotification includes model and command ref", () => {
+	const msg = buildModelFrontmatterAuthErrorNotification("openai", "gpt-4o", "/review");
+	assert.equal(msg, "Cannot execute `/review`: no API key for model openai/gpt-4o.");
+});
+
+test("model-group builders include commandRef in output", () => {
+	assert.ok(buildModelGroupNotification("g", "p", "m", "/cmd").includes("/cmd"));
+	assert.ok(buildModelGroupErrorNotification("g", "/cmd", "d").includes("/cmd"));
+	assert.ok(buildModelGroupAuthErrorNotification("g", "p", "m", "/cmd").includes("/cmd"));
+});
+
+test("model frontmatter builders include commandRef in output", () => {
+	assert.ok(buildModelFrontmatterNotification("p", "m", "/cmd").includes("/cmd"));
+	assert.ok(buildModelGroupOverrideWarningNotification("g", "/cmd").includes("/cmd"));
+	assert.ok(buildModelFrontmatterErrorNotification("p", "m", "/cmd", "d").includes("/cmd"));
+	assert.ok(buildModelFrontmatterAuthErrorNotification("p", "m", "/cmd").includes("/cmd"));
 });
