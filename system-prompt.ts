@@ -82,4 +82,5 @@ only when the handoff compaction succeeds.
 - After handoff, fetch only the pages you need and assign a fresh topic again
 - Before handoff, save durable knowledge to the notebook and remaining situational context to the prompt
 - When chaining handoffs, use the notebook as storage and state management across contexts
+- Scan notebook_index before handoff to verify all critical findings are persisted
 `.trim();
