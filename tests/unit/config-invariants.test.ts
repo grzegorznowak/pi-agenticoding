@@ -242,14 +242,17 @@ test("audit-ci config keeps an expiry-tracked advisory-module path allowlist", (
 	}
 });
 
-test("the allowlisted vulnerable brace-expansion path is reachable only through the exact Pi floor graph", () => {
+test("the allowlisted vulnerable brace-expansion path is reachable only through the exact Pi floor graph", async () => {
+	// Dynamic import to avoid TS declaration gap on .mjs modules
+	const { isValidNpmExecpath } = await import(new URL("../../scripts/compat-process.mjs", import.meta.url).href);
 	const npmArgs = ["ls", "brace-expansion", "--all", "--json"];
 	const npmExecPath = process.env.npm_execpath;
-	const invocation = npmExecPath
-		? [process.execPath, npmExecPath, ...npmArgs].join(" ")
+	const useNpmExecPath = isValidNpmExecpath(npmExecPath);
+	const invocation = useNpmExecPath
+		? [process.execPath, npmExecPath!, ...npmArgs].join(" ")
 		: "npm ls brace-expansion --all --json";
-	const result = npmExecPath
-		? spawnSync(process.execPath, [npmExecPath, ...npmArgs], {
+	const result = useNpmExecPath
+		? spawnSync(process.execPath, [npmExecPath!, ...npmArgs], {
 				cwd: REPO_ROOT,
 				encoding: "utf8",
 			})

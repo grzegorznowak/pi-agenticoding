@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Resolve the repository root from a script under ./scripts. */
@@ -36,6 +36,14 @@ export function runChecked(command, args, options = {}) {
   return result;
 }
 
+/** True when npm_execpath points to a real npm CLI JS file (not a binary or another tool). */
+export function isValidNpmExecpath(npmExecpath) {
+  if (!npmExecpath) return false;
+  if (!existsSync(npmExecpath)) return false;
+  const base = basename(npmExecpath, ".js").toLowerCase();
+  return base === "npm-cli" || base === "npm";
+}
+
 /** Build a shell-free npm invocation, including Windows' npm.cmd installations. */
 export function npmInvocation(args, options = {}) {
   const {
@@ -43,7 +51,7 @@ export function npmInvocation(args, options = {}) {
     platform = process.platform,
     execPath = process.execPath,
   } = options;
-  if (env.npm_execpath) {
+  if (isValidNpmExecpath(env.npm_execpath)) {
     return { command: execPath, args: [env.npm_execpath, ...args] };
   }
   if (platform !== "win32") {

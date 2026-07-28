@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -25,17 +25,24 @@ test("repoRootFromScript decodes native paths containing spaces", () => {
 });
 
 test("npmInvocation uses npm_execpath through the active Node executable", () => {
-	assert.deepEqual(
-		npmInvocation(["ls", "--json"], {
-			env: { npm_execpath: "/npm install/npm-cli.js" },
-			platform: "win32",
-			execPath: "/node install/node.exe",
-		}),
-		{
-			command: "/node install/node.exe",
-			args: ["/npm install/npm-cli.js", "ls", "--json"],
-		},
-	);
+	const tmpDir = mkdtempSync(join(tmpdir(), "npm-invocation-test-"));
+	const stubCli = join(tmpDir, "npm-cli.js");
+	writeFileSync(stubCli, "// npm CLI stub");
+	try {
+		assert.deepEqual(
+			npmInvocation(["ls", "--json"], {
+				env: { npm_execpath: stubCli },
+				platform: "win32",
+				execPath: "/node install/node.exe",
+			}),
+			{
+				command: "/node install/node.exe",
+				args: [stubCli, "ls", "--json"],
+			},
+		);
+	} finally {
+		rmSync(tmpDir, { recursive: true, force: true });
+	}
 });
 
 test("runNpm launches npm portably", () => {
