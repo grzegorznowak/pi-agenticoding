@@ -12,7 +12,7 @@
  *   - state reset on /new
  */
 
-import type { ExtensionAPI, ExtensionContext, Skill, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -86,6 +86,7 @@ import {
 	formatFrontmatterIssue,
 	populateFromSkills,
 	populatePromptCacheFromResolvedCommandsAndDirs,
+	populateSkillCacheFromResolvedCommands,
 	type FrontmatterIssue,
 } from "./frontmatter-cache.js";
 import {
@@ -105,16 +106,17 @@ import { applyReadonlyBashGuard } from "./readonly-bash.js";
  */
 function populateFrontmatterCache(
 	state: AgenticodingState,
-	event: { systemPromptOptions?: { skills?: Skill[] } },
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
+	skills?: Skill[],
 ): void {
-	populateFromSkills(state, event.systemPromptOptions?.skills ?? []);
-	populatePromptCacheFromResolvedCommandsAndDirs(state, pi.getCommands(), ctx.cwd, ctx.isProjectTrusted());
-}
-
-function isPromptCommand(commands: SlashCommandInfo[], name: string): boolean {
-	return commands.some((command) => command.name === name && command.source === "prompt");
+	const commands = pi.getCommands();
+	if (skills) {
+		populateFromSkills(state, skills);
+	} else {
+		populateSkillCacheFromResolvedCommands(state, commands);
+	}
+	populatePromptCacheFromResolvedCommandsAndDirs(state, commands, ctx.cwd, ctx.isProjectTrusted());
 }
 
 const READONLY_BYPASS_COMMANDS = new Set(["readonly", "notebook", "handoff"]);
@@ -214,50 +216,33 @@ function consumePendingReadonlyCommands(
 }
 
 /**
- * Consume any deferred model-group / model / thinking frontmatter recorded by the `input` handler.
- * Must be called after `populateFrontmatterCache` so the cache is populated and
- * after `refreshModelGroupsState` so model groups are current.
- *
- * Resolution priority for each pending command:
- *   1. `model` + `thinking` frontmatter — direct model switch (wins over model-group with warning)
- *   2. `model-group` + optional `thinking` override — group resolves model, thinking overrides group
- *   3. `thinking` only — sets thinking level on current model without changing model
- *
- * Unlike `consumePendingReadonlyCommands` which drains until the first real decision,
- * this function processes at most one actionable entry per invocation. Entries without
- * model/model-group/thinking frontmatter are skipped. Errors block execution via
- * systemPrompt return, leaving remaining entries for the next cycle.
+ * Apply model-selection frontmatter before Pi expands the slash command.
+ * Returns true only when selection failed and input must be handled locally.
  */
-async function consumePendingModelGroupToggle(
+async function preflightModelSelection(
 	state: AgenticodingState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
-): Promise<string | undefined> {
-	// Model-group/model/thinking frontmatter is a TUI-only feature. Headless/RPC sessions must not inherit.
-	if (!ctx.hasUI || !state.pendingModelGroupCommands.length || !ctx.model) {
-		state.pendingModelGroupCommands.length = 0;
-		return;
-	}
+	pending: { type: "skill" | "command"; name: string },
+): Promise<boolean> {
+	// Model-group/model/thinking frontmatter is a UI-only feature.
+	if (!ctx.hasUI || !ctx.model) return false;
 
-	while (state.pendingModelGroupCommands.length > 0) {
-		const pending = state.pendingModelGroupCommands.shift();
-		if (!pending) return;
+	const commandRef = formatCommandRef(pending);
+	const issue = pending.type === "skill"
+		? cacheLookupSkillIssue(state, pending.name)
+		: cacheLookupCommandIssue(state, pending.name);
+	if (issue && !isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pending, issue);
 
-		const commandRef = formatCommandRef(pending);
-		const issue = pending.type === "skill"
-			? cacheLookupSkillIssue(state, pending.name)
-			: cacheLookupCommandIssue(state, pending.name);
-		if (issue && !isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pending, issue);
-
-		const explicitModel = pending.type === "skill"
-			? cacheLookupSkillExplicitModel(state, pending.name)
-			: cacheLookupCommandExplicitModel(state, pending.name);
-		const explicitThinking = pending.type === "skill"
-			? cacheLookupSkillExplicitThinking(state, pending.name)
-			: cacheLookupCommandExplicitThinking(state, pending.name);
-		const modelGroupName = pending.type === "skill"
-			? cacheLookupSkillModelGroup(state, pending.name)
-			: cacheLookupCommandModelGroup(state, pending.name);
+	const explicitModel = pending.type === "skill"
+		? cacheLookupSkillExplicitModel(state, pending.name)
+		: cacheLookupCommandExplicitModel(state, pending.name);
+	const explicitThinking = pending.type === "skill"
+		? cacheLookupSkillExplicitThinking(state, pending.name)
+		: cacheLookupCommandExplicitThinking(state, pending.name);
+	const modelGroupName = pending.type === "skill"
+		? cacheLookupSkillModelGroup(state, pending.name)
+		: cacheLookupCommandModelGroup(state, pending.name);
 
 		// ── Priority 1: explicit `model` frontmatter ───────────────
 		if (explicitModel) {
@@ -273,18 +258,18 @@ async function consumePendingModelGroupToggle(
 
 			if (!model) {
 				ctx.ui.notify(buildModelFrontmatterErrorNotification(provider, modelId, commandRef, "not found in registry"), "error");
-				return `ERROR: Cannot execute \`${commandRef}\` because model \`${provider}/${modelId}\` specified in frontmatter was not found. Report this error to the user and do not proceed.`;
+				return true;
 			}
 
 			if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
 				ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
-				return `ERROR: Cannot execute \`${commandRef}\` because model ${provider}/${modelId} specified in frontmatter has no configured API key. Report this error to the user and do not proceed.`;
+				return true;
 			}
 
 			const ok = await pi.setModel(model);
 			if (!ok) {
 				ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
-				return `ERROR: Cannot execute \`${commandRef}\` because model ${provider}/${modelId} specified in frontmatter has no configured API key. Report this error to the user and do not proceed.`;
+				return true;
 			}
 
 			const thinking = explicitThinking
@@ -299,7 +284,7 @@ async function consumePendingModelGroupToggle(
 				modelId,
 				thinking,
 			});
-			return;
+			return false;
 		}
 
 		// ── Priority 2: `model-group` frontmatter ──────────────────
@@ -320,14 +305,14 @@ async function consumePendingModelGroupToggle(
 						: validNames.length > 0
 							? ` Available groups: ${validNames.join(", ")}.`
 							: "";
-					ctx.ui.notify(buildModelGroupErrorNotification(modelGroupName, commandRef, `Model Group '${modelGroupName}' is not defined`), "error");
-					return `ERROR: Cannot execute \`${commandRef}\` because model group \`${modelGroupName}\` is not defined.${hint} Report this error to the user and do not proceed.`;
+					ctx.ui.notify(buildModelGroupErrorNotification(modelGroupName, commandRef, `Model Group '${modelGroupName}' is not defined.${hint}`), "error");
+					return true;
 				}
 
 				const ok = await pi.setModel(route.model);
 				if (!ok) {
 					ctx.ui.notify(buildModelGroupAuthErrorNotification(modelGroupName, route.provider, route.modelId, commandRef), "error");
-					return `ERROR: Cannot execute \`${commandRef}\` because the routed model ${route.provider}/${route.modelId} from model group \`${modelGroupName}\` has no configured API key. Report this error to the user and do not proceed.`;
+					return true;
 				}
 
 				// Frontmatter `thinking` overrides the group's computed thinking level.
@@ -344,11 +329,11 @@ async function consumePendingModelGroupToggle(
 					modelId: route.modelId,
 					thinking,
 				});
-				return;
+				return false;
 			} catch (error) {
 				if (error instanceof SpawnRouteError) {
 					ctx.ui.notify(buildModelGroupErrorNotification(modelGroupName, commandRef, error.message), "error");
-					return `ERROR: Cannot execute \`${commandRef}\` because model group \`${modelGroupName}\` is invalid: ${error.message}. Report this error to the user and do not proceed.`;
+					return true;
 				}
 				throw error;
 			}
@@ -363,11 +348,11 @@ async function consumePendingModelGroupToggle(
 				command: commandRef,
 				thinking: clamped,
 			});
-			return;
+			return false;
 		}
 
 		// No relevant frontmatter.
-	}
+		return false;
 }
 
 function modelGroupsAccess(ctx: ExtensionContext): ModelGroupsAccess {
@@ -509,50 +494,34 @@ export default function (pi: ExtensionAPI): void {
 		}
 	});
 
-	// ── Record slash-command intents for deferred readonly toggle and model-group change ─
-	// Input interception runs earlier than the point where Pi has resolved the
-	// authoritative skill/prompt-command metadata for this turn. Record only the
-	// slash-command token here, then resolve readonly frontmatter and model-group
-	// later in before_agent_start once the cache and registry view are current.
+	// ── Preflight model-selection frontmatter before slash-command expansion ──
 	pi.on("input", async (event, ctx) => {
-		// Only TUI sessions should enqueue. Headless/RPC runs preserve the existing
-		// contract: readonly and model-group are UI-only features.
-		// Extension-sourced steer/followUp text must not mutate state.
-		// Only interactive slash commands have authority to enqueue.
+		// Extension-sourced steer/followUp text and headless sessions must not
+		// mutate the interactive frontmatter state.
 		if (!ctx.hasUI || event.source === "extension") return { action: "continue" };
 
-		const text = event.text;
-		// Capture the full first slash-command token and defer authority to the
-		// resolved registry in before_agent_start. This avoids drifting from Pi's
-		// naming rules when prompt/skill names include dots or suffixed segments.
-		const skillName = text.match(/^\/skill:([^\s/]+)/)?.[1];
-		if (skillName) {
-			state.pendingReadonlyCommands.push({ type: "skill", name: skillName });
-			state.pendingModelGroupCommands.push({ type: "skill", name: skillName });
-			return { action: "continue" };
-		}
+		const skillName = event.text.match(/^\/skill:([^\s/]+)/)?.[1];
+		const commandName = event.text.match(/^\/([^\s/]+)/)?.[1];
+		if (!skillName && !commandName) return { action: "continue" };
 
-		const commandName = text.match(/^\/([^\s/]+)/)?.[1];
-		if (!commandName) return { action: "continue" };
-
-		// Prefer the live command registry when it's already available, but don't
-		// rely on it as the sole authority at input time: some runtimes surface
-		// prompt commands only later in before_agent_start. If the command is
-		// unknown here, defer it optimistically unless it's one of the builtin
-		// commands that must never create a stale no-op queue entry.
 		const commands = pi.getCommands();
-		if (isBuiltinReadonlyBypassCommand(commandName)) return { action: "continue" };
-		if (isPromptCommand(commands, commandName)) {
-			state.pendingReadonlyCommands.push({ type: "command", name: commandName });
-			state.pendingModelGroupCommands.push({ type: "command", name: commandName });
-			return { action: "continue" };
-		}
-		if (commands.some((command) => command.name === commandName)) {
+		const pending = skillName
+			? { type: "skill" as const, name: skillName }
+			: { type: "command" as const, name: commandName! };
+		if (!skillName && isBuiltinReadonlyBypassCommand(pending.name)) return { action: "continue" };
+		if (!skillName && commands.some((command) => command.name === pending.name && command.source !== "prompt")) {
 			return { action: "continue" };
 		}
 
-		state.pendingReadonlyCommands.push({ type: "command", name: commandName });
-		state.pendingModelGroupCommands.push({ type: "command", name: commandName });
+		// Command metadata is already available at input time. This prevents a
+		// failed selection from reaching Pi's expansion/agent-start lifecycle.
+		populateFrontmatterCache(state, ctx, pi);
+		refreshModelGroupsState(state, ctx);
+		if (await preflightModelSelection(state, ctx, pi, pending)) return { action: "handled" };
+
+		// Readonly intentionally remains deferred: its authority is resolved with
+		// Pi's final skill metadata in before_agent_start.
+		state.pendingReadonlyCommands.push(pending);
 		return { action: "continue" };
 	});
 
@@ -660,23 +629,17 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── before_agent_start: populate frontmatter cache, consume the deferred
-	//    queue until the first real readonly decision, then inject context
+	// ── before_agent_start: resolve deferred readonly, then inject context
 	//    primer + notebook ─────────────────────────────────────────────
 	pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
-		if (state.pendingReadonlyCommands.length > 0 || state.pendingModelGroupCommands.length > 0) {
-			populateFrontmatterCache(state, event, ctx, pi);
+		if (state.pendingReadonlyCommands.length > 0) {
+			populateFrontmatterCache(state, ctx, pi, event.systemPromptOptions.skills);
 		}
 		consumePendingReadonlyCommands(state, ctx, pi);
 
 		// Update TUI indicators before each user-prompt agent run
 		updateIndicators(ctx, state);
 		refreshModelGroupsState(state, ctx);
-
-		const modelGroupBlock = await consumePendingModelGroupToggle(state, ctx, pi);
-		if (modelGroupBlock) {
-			return { systemPrompt: modelGroupBlock };
-		}
 
 		const parts: string[] = [event.systemPrompt];
 

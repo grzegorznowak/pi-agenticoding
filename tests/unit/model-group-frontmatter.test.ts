@@ -2,7 +2,7 @@
  * Model-group frontmatter integration tests.
  *
  * Exercises the full pipeline:
- *   input queue → before_agent_start → consumePendingModelGroupToggle
+ *   input preflight → model selection → optional before_agent_start readonly handling
  */
 
 import test from "node:test";
@@ -85,6 +85,10 @@ function makeSkill(name: string, filePath: string) {
 	};
 }
 
+function makeSkillCommand(name: string, filePath: string) {
+	return { ...makePromptCommand(`skill:${name}`, filePath), source: "skill" };
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────
 
 test("model-group frontmatter triggers model switch for /name command", async () => withTemp(async ({ cwd }) => {
@@ -98,7 +102,6 @@ test("model-group frontmatter triggers model switch for /name command", async ()
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -108,7 +111,6 @@ test("model-group frontmatter triggers model switch for /name command", async ()
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "setModel should be called once");
 		assert.equal(setModelCalls[0].provider, "openai");
@@ -138,7 +140,6 @@ test("model-group-only frontmatter applies and records the group's effective thi
 		pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const routedModel = mockModelWithThinking("openai", "gpt-4o", {
 			off: null, minimal: "minimal", low: "low", medium: "medium", high: null,
 		});
@@ -151,7 +152,6 @@ test("model-group-only frontmatter applies and records the group's effective thi
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.deepEqual(setThinkingCalls, ["medium"], "group thinking is clamped for the routed model");
 		const entry = pi.appendedEntries.find((e: any) => e.customType === "agenticoding-model-group-switch");
@@ -172,20 +172,50 @@ test("model-group frontmatter triggers model switch for /skill:name command", as
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
 			modelRegistry: mockRegistry([mockModel("anthropic", "claude-sonnet")]),
 		});
 
+		pi.setCommands([makeSkillCommand("quick", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/skill:quick", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [makeSkill("quick", filePath)] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1);
 		assert.equal(setModelCalls[0].provider, "anthropic");
 		assert.ok(notifications.some((n) => /Model changed.*fast.*\/skill:quick/.test(n.message)));
+	} finally {
+		await rm(skillDir, { recursive: true, force: true });
+	}
+}));
+
+test("unknown model-group in /skill:name frontmatter blocks execution before agent start", async () => withTemp(async ({ cwd }) => {
+	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
+	const skillDir = await tmpDir();
+	try {
+		const filePath = await writeSkillMd(skillDir, "quick", { "model-group": "nonexistent" });
+		const pi = createTestPI();
+		const setModelCalls: any[] = [];
+		(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
+		registerAgenticoding(pi as any);
+		const [inputHandler] = pi.handlers.get("input")!;
+		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+		const { ctx, notifications } = makeNotifyCtx({
+			cwd,
+			model: mockModel("openai", "gpt-parent"),
+			modelRegistry: mockRegistry(),
+		});
+
+		pi.setCommands([makeSkillCommand("quick", filePath)]);
+		await sessionStartHandler({ reason: "load" }, ctx);
+		const result = await inputHandler({ text: "/skill:quick", source: "interactive" }, ctx);
+
+		assert.deepEqual(result, { action: "handled" }, "selection failure must prevent command expansion and agent start");
+		assert.equal(setModelCalls.length, 0, "setModel should not be called");
+		const error = notifications.find((notification) => notification.level === "error")?.message ?? "";
+		assert.match(error, /nonexistent/);
+		assert.match(error, /\/skill:quick/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -202,7 +232,6 @@ test("unknown model-group in frontmatter blocks execution with error", async () 
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -211,15 +240,14 @@ test("unknown model-group in frontmatter blocks execution with error", async () 
 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
-		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		const result = await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
+		assert.deepEqual(result, { action: "handled" }, "selection failure must prevent command expansion and agent start");
 		assert.equal(setModelCalls.length, 0, "setModel should not be called");
-		assert.ok(result?.systemPrompt?.includes("ERROR"), "should return error system prompt");
-		assert.ok(result.systemPrompt.includes("nonexistent"), "should mention the invalid group");
-		assert.ok(result.systemPrompt.includes("not defined"), "should say group is not defined");
-		assert.ok(result.systemPrompt.includes("Available groups: reviewer"), "should suggest valid groups");
-		assert.ok(notifications.some((n) => n.level === "error"));
+		const error = notifications.find((n) => n.level === "error")?.message ?? "";
+		assert.match(error, /nonexistent/);
+		assert.match(error, /not defined/);
+		assert.match(error, /reviewer/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -236,7 +264,6 @@ test("empty model-group (SpawnRouteError) blocks execution with error", async ()
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -245,13 +272,11 @@ test("empty model-group (SpawnRouteError) blocks execution with error", async ()
 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
-		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		const result = await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
+		assert.deepEqual(result, { action: "handled" });
 		assert.equal(setModelCalls.length, 0);
-		assert.ok(result?.systemPrompt?.includes("ERROR"));
-		assert.ok(result.systemPrompt.includes("empty"), "should mention the group issue");
-		assert.ok(notifications.some((n) => n.level === "error"));
+		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /empty/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -267,7 +292,6 @@ test("setModel failure (no API key) blocks execution with auth error", async () 
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -276,12 +300,10 @@ test("setModel failure (no API key) blocks execution with auth error", async () 
 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
-		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		const result = await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.ok(result?.systemPrompt?.includes("ERROR"));
-		assert.ok(result.systemPrompt.includes("no configured API key"), "should mention API key issue");
-		assert.ok(notifications.some((n) => n.level === "error"));
+		assert.deepEqual(result, { action: "handled" });
+		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /no API key/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -297,16 +319,9 @@ test("headless session does not inherit model-group changes", async () => withTe
 		(pi as any).setModel = async (model: any) => { setModelCalls.push(model); return true; };
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await inputHandler({ text: "/review", source: "interactive" }, { hasUI: false } as any);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, {
-			hasUI: false,
-			cwd,
-			isProjectTrusted: () => false,
-			getContextUsage: () => null,
-		} as any);
 
 		assert.equal(setModelCalls.length, 0, "setModel should not be called in headless");
 	} finally {
@@ -325,7 +340,6 @@ test("no model-group frontmatter is a silent no-op", async () => withTemp(async 
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -335,7 +349,6 @@ test("no model-group frontmatter is a silent no-op", async () => withTemp(async 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 0, "setModel should not be called when no model-group frontmatter");
 		assert.ok(!notifications.some((n) => /Model changed/.test(n.message)));
@@ -355,7 +368,6 @@ test("invalid model-group value produces warning notification", async () => with
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -365,7 +377,6 @@ test("invalid model-group value produces warning notification", async () => with
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 0, "setModel should not be called for invalid model-group");
 		assert.ok(notifications.some((n) => /model-group.*non-empty/.test(n.message)), "should warn about invalid model-group");
@@ -398,7 +409,6 @@ test("explicit model frontmatter switches model", async () => withTemp(async ({ 
 		pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -408,7 +418,6 @@ test("explicit model frontmatter switches model", async () => withTemp(async ({ 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "setModel should be called once");
 		assert.equal(setModelCalls[0].provider, "openai");
@@ -438,7 +447,6 @@ test("explicit model with thinking sets both model and thinking level", async ()
 		pi.getThinkingLevel = () => "medium";
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -448,7 +456,6 @@ test("explicit model with thinking sets both model and thinking level", async ()
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "setModel should be called once");
 		assert.equal(setModelCalls[0].id, "gpt-4o");
@@ -472,7 +479,6 @@ test("explicit model without thinking does not change thinking level", async () 
 		pi.getThinkingLevel = () => "medium";
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -482,7 +488,6 @@ test("explicit model without thinking does not change thinking level", async () 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "setModel should be called");
 		assert.equal(setModelCalls[0].id, "gpt-4o");
@@ -503,7 +508,6 @@ test("explicit model applies while invalid thinking is reported", async () => wi
 		pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -513,7 +517,6 @@ test("explicit model applies while invalid thinking is reported", async () => wi
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "valid model should still be applied");
 		assert.equal(setThinkingCalls.length, 0, "invalid thinking must not be applied");
@@ -529,6 +532,33 @@ test("explicit model applies while invalid thinking is reported", async () => wi
 	}
 }));
 
+test("valid model applies when model-group frontmatter is invalid", async () => withTemp(async ({ cwd }) => {
+	const skillDir = await tmpDir();
+	try {
+		const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o", "model-group": "" });
+		const pi = makeMockPI();
+		const setModelCalls: any[] = [];
+		pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
+		const [inputHandler] = pi.handlers.get("input")!;
+		const { ctx, notifications } = makeNotifyCtx({
+			cwd,
+			model: mockModel("openai", "gpt-parent"),
+			modelRegistry: mockRegistry(),
+		});
+
+		pi.setCommands([makePromptCommand("review", filePath)]);
+		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+
+		assert.deepEqual(result, { action: "continue" });
+		assert.deepEqual(setModelCalls.map((model) => model.id), ["gpt-4o"]);
+		const warnings = notifications.filter((notification) => notification.level === "warning");
+		assert.equal(warnings.length, 1);
+		assert.match(warnings[0]?.message ?? "", /`model-group`/);
+	} finally {
+		await rm(skillDir, { recursive: true, force: true });
+	}
+}));
+
 test("explicit model + model-group warns and uses explicit model", async () => withTemp(async ({ cwd }) => {
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "anthropic", modelId: "claude-sonnet" }] } });
 	const skillDir = await tmpDir();
@@ -539,7 +569,6 @@ test("explicit model + model-group warns and uses explicit model", async () => w
 		pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -549,7 +578,6 @@ test("explicit model + model-group warns and uses explicit model", async () => w
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "setModel should be called once");
 		assert.equal(setModelCalls[0].id, "gpt-4o", "explicit model should win over model-group");
@@ -572,7 +600,6 @@ test("explicit model + model-group + thinking uses explicit model and thinking, 
 		pi.getThinkingLevel = () => "medium";
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -582,7 +609,6 @@ test("explicit model + model-group + thinking uses explicit model and thinking, 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "setModel should be called once");
 		assert.equal(setModelCalls[0].id, "gpt-4o", "explicit model should win");
@@ -607,7 +633,6 @@ test("model-group + thinking overrides group thinking level", async () => withTe
 		pi.getThinkingLevel = () => "medium";
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -617,7 +642,6 @@ test("model-group + thinking overrides group thinking level", async () => withTe
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 1, "setModel should be called once");
 		assert.equal(setModelCalls[0].id, "gpt-4o", "model should come from group");
@@ -641,7 +665,6 @@ test("thinking only frontmatter sets thinking level without changing model", asy
 		pi.getThinkingLevel = () => "medium";
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const currentModel = mockModelWithThinking("openai", "gpt-parent", { off: null, minimal: "minimal", low: "low", medium: "medium", high: "high" });
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
@@ -652,7 +675,6 @@ test("thinking only frontmatter sets thinking level without changing model", asy
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 0, "setModel should NOT be called");
 		assert.equal(setThinkingCalls.length, 1, "setThinkingLevel should be called");
@@ -677,7 +699,6 @@ test("unknown model in frontmatter blocks execution", async () => withTemp(async
 		pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -686,14 +707,11 @@ test("unknown model in frontmatter blocks execution", async () => withTemp(async
 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
-		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		const result = await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
+		assert.deepEqual(result, { action: "handled" });
 		assert.equal(setModelCalls.length, 0, "setModel should not be called");
-		assert.ok(result?.systemPrompt?.includes("ERROR"));
-		assert.ok(result.systemPrompt.includes("unknown/no-such-model"));
-		assert.ok(result.systemPrompt.includes("not found"));
-		assert.ok(notifications.some((n) => n.level === "error"));
+		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /unknown\/no-such-model.*not found/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -707,7 +725,6 @@ test("unauthenticated model in frontmatter blocks execution", async () => withTe
 		pi.setModel = async () => false as any; // Simulate auth failure
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -716,12 +733,10 @@ test("unauthenticated model in frontmatter blocks execution", async () => withTe
 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
-		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		const result = await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
 
-		assert.ok(result?.systemPrompt?.includes("ERROR"));
-		assert.ok(result.systemPrompt.includes("no configured API key"));
-		assert.ok(notifications.some((n) => n.level === "error"));
+		assert.deepEqual(result, { action: "handled" });
+		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /no API key/);
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
@@ -736,7 +751,6 @@ test("invalid model format in frontmatter produces warning", async () => withTem
 		pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -746,7 +760,6 @@ test("invalid model format in frontmatter produces warning", async () => withTem
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setModelCalls.length, 0, "setModel should not be called for invalid model format");
 		assert.ok(notifications.some((n) => /`model`.*`<provider>\/<model-id>`/.test(n.message)), "should warn about invalid model format");
@@ -764,7 +777,6 @@ test("invalid thinking value produces warning", async () => withTemp(async ({ cw
 		pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -774,7 +786,6 @@ test("invalid thinking value produces warning", async () => withTemp(async ({ cw
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
 		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(setThinkingCalls.length, 0, "setThinkingLevel should NOT be called for invalid thinking");
 		assert.ok(notifications.some((n) => /`thinking`.*off, minimal, low/.test(n.message)), "should warn about invalid thinking");
@@ -791,16 +802,9 @@ test("explicit model frontmatter is ignored in headless session", async () => wi
 		let setModelCalls: any[] = [];
 		pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
 		const [inputHandler] = pi.handlers.get("input")!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 
 		pi.setCommands([makePromptCommand("review", filePath)]);
 		await inputHandler({ text: "/review", source: "interactive" }, { hasUI: false } as any);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, {
-			hasUI: false,
-			cwd,
-			isProjectTrusted: () => false,
-			getContextUsage: () => null,
-		} as any);
 
 		assert.equal(setModelCalls.length, 0, "setModel should not be called in headless");
 	} finally {
@@ -840,7 +844,7 @@ test("model-group toggle does not affect readonly state", async () => withTemp(a
 	}
 }));
 
-test("queued model-group commands are applied one per before_agent_start turn (FIFO)", async () => withTemp(async ({ cwd }) => {
+test("model-group commands are applied during their input preflight", async () => withTemp(async ({ cwd }) => {
 	writeModelGroupsConfig(cwd, {
 		reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] },
 		fast: { models: [{ provider: "anthropic", modelId: "claude-sonnet" }] },
@@ -855,7 +859,6 @@ test("queued model-group commands are applied one per before_agent_start turn (F
 		registerAgenticoding(pi as any);
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
 		const { ctx } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
@@ -867,18 +870,14 @@ test("queued model-group commands are applied one per before_agent_start turn (F
 
 		pi.setCommands([makePromptCommand("review", fp1), makePromptCommand("quick", fp2)]);
 		await sessionStartHandler({ reason: "load" }, ctx);
-		await inputHandler({ text: "/review", source: "interactive" }, ctx);
-		await inputHandler({ text: "/quick", source: "interactive" }, ctx);
+		const reviewResult = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+		const quickResult = await inputHandler({ text: "/quick", source: "interactive" }, ctx);
 
-		// First before_agent_start: processes /review (reviewer → gpt-4o)
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
-		assert.equal(setModelCalls.length, 1, "first turn should apply one model");
-		assert.equal(setModelCalls[0].id, "gpt-4o", "first turn should apply reviewer group");
-
-		// Second before_agent_start: processes /quick (fast → claude-sonnet)
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
-		assert.equal(setModelCalls.length, 2, "second turn should apply second model");
-		assert.equal(setModelCalls[1].id, "claude-sonnet", "second turn should apply fast group");
+		assert.deepEqual(reviewResult, { action: "continue" });
+		assert.deepEqual(quickResult, { action: "continue" });
+		assert.equal(setModelCalls.length, 2, "each command is selected before its agent turn");
+		assert.equal(setModelCalls[0].id, "gpt-4o");
+		assert.equal(setModelCalls[1].id, "claude-sonnet");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
 	}
