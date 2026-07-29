@@ -142,10 +142,15 @@ function recordFrontmatterIssue(
 	command: { type: "skill" | "command"; name: string },
 	issue: FrontmatterIssue,
 ): void {
-	pi.appendEntry("agenticoding-readonly-frontmatter-issue", { name: command.name, type: command.type, issue });
+	pi.appendEntry("agenticoding-frontmatter-issue", { name: command.name, type: command.type, issue });
 	if (ctx.hasUI) {
 		ctx.ui.notify(formatFrontmatterIssue(formatCommandRef(command), issue), "warning");
 	}
+}
+
+// Parallel deferred queues must assign each cache issue to one reporter.
+function isReadonlyFrontmatterIssue(issue: FrontmatterIssue): boolean {
+	return issue.kind === "invalid-readonly-value" || issue.kind === "malformed-frontmatter" || issue.kind === "unreadable-file";
 }
 
 /**
@@ -183,7 +188,7 @@ function consumePendingReadonlyCommands(
 			const issue = pendingCommand.type === "skill"
 				? cacheLookupSkillIssue(state, pendingCommand.name)
 				: cacheLookupCommandIssue(state, pendingCommand.name);
-			if (issue) recordFrontmatterIssue(ctx, pi, pendingCommand, issue);
+				if (issue && isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pendingCommand, issue);
 			continue;
 		}
 
