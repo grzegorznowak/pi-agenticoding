@@ -1,10 +1,10 @@
 /**
  * Cache for skill/prompt-template frontmatter.
  *
- * Populated lazily in `before_agent_start` from:
- *   1. Loaded skills (via `systemPromptOptions.skills`).
- *   2. Resolved prompt commands from `pi.getCommands()`.
- *   3. Standard prompt directories as a partial fallback:
+ * Populated on-demand:
+ *   - In the `input` handler from resolved commands (`pi.getCommands()`) for model preflight.
+ *   - In `before_agent_start` from loaded skills (`systemPromptOptions.skills`) for readonly resolution.
+ *   - Also from standard prompt directories as a partial fallback:
  *      `~/.pi/agent/prompts/` and trusted `cwd/.pi/prompts/`.
  *
  * All production prompt-resolution happens through
@@ -98,51 +98,30 @@ function readCacheEntry(
 		const modelRaw = frontmatter["model"];
 		const thinkingRaw = frontmatter["thinking"];
 
-		// Validate readonly first - fail-fast on first invalid field.
-		// Fields are semantically ordered so fixing this typically reveals the next.
-		if (readonly !== undefined && typeof readonly !== "boolean") {
-			return {
-				entry: { readonly: null, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: st.mtimeMs, filePath },
-				issue: { kind: "invalid-readonly-value", filePath },
-			};
-		}
-
-		// Validate model-group next - fail-fast pattern continues.
-		if (modelGroupRaw !== undefined && (typeof modelGroupRaw !== "string" || modelGroupRaw.trim().length === 0)) {
-			return {
-				entry: { readonly: readonly ?? null, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: st.mtimeMs, filePath },
-				issue: { kind: "invalid-model-group-value", filePath },
-			};
-		}
-
-		// Validate explicit model - fail-fast pattern continues.
+		const validReadonly = readonly === undefined || typeof readonly === "boolean";
+		const validModelGroup = modelGroupRaw === undefined || (typeof modelGroupRaw === "string" && modelGroupRaw.trim().length > 0);
 		const explicitModel = modelRaw !== undefined ? parseExplicitModel(modelRaw) : null;
-		if (modelRaw !== undefined && explicitModel === null) {
-			return {
-				entry: { readonly: readonly ?? null, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: st.mtimeMs, filePath },
-				issue: { kind: "invalid-explicit-model-value", filePath },
-			};
-		}
-
-		// Validate explicit thinking last - fail-fast pattern completes.
 		const explicitThinking = thinkingRaw !== undefined ? parseExplicitThinking(thinkingRaw) : null;
-		if (thinkingRaw !== undefined && explicitThinking === null) {
-			return {
-				entry: { readonly: readonly ?? null, modelGroup: null, explicitModel, explicitThinking: null, mtimeMs: st.mtimeMs, filePath },
-				issue: { kind: "invalid-thinking-value", filePath },
-			};
-		}
+		const issue = !validReadonly
+			? "invalid-readonly-value"
+			: !validModelGroup
+				? "invalid-model-group-value"
+				: modelRaw !== undefined && explicitModel === null
+					? "invalid-explicit-model-value"
+					: thinkingRaw !== undefined && explicitThinking === null
+						? "invalid-thinking-value"
+						: null;
 
 		return {
 			entry: {
-				readonly: readonly ?? null,
-				modelGroup: (typeof modelGroupRaw === "string" ? modelGroupRaw.trim() : null) ?? null,
+				readonly: validReadonly ? readonly ?? null : null,
+				modelGroup: validModelGroup && typeof modelGroupRaw === "string" ? modelGroupRaw.trim() : null,
 				explicitModel,
 				explicitThinking,
 				mtimeMs: st.mtimeMs,
 				filePath,
 			},
-			issue: null,
+			issue: issue ? { kind: issue, filePath } : null,
 		};
 	} catch {
 		return {
@@ -236,7 +215,7 @@ export function formatFrontmatterIssue(commandRef: string, issue: FrontmatterIss
 	return `Frontmatter ignored for \`${commandRef}\`: ${detail} at \`${issue.filePath}\`.`;
 }
 
-export function populateFromSkills(store: FrontmatterCache, skills: Skill[]): void {
+export function populateFromSkills(store: FrontmatterCache, skills: Array<Pick<Skill, "name" | "filePath">>): void {
 	const nextCache = new Map<string, FrontmatterEntry>();
 	const nextIssues = new Map<string, FrontmatterIssue>();
 	for (const skill of skills) {
@@ -249,6 +228,14 @@ export function populateFromSkills(store: FrontmatterCache, skills: Skill[]): vo
 	}
 	replaceCache(store.frontmatterSkillCache, nextCache);
 	replaceIssues(store.frontmatterSkillIssues, nextIssues);
+}
+
+/** Populate skill frontmatter before command expansion from Pi's command registry. */
+export function populateSkillCacheFromResolvedCommands(store: FrontmatterCache, commands: SlashCommandInfo[]): void {
+	populateFromSkills(store, commands.flatMap((command) => {
+		if (command.source !== "skill" || !command.name.startsWith("skill:")) return [];
+		return [{ name: command.name.slice("skill:".length), filePath: command.sourceInfo.path }];
+	}));
 }
 
 function collectPromptFilesFromDir(

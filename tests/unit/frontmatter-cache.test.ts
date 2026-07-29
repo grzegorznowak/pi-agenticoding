@@ -1163,7 +1163,7 @@ test("cache clears invalid thinking issue after file is fixed", async () => {
 	}
 });
 
-test("validation fails fast on first invalid field (readonly)", async () => {
+test("validation reports the first issue when every field is invalid", async () => {
 	const state = createState();
 	const dir = await tmpDir();
 	try {
@@ -1177,13 +1177,16 @@ test("validation fails fast on first invalid field (readonly)", async () => {
 
 		const issue = cacheLookupSkillIssue(state, "multi-invalid");
 		assert.ok(issue, "should have an issue");
-		assert.equal(issue.kind, "invalid-readonly-value", "should report readonly error first");
+		assert.equal(issue.kind, "invalid-readonly-value", "should report the first issue");
+		assert.equal(cacheLookupSkillModelGroup(state, "multi-invalid"), null);
+		assert.equal(cacheLookupSkillExplicitModel(state, "multi-invalid"), null);
+		assert.equal(cacheLookupSkillExplicitThinking(state, "multi-invalid"), null);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
 });
 
-test("validation fails fast on first invalid field (model-group after valid readonly)", async () => {
+test("invalid model-group does not suppress valid model and thinking", async () => {
 	const state = createState();
 	const dir = await tmpDir();
 	try {
@@ -1197,9 +1200,10 @@ test("validation fails fast on first invalid field (model-group after valid read
 
 		const issue = cacheLookupSkillIssue(state, "second-invalid");
 		assert.ok(issue, "should have an issue");
-		assert.equal(issue.kind, "invalid-model-group-value", "should report model-group error (readonly passed)");
-		// readonly should be cached since it validated before the failure
+		assert.equal(issue.kind, "invalid-model-group-value");
 		assert.equal(cacheLookupSkill(state, "second-invalid"), true);
+		assert.equal(cacheLookupSkillExplicitModel(state, "second-invalid"), "openai/gpt-4");
+		assert.equal(cacheLookupSkillExplicitThinking(state, "second-invalid"), "high");
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
