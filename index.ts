@@ -3,7 +3,7 @@
  *
  * Wires together the three primitives:
  *   spawn     — delegate isolated work to child contexts
- *   notebook   — durable cross-context grounding
+ *   notebook   — durable cross-context memory
  *   handoff   — deliberate task pivot via compaction
  *
  * Also registers:
