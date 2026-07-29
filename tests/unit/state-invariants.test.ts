@@ -118,7 +118,6 @@ function assertResetClears(state: AgenticodingState): void {
 	assert.equal(state.frontmatterSkillIssues.size, 0, "frontmatterSkillIssues must be empty after reset");
 	assert.equal(state.frontmatterPromptIssues.size, 0, "frontmatterPromptIssues must be empty after reset");
 	assert.equal(state.pendingReadonlyCommands.length, 0, "pendingReadonlyCommands must be empty after reset");
-	assert.equal(state.pendingModelGroupCommands.length, 0, "pendingModelGroupCommands must be empty after reset");
 	assert.equal(state.lastWatchdogBand, null, "lastWatchdogBand must be null after reset");
 }
 
@@ -275,7 +274,6 @@ test("Property 4: Reset clears all state fields", async () => {
 					s2.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
 					s2.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
 					s2.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
-					s2.pendingModelGroupCommands.push({ type: "skill", name: "skill-a" });
 					s2.modelGroups.groups = [{
 						name: "stale",
 						scope: "project",
@@ -377,19 +375,12 @@ test("invalidateHandoffState clears branch-local compaction reservations", () =>
 	assert.equal(state.pendingTopicBoundaryHint, null);
 });
 
-test("reset clears independently consumed deferred frontmatter queues", () => {
+test("reset clears deferred readonly frontmatter commands", () => {
 	const state = createState();
 	state.pendingReadonlyCommands.push({ type: "skill", name: "a" });
-	state.pendingModelGroupCommands.push({ type: "skill", name: "a" });
-	state.pendingModelGroupCommands.shift();
-
-	// The queues intentionally have independent consumers and can diverge.
-	assert.equal(state.pendingReadonlyCommands.length, 1);
-	assert.equal(state.pendingModelGroupCommands.length, 0);
 
 	resetState(state);
 	assert.equal(state.pendingReadonlyCommands.length, 0, "readonly queue cleared");
-	assert.equal(state.pendingModelGroupCommands.length, 0, "model-selection queue cleared");
 });
 
 test("Property 6: childSessionEpoch monotonicity (never decreases)", async () => {
