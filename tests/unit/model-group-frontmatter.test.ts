@@ -492,6 +492,43 @@ test("explicit model without thinking does not change thinking level", async () 
 	}
 }));
 
+test("explicit model applies while invalid thinking is reported", async () => withTemp(async ({ cwd }) => {
+	const skillDir = await tmpDir();
+	try {
+		const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o", thinking: "ultra" });
+		const pi = makeMockPI();
+		const setModelCalls: any[] = [];
+		const setThinkingCalls: string[] = [];
+		pi.setModel = async (model: any) => { setModelCalls.push(model); return true; };
+		pi.setThinkingLevel = (level: string) => { setThinkingCalls.push(level); };
+		const [inputHandler] = pi.handlers.get("input")!;
+		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+		const { ctx, notifications } = makeNotifyCtx({
+			cwd,
+			model: mockModel("openai", "gpt-parent"),
+			modelRegistry: mockRegistry(),
+		});
+
+		pi.setCommands([makePromptCommand("review", filePath)]);
+		await sessionStartHandler({ reason: "load" }, ctx);
+		await inputHandler({ text: "/review", source: "interactive" }, ctx);
+		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+
+		assert.equal(setModelCalls.length, 1, "valid model should still be applied");
+		assert.equal(setThinkingCalls.length, 0, "invalid thinking must not be applied");
+		const warnings = notifications.filter((n) => n.level === "warning");
+		assert.equal(warnings.length, 1, "invalid thinking should produce one warning");
+		assert.match(warnings[0]?.message ?? "", /\`thinking\`/);
+		const issues = pi.appendedEntries.filter((entry: any) => entry.customType === "agenticoding-frontmatter-issue");
+		assert.equal(issues.length, 1, "invalid thinking should produce one issue entry");
+		assert.equal(issues[0]?.data.type, "command");
+		assert.equal(issues[0]?.data.issue.kind, "invalid-thinking-value");
+	} finally {
+		await rm(skillDir, { recursive: true, force: true });
+	}
+}));
+
 test("explicit model + model-group warns and uses explicit model", async () => withTemp(async ({ cwd }) => {
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "anthropic", modelId: "claude-sonnet" }] } });
 	const skillDir = await tmpDir();

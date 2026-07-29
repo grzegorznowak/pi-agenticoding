@@ -244,6 +244,11 @@ async function consumePendingModelGroupToggle(
 		if (!pending) return;
 
 		const commandRef = formatCommandRef(pending);
+		const issue = pending.type === "skill"
+			? cacheLookupSkillIssue(state, pending.name)
+			: cacheLookupCommandIssue(state, pending.name);
+		if (issue && !isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pending, issue);
+
 		const explicitModel = pending.type === "skill"
 			? cacheLookupSkillExplicitModel(state, pending.name)
 			: cacheLookupCommandExplicitModel(state, pending.name);
@@ -361,13 +366,7 @@ async function consumePendingModelGroupToggle(
 			return;
 		}
 
-		// No relevant frontmatter — report issue if there's a malformed model-group value
-		const issue = pending.type === "skill"
-			? cacheLookupSkillIssue(state, pending.name)
-			: cacheLookupCommandIssue(state, pending.name);
-		if (issue) {
-			ctx.ui.notify(formatFrontmatterIssue(commandRef, issue), "warning");
-		}
+		// No relevant frontmatter.
 	}
 }
 
