@@ -31,6 +31,44 @@ afterEach(() => {
 	h.teardown();
 });
 
+function createFailingCleanupSession(primaryFailure: unknown, cleanupFailure: unknown) {
+	return {
+		messages: [] as any[],
+		prompt: async () => { throw primaryFailure; },
+		abort: async () => {},
+		dispose: () => { throw cleanupFailure; },
+		getSessionStats: () => undefined,
+	};
+}
+
+function executeWithFailingCleanup(primaryFailure: unknown, cleanupFailure: unknown, context: Record<string, unknown> = {}) {
+	const pi = createTestPI();
+	const state = createState();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const session = createFailingCleanupSession(primaryFailure, cleanupFailure);
+	return {
+		execution: executeSpawn(
+			"spawn-cleanup-failure", pi as any,
+			{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: false, ...context } as any,
+			state, { prompt: "Do the task" }, undefined, undefined, "medium",
+			async () => ({ extensionsResult: undefined as any, session: session as any }),
+		),
+		state,
+	};
+}
+
+function assertChildRegistriesCleared(state: ReturnType<typeof createState>): void {
+	assert.equal(state.childSessions.size, 0);
+	assert.equal(state.liveChildSessions.size, 0);
+}
+
+function assertAggregateFailure(error: unknown, primaryFailure: unknown, cleanupFailure: unknown): boolean {
+	assert.ok(error instanceof AggregateError);
+	assert.equal(error.message, "Spawn failed and cleanup failed.");
+	assert.deepEqual(error.errors, [primaryFailure, cleanupFailure]);
+	return true;
+}
+
 test("spawn execute passes broad active registered tool formula to child session", async () => {
 	const pi = createTestPI();
 	pi.setToolSource("project_search", "project");
@@ -534,6 +572,47 @@ test("spawn execute clears childSessions when prompt throws", async () => {
 		/prompt failed/,
 	);
 	assert.equal(state.childSessions.size, 0);
+});
+
+test("headless spawn aggregates Error and cleanup failures without mutating the primary error", async () => {
+	const originalCause = new Error("original cause");
+	const primaryFailure = new Error("prompt failed", { cause: originalCause });
+	const cleanupFailure = new Error("dispose failed");
+	Object.freeze(primaryFailure);
+	const { execution, state } = executeWithFailingCleanup(primaryFailure, cleanupFailure);
+
+	await assert.rejects(
+		() => execution,
+		(error: unknown) => assertAggregateFailure(error, primaryFailure, cleanupFailure),
+	);
+	assert.equal(primaryFailure.cause, originalCause);
+	assertChildRegistriesCleared(state);
+});
+
+test("headless spawn aggregates primitive and cleanup failures", async () => {
+	const primaryFailure = "prompt failed";
+	const cleanupFailure = new Error("dispose failed");
+	const { execution, state } = executeWithFailingCleanup(primaryFailure, cleanupFailure);
+
+	await assert.rejects(
+		() => execution,
+		(error: unknown) => assertAggregateFailure(error, primaryFailure, cleanupFailure),
+	);
+	assertChildRegistriesCleared(state);
+});
+
+test("UI spawn notifies when cleanup also fails after a primary failure", async () => {
+	const primaryFailure = new Error("prompt failed");
+	const cleanupFailure = new Error("dispose failed");
+	const notifications: Array<[string, string]> = [];
+	const { execution, state } = executeWithFailingCleanup(primaryFailure, cleanupFailure, {
+		hasUI: true,
+		ui: { notify: (message: string, level: string) => { notifications.push([message, level]); } },
+	});
+
+	await assert.rejects(() => execution, (error: unknown) => error === primaryFailure);
+	assert.deepEqual(notifications, [["Spawn cleanup failed: dispose failed", "error"]]);
+	assertChildRegistriesCleared(state);
 });
 
 test("spawn execute clears childSessions after successful completion when unrendered", async () => {
