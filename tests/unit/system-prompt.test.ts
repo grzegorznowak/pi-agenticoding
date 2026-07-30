@@ -38,7 +38,7 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.match(rulesSection, /one subject, thread, or subsystem/i);
 	assert.match(handoffSection, /situational context/i);
 	assert.match(rulesSection, /Keep pages compact/i);
-	assert.match(rulesSection, /scan.*notebook_index.*handoff/i);
+	assert.match(rulesSection, /handoff.*scan.*notebook_index/i);
 	assert.match(rulesSection, /chaining handoffs/i);
 	assert.match(handoffSection, /discardPages/i);
 	assert.match(handoffSection, /only when the handoff compaction succeeds/i);

@@ -80,5 +80,5 @@ re-deriving what you already learned. Use discardPages to remove notebook pages 
 - After handoff, fetch only the pages you need and assign a fresh topic again
 - Before handoff, save durable knowledge to the notebook and remaining situational context to the prompt
 - When chaining handoffs, use the notebook as storage and state management across contexts
-- Scan notebook_index before handoff to verify all critical findings are persisted
+- Before handoff, scan notebook_index to identify relevant pages, then open critical pages with notebook_read to verify all important findings are persisted
 `.trim();
