@@ -35,7 +35,7 @@ The notebook is deliberately the opposite. It is **coupled to the conversation/t
 
 - Pages carry memory across **handoff** and resume of *this* work stream
 - **`/new` (or a new session) clears everything** with the conversation
-- Nothing is shared into the next unrelated topic unless the agent writes it again on purpose
+- Retained pages remain available across handoffs; discard only pages that are obsolete and will not be needed again, not pages merely irrelevant to the next handoff
 
 So the agent can keep facts, decisions, constraints, and expensive findings **without** building a forever store that needs invalidation. Handoff still splits concerns: the notebook holds reusable memory *for this task*; the prompt holds only remaining situational context. That beats one summary blob that mixes both — and beats external memory that outlives the work and goes stale.
 

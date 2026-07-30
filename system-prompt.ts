@@ -63,9 +63,7 @@ remains in the session file for the user.
 The next context should use the notebook for memory and the handoff prompt
 for direction. Reference notebook pages by name; do not duplicate their content
 in the prompt. The handoff should help the next context start well without
-re-deriving what you already learned. Use discardPages only to remove stale
-notebook pages that are no longer relevant to the next task; pages are removed
-only when the handoff compaction succeeds.
+re-deriving what you already learned. Use discardPages to remove notebook pages that are obsolete and will not be needed again. Pages merely irrelevant to the next task may still be needed when returning to the original topic; pages are removed only when the handoff compaction succeeds.
 
 ### Rules
 - Maintain the notebook deliberately; update it when you learn durable knowledge worth carrying across contexts

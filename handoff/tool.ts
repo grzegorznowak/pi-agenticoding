@@ -185,8 +185,8 @@ export function registerHandoffTool(
 		promptGuidelines: [
 			"Before handoff, promote any missing knowledge that the next context will need to the notebook. " +
 				"Then draft a concise but sufficiently detailed prompt for the next clean context. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the prompt or user direction.",
-			"Use discardPages to remove notebook pages that are stale or no longer relevant to the next context. " +
-				"This keeps the notebook fresh and prevents outdated information from persisting.",
+			"Use discardPages to remove notebook pages that are obsolete and will not be needed again. " +
+				"Pages merely irrelevant to the next task may still be needed when returning to the original topic.",
 		],
 
 		executionMode: "sequential",
@@ -204,7 +204,7 @@ export function registerHandoffTool(
 			}), {
 				description:
 					"Notebook page names to permanently remove during this handoff. " +
-					"Use to prune stale pages that are no longer relevant to the next context.",
+					"Use to remove pages that are obsolete and will not be needed again; pages merely irrelevant to the next task may still be needed when returning to the original topic.",
 			})),
 		}),
 
