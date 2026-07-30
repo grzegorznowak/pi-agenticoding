@@ -62,11 +62,11 @@ test("isValidNpmExecpath rejects a directory named like an npm CLI", () => {
 });
 
 test("npmInvocation resolves a relative npm_execpath to an absolute path", () => {
-	const tmpDir = mkdtempSync(join(tmpdir(), "npm-rel-test-"));
+	const tmpDir = mkdtempSync(join(process.cwd(), "npm-rel-test-"));
 	const stubCli = join(tmpDir, "npm-cli.js");
 	writeFileSync(stubCli, "// npm CLI stub");
 	try {
-		const relPath = relative(resolve(process.cwd()), stubCli);
+		const relPath = relative(process.cwd(), stubCli);
 		assert.ok(!isAbsolute(relPath), "sanity: constructed path is relative");
 		const invocation = npmInvocation(["ls", "--json"], {
 			env: { npm_execpath: relPath },
