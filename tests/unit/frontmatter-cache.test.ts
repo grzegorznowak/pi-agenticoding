@@ -813,7 +813,6 @@ test("populateFromSkills returns null and records issue for invalid explicit mod
 			{ model: "no-slash", desc: "missing slash" },
 			{ model: "/missing-provider", desc: "empty provider" },
 			{ model: "missing-id/", desc: "empty model-id" },
-			{ model: "a/b/c", desc: "multiple slashes" },
 		];
 		for (const { model, desc } of cases) {
 			const name = `bad-model-${desc.replace(/[^a-z]/g, "")}`;
@@ -1056,6 +1055,25 @@ test("populateFromSkills caches all frontmatter fields together", async () => {
 		assert.equal(cacheLookupSkillExplicitModel(state, "all-fields"), "openai/gpt-4o");
 		assert.equal(cacheLookupSkillExplicitThinking(state, "all-fields"), "high");
 		assert.equal(cacheLookupSkillIssue(state, "all-fields"), null);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("populateFromSkills accepts slashes inside model IDs", async () => {
+	const state = createState();
+	const dir = await tmpDir();
+	try {
+		const models = ["openrouter/anthropic/claude-sonnet", "provider/a/b/c"];
+		const skills = await Promise.all(models.map(async (model, index) => {
+			const name = `nested-model-${index}`;
+			return makeSkill(name, await writeMd(dir, name, { model }));
+		}));
+		populateFromSkills(state, skills);
+		models.forEach((model, index) => {
+			assert.equal(cacheLookupSkillExplicitModel(state, `nested-model-${index}`), model);
+			assert.equal(cacheLookupSkillIssue(state, `nested-model-${index}`), null);
+		});
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

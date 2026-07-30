@@ -54,9 +54,9 @@ const THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium"
 function parseExplicitModel(raw: unknown): string | null {
 	if (typeof raw !== "string" || raw.trim().length === 0) return null;
 	const trimmed = raw.trim();
-	// Must match provider/model-id — exactly one slash, non-empty parts
+	// The first slash separates provider; the model ID may contain slashes.
 	const slashIdx = trimmed.indexOf("/");
-	if (slashIdx === -1 || slashIdx === 0 || slashIdx === trimmed.length - 1 || trimmed.lastIndexOf("/") !== slashIdx) return null;
+	if (slashIdx === -1 || slashIdx === 0 || slashIdx === trimmed.length - 1) return null;
 	return trimmed;
 }
 
