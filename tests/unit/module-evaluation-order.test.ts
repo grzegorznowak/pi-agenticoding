@@ -33,4 +33,26 @@ describe("module evaluation order", () => {
 			if (typeof sdk.ModelRuntime?.create !== 'function') throw new Error('ModelRuntime.create missing');
 		`);
 	});
+
+	it("createAgentSession is callable after handoff-first import sequence", () => {
+		evaluate(`
+			await import('./handoff/tool.ts');
+			await import('./spawn/index.ts');
+			const sdk = await import('@earendil-works/pi-coding-agent');
+
+			if (typeof sdk.createAgentSession !== 'function') throw new Error('createAgentSession missing');
+
+			let threw = false;
+			try {
+				await sdk.createAgentSession({ agentDir: process.execPath });
+			} catch (error) {
+				threw = true;
+				const message = String(error);
+				if (/is not a function|is not defined|Cannot read propert/.test(message)) {
+					throw new Error('createAgentSession threw a loader-corruption error: ' + message);
+				}
+			}
+			if (!threw) throw new Error('Expected createAgentSession to throw with invalid args');
+		`);
+	});
 });
