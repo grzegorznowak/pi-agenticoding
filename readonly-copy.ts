@@ -159,3 +159,7 @@ export function buildModelFrontmatterErrorNotification(provider: string, modelId
 export function buildModelFrontmatterAuthErrorNotification(provider: string, modelId: string, commandRef: string): string {
 	return `Cannot execute \`${commandRef}\`: no API key for model ${provider}/${modelId}.`;
 }
+
+export function buildStreamingModelSelectionBlockedNotification(commandRef: string): string {
+	return `Cannot execute \`${commandRef}\` during streaming: model-selection frontmatter requires an idle agent.`;
+}

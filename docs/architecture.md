@@ -6,9 +6,9 @@ pi-agenticoding is a Pi extension. It registers tools and hooks into the agent l
 
 | Hook | Role |
 |---|---|
-| `before_agent_start` | Refreshes Model Groups, resolves deferred skill/prompt frontmatter, then injects the context-management primer, names-only group guidance, and live notebook index |
+| `before_agent_start` | Refreshes Model Groups, resolves deferred readonly frontmatter, then injects the context-management primer, names-only group guidance, and live notebook index |
 | `context` | Advisory watchdog reminders when context is elevated; readonly toggle nudges |
-| `input` | Queues interactive skill/prompt names for deferred frontmatter resolution |
+| `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution |
 | `tool_call` | Readonly blocks write/edit/unguarded bash; blocks handoff unless a requested bypass is active |
 | `session_start` | Rehydrates notebook pages and readonly state; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
 | `turn_end` | Updates TUI indicators (context %, notebook count, topic, readonly) |
@@ -48,7 +48,13 @@ interface AgenticodingState {
 
 **Handoff** — Requires a real brief and a meaningful context load (rejects empty briefs, very small sessions, or missing usage). Notebook bodies are not inlined into the brief; the next context in this work stream fetches pages by name. Under readonly, handoff is blocked unless the user runs `/handoff` or crosses an eligible human topic boundary; readonly can resume after compaction. Compaction replaces the prior transcript with the brief: the next turns see a small context again (quality), and providers start a new input prefix for billing/cache (the dropped history is no longer in that prefix). Spawn runs children in separate context so their token use does not permanently inflate the parent. This extension does not configure provider cache TTLs or breakpoints.
 
-**Skill and prompt frontmatter** — Interactive TUI invocations resolve these optional fields immediately before the agent starts; headless/RPC invocations ignore them. `readonly: true|false` changes readonly posture. `model-group: <group-name>` routes to a configured Model Group and applies its effective, capability-clamped thinking level. `model: <provider>/<model-id>` selects that configured/authenticated model and takes precedence over `model-group` (the TUI warns when both are set). `thinking: off|minimal|low|medium|high|xhigh|max` applies to the selected/current model after capability clamping; it overrides group thinking. Invalid frontmatter is ignored with a TUI warning. Successful model-selection entries record the effective thinking level.
+**Skill and prompt frontmatter** — Interactive TUI invocations resolve model selection during idle `input`; headless/RPC invocations ignore it. `readonly: true|false` alone is deferred to `before_agent_start`, where complete skill metadata is available.
+
+- `model: <provider>/<model-id>` selects a configured, authenticated model. Only the first slash separates the provider, so model IDs may contain slashes.
+- `model-group: <group-name>` routes through a configured Model Group. An explicit `model` takes precedence.
+- `thinking: off|minimal|low|medium|high|xhigh|max` is capability-clamped for the selected or current model and overrides group thinking.
+
+A failed model change visibly blocks command expansion and records no success entry. During streaming steer/follow-up, commands with model-selection frontmatter are visibly blocked without model or thinking mutation; commands without it continue. Invalid frontmatter is ignored with a TUI warning.
 
 **Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Write/edit always blocked at the tool boundary. Bash uses a two-layer guard:
 

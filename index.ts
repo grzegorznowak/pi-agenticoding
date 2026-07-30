@@ -54,6 +54,7 @@ import {
 	buildModelFrontmatterAuthErrorNotification,
 	buildModelFrontmatterErrorNotification,
 	buildModelFrontmatterNotification,
+	buildStreamingModelSelectionBlockedNotification,
 	buildModelGroupAuthErrorNotification,
 	buildModelGroupErrorNotification,
 	buildModelGroupNotification,
@@ -63,7 +64,7 @@ import {
 	buildReadonlyFrontmatterNotification,
 	buildReadonlyTopicBoundaryNotification,
 } from "./readonly-copy.js";
-import { clampThinkingLevel } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, type Api, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { registerSpawnTool } from "./spawn/index.js";
 import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
@@ -134,14 +135,51 @@ function alignPendingReadonlyHandoff(state: AgenticodingState, readonly: boolean
 	state.pendingRequestedHandoff.resumeReadonlyAfterHandoff = readonly;
 }
 
-function formatCommandRef(command: { type: "skill" | "command"; name: string }): string {
+type PendingCommand = { type: "skill" | "command"; name: string };
+type ModelSelection = {
+	model: string | null;
+	group: string | null;
+	thinking: ModelThinkingLevel | null;
+	issue: FrontmatterIssue | null;
+};
+
+const cacheResolver = {
+	skill: {
+		model: cacheLookupSkillExplicitModel,
+		group: cacheLookupSkillModelGroup,
+		thinking: cacheLookupSkillExplicitThinking,
+		issue: cacheLookupSkillIssue,
+	},
+	command: {
+		model: cacheLookupCommandExplicitModel,
+		group: cacheLookupCommandModelGroup,
+		thinking: cacheLookupCommandExplicitThinking,
+		issue: cacheLookupCommandIssue,
+	},
+};
+
+function resolveModelSelection(state: AgenticodingState, pending: PendingCommand): ModelSelection {
+	const resolver = cacheResolver[pending.type];
+	return {
+		model: resolver.model(state, pending.name),
+		group: resolver.group(state, pending.name),
+		thinking: resolver.thinking(state, pending.name),
+		issue: resolver.issue(state, pending.name),
+	};
+}
+
+function hasModelSelection(selection: ModelSelection): boolean {
+	return Boolean(selection.model || selection.group || selection.thinking);
+}
+
+function formatCommandRef(command: PendingCommand): string {
 	return command.type === "skill" ? `/skill:${command.name}` : `/${command.name}`;
 }
 
 function recordFrontmatterIssue(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
-	command: { type: "skill" | "command"; name: string },
+	command: PendingCommand,
 	issue: FrontmatterIssue,
 ): void {
 	pi.appendEntry("agenticoding-frontmatter-issue", { name: command.name, type: command.type, issue });
@@ -215,144 +253,184 @@ function consumePendingReadonlyCommands(
 	}
 }
 
-/**
- * Apply model-selection frontmatter before Pi expands the slash command.
- * Returns true only when selection failed and input must be handled locally.
- */
+async function safeSetModel(pi: ExtensionAPI, model: Model<Api>, onError: () => void): Promise<boolean> {
+	try {
+		if (await pi.setModel(model)) return true;
+	} catch {
+		// Pi can reject after its configured-auth check succeeds.
+	}
+	onError();
+	return false;
+}
+
 async function preflightModelSelection(
 	state: AgenticodingState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
-	pending: { type: "skill" | "command"; name: string },
+	pending: PendingCommand,
+	selection = resolveModelSelection(state, pending),
 ): Promise<boolean> {
-	// Model-group/model/thinking frontmatter is a UI-only feature.
 	if (!ctx.hasUI || !ctx.model) return false;
-
+	if (selection.issue && !isReadonlyFrontmatterIssue(selection.issue)) {
+		recordFrontmatterIssue(ctx, pi, pending, selection.issue);
+	}
 	const commandRef = formatCommandRef(pending);
-	const issue = pending.type === "skill"
-		? cacheLookupSkillIssue(state, pending.name)
-		: cacheLookupCommandIssue(state, pending.name);
-	if (issue && !isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pending, issue);
+	if (selection.model) return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);
+	if (selection.group) return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);
+	if (selection.thinking) return handleThinkingOnlyFrontmatter(ctx, pi, selection.thinking, commandRef, ctx.model);
+	return false;
+}
 
-	const explicitModel = pending.type === "skill"
-		? cacheLookupSkillExplicitModel(state, pending.name)
-		: cacheLookupCommandExplicitModel(state, pending.name);
-	const explicitThinking = pending.type === "skill"
-		? cacheLookupSkillExplicitThinking(state, pending.name)
-		: cacheLookupCommandExplicitThinking(state, pending.name);
-	const modelGroupName = pending.type === "skill"
-		? cacheLookupSkillModelGroup(state, pending.name)
-		: cacheLookupCommandModelGroup(state, pending.name);
+function splitModelId(raw: string): { provider: string; modelId: string } {
+	const idx = raw.indexOf("/");
+	return { provider: raw.slice(0, idx), modelId: raw.slice(idx + 1) };
+}
 
-		// ── Priority 1: explicit `model` frontmatter ───────────────
-		if (explicitModel) {
-			// Warn if `model-group` is also present — explicit model wins
-			if (modelGroupName?.trim()) {
-				ctx.ui.notify(buildModelGroupOverrideWarningNotification(modelGroupName, commandRef), "warning");
-			}
+function findExplicitModel(ctx: ExtensionContext, raw: string, commandRef: string): Model<Api> | null {
+	const { provider, modelId } = splitModelId(raw);
+	const model = ctx.modelRegistry.find(provider, modelId);
+	if (!model) {
+		ctx.ui.notify(buildModelFrontmatterErrorNotification(provider, modelId, commandRef, "not found in registry"), "error");
+		return null;
+	}
+	if (ctx.modelRegistry.hasConfiguredAuth(model)) return model;
+	ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
+	return null;
+}
 
-			const slashIdx = explicitModel.indexOf("/");
-			const provider = explicitModel.slice(0, slashIdx);
-			const modelId = explicitModel.slice(slashIdx + 1);
-			const model = ctx.modelRegistry.find(provider, modelId);
+function recordExplicitModelSwitch(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	modelRef: string,
+	thinking: ModelThinkingLevel | null,
+	commandRef: string,
+): void {
+	const { provider, modelId } = splitModelId(modelRef);
+	if (thinking) pi.setThinkingLevel(thinking);
+	ctx.ui.notify(buildModelFrontmatterNotification(provider, modelId, commandRef), "info");
+	pi.appendEntry("agenticoding-model-switch", { command: commandRef, provider, modelId, thinking });
+}
 
-			if (!model) {
-				ctx.ui.notify(buildModelFrontmatterErrorNotification(provider, modelId, commandRef, "not found in registry"), "error");
-				return true;
-			}
+async function handleExplicitModelFrontmatter(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	selection: ModelSelection,
+	commandRef: string,
+): Promise<boolean> {
+	if (selection.group) ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");
+	const model = findExplicitModel(ctx, selection.model!, commandRef);
+	if (!model) return true;
+	const notifyError = () => {
+		const { provider, modelId } = splitModelId(selection.model!);
+		ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
+	};
+	if (!await safeSetModel(pi, model, notifyError)) return true;
+	const thinking = selection.thinking ? clampThinkingLevel(model, selection.thinking) : null;
+	recordExplicitModelSwitch(ctx, pi, selection.model!, thinking, commandRef);
+	return false;
+}
 
-			if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
-				ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
-				return true;
-			}
+type ModelRoute = ReturnType<typeof resolveSpawnModelRoute>;
 
-			const ok = await pi.setModel(model);
-			if (!ok) {
-				ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
-				return true;
-			}
+function unknownGroupDetail(state: AgenticodingState, groupName: string): string {
+	const names = getEffectiveModelGroupNames(state.modelGroups.groups);
+	const hint = names.length > 5 ? " Run /model-groups to see all available groups."
+		: names.length > 0 ? ` Available groups: ${names.join(", ")}.` : "";
+	return `Model Group '${groupName}' is not defined.${hint}`;
+}
 
-			const thinking = explicitThinking
-				? clampThinkingLevel(model, explicitThinking)
-				: null;
-			if (thinking) pi.setThinkingLevel(thinking);
+function recordModelGroupSwitch(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	route: Exclude<ModelRoute, { status: "unknown-fallback" }>,
+	groupName: string,
+	thinking: ModelThinkingLevel,
+	commandRef: string,
+): void {
+	pi.setThinkingLevel(thinking);
+	ctx.ui.notify(buildModelGroupNotification(groupName, route.provider, route.modelId, commandRef), "info");
+	pi.appendEntry("agenticoding-model-group-switch", {
+		command: commandRef,
+		groupName,
+		provider: route.provider,
+		modelId: route.modelId,
+		thinking,
+	});
+}
 
-			ctx.ui.notify(buildModelFrontmatterNotification(provider, modelId, commandRef), "info");
-			pi.appendEntry("agenticoding-model-switch", {
-				command: commandRef,
-				provider,
-				modelId,
-				thinking,
-			});
-			return false;
-		}
+async function applyModelGroupRoute(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	route: Exclude<ModelRoute, { status: "unknown-fallback" }>,
+	selection: ModelSelection,
+	commandRef: string,
+): Promise<boolean> {
+	const groupName = selection.group!;
+	const onError = () => ctx.ui.notify(
+		buildModelGroupAuthErrorNotification(groupName, route.provider, route.modelId, commandRef), "error",
+	);
+	if (!await safeSetModel(pi, route.model, onError)) return true;
+	const thinking = selection.thinking ? clampThinkingLevel(route.model, selection.thinking) : route.thinking;
+	recordModelGroupSwitch(ctx, pi, route, groupName, thinking, commandRef);
+	return false;
+}
 
-		// ── Priority 2: `model-group` frontmatter ──────────────────
-		if (modelGroupName) {
-			try {
-				const route = resolveSpawnModelRoute({
-					requestedGroup: modelGroupName,
-					groups: state.modelGroups.groups,
-					parentModel: ctx.model,
-					parentThinking: pi.getThinkingLevel(),
-					modelRegistry: ctx.modelRegistry,
-				});
+function resolveModelGroupRoute(
+	state: AgenticodingState,
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	groupName: string,
+	currentModel: Model<Api>,
+): ModelRoute {
+	return resolveSpawnModelRoute({
+		requestedGroup: groupName,
+		groups: state.modelGroups.groups,
+		parentModel: currentModel,
+		parentThinking: pi.getThinkingLevel(),
+		modelRegistry: ctx.modelRegistry,
+	});
+}
 
-				if (route.status === "unknown-fallback") {
-					const validNames = getEffectiveModelGroupNames(state.modelGroups.groups);
-					const hint = validNames.length > 5
-						? ` Run /model-groups to see all available groups.`
-						: validNames.length > 0
-							? ` Available groups: ${validNames.join(", ")}.`
-							: "";
-					ctx.ui.notify(buildModelGroupErrorNotification(modelGroupName, commandRef, `Model Group '${modelGroupName}' is not defined.${hint}`), "error");
-					return true;
-				}
+async function handleModelGroupFrontmatter(
+	state: AgenticodingState, ctx: ExtensionContext, pi: ExtensionAPI,
+	selection: ModelSelection, commandRef: string, currentModel: Model<Api>,
+): Promise<boolean> {
+	try {
+		const route = resolveModelGroupRoute(state, ctx, pi, selection.group!, currentModel);
+		if (route.status !== "unknown-fallback") return applyModelGroupRoute(ctx, pi, route, selection, commandRef);
+		const detail = unknownGroupDetail(state, selection.group!);
+		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, detail), "error");
+		return true;
+	} catch (error) {
+		if (!(error instanceof SpawnRouteError)) throw error;
+		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, error.message), "error");
+		return true;
+	}
+}
 
-				const ok = await pi.setModel(route.model);
-				if (!ok) {
-					ctx.ui.notify(buildModelGroupAuthErrorNotification(modelGroupName, route.provider, route.modelId, commandRef), "error");
-					return true;
-				}
+function handleThinkingOnlyFrontmatter(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	explicitThinking: ModelThinkingLevel,
+	commandRef: string,
+	currentModel: Model<Api>,
+): boolean {
+	const thinking = clampThinkingLevel(currentModel, explicitThinking);
+	pi.setThinkingLevel(thinking);
+	ctx.ui.notify(buildThinkingFrontmatterNotification(thinking, commandRef), "info");
+	pi.appendEntry("agenticoding-thinking-change", { command: commandRef, thinking });
+	return false;
+}
 
-				// Frontmatter `thinking` overrides the group's computed thinking level.
-				const thinking = explicitThinking
-					? clampThinkingLevel(route.model, explicitThinking)
-					: route.thinking;
-				pi.setThinkingLevel(thinking);
-
-				ctx.ui.notify(buildModelGroupNotification(modelGroupName, route.provider, route.modelId, commandRef), "info");
-				pi.appendEntry("agenticoding-model-group-switch", {
-					command: commandRef,
-					groupName: modelGroupName,
-					provider: route.provider,
-					modelId: route.modelId,
-					thinking,
-				});
-				return false;
-			} catch (error) {
-				if (error instanceof SpawnRouteError) {
-					ctx.ui.notify(buildModelGroupErrorNotification(modelGroupName, commandRef, error.message), "error");
-					return true;
-				}
-				throw error;
-			}
-		}
-
-		// ── Priority 3: `thinking` only (no model, no model-group) ─
-		if (explicitThinking) {
-			const clamped = clampThinkingLevel(ctx.model, explicitThinking);
-			pi.setThinkingLevel(clamped);
-			ctx.ui.notify(buildThinkingFrontmatterNotification(clamped, commandRef), "info");
-			pi.appendEntry("agenticoding-thinking-change", {
-				command: commandRef,
-				thinking: clamped,
-			});
-			return false;
-		}
-
-		// No relevant frontmatter.
-		return false;
+function blockStreamingModelSelection(
+	ctx: ExtensionContext,
+	pending: PendingCommand,
+	selection: ModelSelection,
+	streamingBehavior: "steer" | "followUp" | undefined,
+): boolean {
+	if (!streamingBehavior || !hasModelSelection(selection)) return false;
+	ctx.ui.notify(buildStreamingModelSelectionBlockedNotification(formatCommandRef(pending)), "warning");
+	return true;
 }
 
 function modelGroupsAccess(ctx: ExtensionContext): ModelGroupsAccess {
@@ -517,7 +595,12 @@ export default function (pi: ExtensionAPI): void {
 		// failed selection from reaching Pi's expansion/agent-start lifecycle.
 		populateFrontmatterCache(state, ctx, pi);
 		refreshModelGroupsState(state, ctx);
-		if (await preflightModelSelection(state, ctx, pi, pending)) return { action: "handled" };
+
+		const selection = resolveModelSelection(state, pending);
+		if (blockStreamingModelSelection(ctx, pending, selection, event.streamingBehavior)) {
+			return { action: "handled" };
+		}
+		if (await preflightModelSelection(state, ctx, pi, pending, selection)) return { action: "handled" };
 
 		// Readonly intentionally remains deferred: its authority is resolved with
 		// Pi's final skill metadata in before_agent_start.

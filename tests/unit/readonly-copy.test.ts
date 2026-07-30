@@ -42,6 +42,7 @@ import {
 	buildThinkingFrontmatterNotification,
 	buildModelFrontmatterErrorNotification,
 	buildModelFrontmatterAuthErrorNotification,
+	buildStreamingModelSelectionBlockedNotification,
 	buildReadonlyBashBlockReason,
 	buildReadonlyFrontmatterNotification,
 	buildReadonlyPackageManagerBlockReason,
@@ -217,6 +218,13 @@ test("buildModelFrontmatterErrorNotification includes model and detail", () => {
 test("buildModelFrontmatterAuthErrorNotification includes model and command ref", () => {
 	const msg = buildModelFrontmatterAuthErrorNotification("openai", "gpt-4o", "/review");
 	assert.equal(msg, "Cannot execute `/review`: no API key for model openai/gpt-4o.");
+});
+
+test("streaming model-selection notification explains the idle-agent requirement", () => {
+	assert.equal(
+		buildStreamingModelSelectionBlockedNotification("/review"),
+		"Cannot execute `/review` during streaming: model-selection frontmatter requires an idle agent.",
+	);
 });
 
 test("model-group builders include commandRef in output", () => {

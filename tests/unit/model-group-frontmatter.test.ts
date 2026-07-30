@@ -282,33 +282,6 @@ test("empty model-group (SpawnRouteError) blocks execution with error", async ()
 	}
 }));
 
-test("setModel failure (no API key) blocks execution with auth error", async () => withTemp(async ({ cwd }) => {
-	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
-	const skillDir = await tmpDir();
-	try {
-		const filePath = await writeSkillMd(skillDir, "review", { "model-group": "reviewer" });
-		const pi = createTestPI();
-		pi.setModel = async () => false as any; // Simulate auth failure
-		registerAgenticoding(pi as any);
-		const [inputHandler] = pi.handlers.get("input")!;
-		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
-		const { ctx, notifications } = makeNotifyCtx({
-			cwd,
-			model: mockModel("openai", "gpt-parent"),
-			modelRegistry: mockRegistry(),
-		});
-
-		pi.setCommands([makePromptCommand("review", filePath)]);
-		await sessionStartHandler({ reason: "load" }, ctx);
-		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
-
-		assert.deepEqual(result, { action: "handled" });
-		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /no API key/);
-	} finally {
-		await rm(skillDir, { recursive: true, force: true });
-	}
-}));
-
 test("headless session does not inherit model-group changes", async () => withTemp(async ({ cwd }) => {
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const skillDir = await tmpDir();
@@ -396,6 +369,55 @@ function makeMockPI() {
 	pi.getThinkingLevel = () => "medium";
 	registerAgenticoding(pi);
 	return pi;
+}
+
+type SetModelBehavior = "success" | "false" | "reject";
+
+function makeTrackedPI(behavior: SetModelBehavior) {
+	const pi = makeMockPI();
+	const modelCalls: any[] = [];
+	const thinkingCalls: string[] = [];
+	pi.setModel = async (model: any) => {
+		modelCalls.push(model);
+		if (behavior === "reject") throw new Error("setModel rejected");
+		return behavior !== "false";
+	};
+	pi.setThinkingLevel = (level: string) => thinkingCalls.push(level);
+	return { pi, modelCalls, thinkingCalls };
+}
+
+async function executePromptInput(pi: any, ctx: any, streamingBehavior?: "steer" | "followUp") {
+	await pi.handlers.get("session_start")!.at(-1)!({ reason: "load" }, ctx);
+	const input = pi.handlers.get("input")![0];
+	return input({ text: "/review", source: "interactive", streamingBehavior }, ctx);
+}
+
+async function runPromptInput(
+	cwd: string, frontmatter: Record<string, unknown>, behavior: SetModelBehavior,
+	streamingBehavior?: "steer" | "followUp",
+) {
+	const dir = await tmpDir();
+	try {
+		const filePath = await writeSkillMd(dir, "review", frontmatter);
+		const tracked = makeTrackedPI(behavior);
+		const { ctx, notifications } = makeNotifyCtx({
+			cwd, model: mockModel("openai", "gpt-parent"), modelRegistry: mockRegistry(),
+		});
+		tracked.pi.setCommands([makePromptCommand("review", filePath)]);
+		const result = await executePromptInput(tracked.pi, ctx, streamingBehavior);
+		return { ...tracked, notifications, result };
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+}
+
+function hasModelSelectionEntry(pi: any): boolean {
+	const types = new Set([
+		"agenticoding-model-switch",
+		"agenticoding-model-group-switch",
+		"agenticoding-thinking-change",
+	]);
+	return pi.appendedEntries.some((entry: any) => types.has(entry.customType));
 }
 
 // ── Explicit model frontmatter tests ──────────────────────────────
@@ -841,6 +863,47 @@ test("model-group toggle does not affect readonly state", async () => withTemp(a
 		assert.equal(readonlyEntries.length, 0, "readonly state should not be affected");
 	} finally {
 		await rm(skillDir, { recursive: true, force: true });
+	}
+}));
+
+test("streaming blocks model selection without mutation", async () => withTemp(async ({ cwd }) => {
+	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
+	const cases = [
+		{ frontmatter: { model: "openai/gpt-4o" }, streamingBehavior: "steer" as const },
+		{ frontmatter: { "model-group": "reviewer" }, streamingBehavior: "followUp" as const },
+		{ frontmatter: { thinking: "high" }, streamingBehavior: "steer" as const },
+	];
+	for (const scenario of cases) {
+		const run = await runPromptInput(cwd, scenario.frontmatter, "success", scenario.streamingBehavior);
+		assert.deepEqual(run.result, { action: "handled" });
+		assert.equal(run.modelCalls.length, 0);
+		assert.equal(run.thinkingCalls.length, 0);
+		assert.ok(run.notifications.some((item) => item.level === "warning"));
+		assert.equal(hasModelSelectionEntry(run.pi), false);
+	}
+}));
+
+test("streaming command without model selection continues", async () => withTemp(async ({ cwd }) => {
+	const run = await runPromptInput(cwd, { readonly: true }, "success", "followUp");
+	assert.deepEqual(run.result, { action: "continue" });
+	assert.equal(run.modelCalls.length, 0);
+	assert.equal(run.thinkingCalls.length, 0);
+	assert.ok(!run.notifications.some((item) => item.level === "warning"));
+}));
+
+test("setModel failures block explicit and group selection without success entries", async () => withTemp(async ({ cwd }) => {
+	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
+	const cases = [
+		{ frontmatter: { model: "openai/gpt-4o" }, behavior: "false" as const },
+		{ frontmatter: { model: "openai/gpt-4o" }, behavior: "reject" as const },
+		{ frontmatter: { "model-group": "reviewer" }, behavior: "false" as const },
+		{ frontmatter: { "model-group": "reviewer" }, behavior: "reject" as const },
+	];
+	for (const scenario of cases) {
+		const run = await runPromptInput(cwd, scenario.frontmatter, scenario.behavior);
+		assert.deepEqual(run.result, { action: "handled" });
+		assert.match(run.notifications.find((item) => item.level === "error")?.message ?? "", /no API key/);
+		assert.equal(hasModelSelectionEntry(run.pi), false);
 	}
 }));
 
