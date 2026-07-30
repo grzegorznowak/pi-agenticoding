@@ -531,7 +531,15 @@ export function executeSpawn(
 			}
 			// Headless callers get no UI notification, so preserve both failures.
 			if (ctx.hasUI) {
-				notifyCleanupFailure(ctx, cleanupError);
+				try {
+					notifyCleanupFailure(ctx, cleanupError);
+				} catch (notifyError) {
+					// Do not mutate the primary error: its own cause may carry the root failure.
+					throw new AggregateError(
+						[primaryError, cleanupError, notifyError],
+						"Spawn, cleanup, and notification failed.",
+					);
+				}
 			} else {
 				throw new AggregateError([primaryError, cleanupError], "Spawn failed and cleanup failed.");
 			}

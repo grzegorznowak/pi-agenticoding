@@ -62,10 +62,10 @@ function assertChildRegistriesCleared(state: ReturnType<typeof createState>): vo
 	assert.equal(state.liveChildSessions.size, 0);
 }
 
-function assertAggregateFailure(error: unknown, primaryFailure: unknown, cleanupFailure: unknown): boolean {
+function assertAggregateFailure(error: unknown, message: string, failures: unknown[]): boolean {
 	assert.ok(error instanceof AggregateError);
-	assert.equal(error.message, "Spawn failed and cleanup failed.");
-	assert.deepEqual(error.errors, [primaryFailure, cleanupFailure]);
+	assert.equal(error.message, message);
+	assert.deepEqual(error.errors, failures);
 	return true;
 }
 
@@ -583,7 +583,7 @@ test("headless spawn aggregates Error and cleanup failures without mutating the 
 
 	await assert.rejects(
 		() => execution,
-		(error: unknown) => assertAggregateFailure(error, primaryFailure, cleanupFailure),
+		(error: unknown) => assertAggregateFailure(error, "Spawn failed and cleanup failed.", [primaryFailure, cleanupFailure]),
 	);
 	assert.equal(primaryFailure.cause, originalCause);
 	assertChildRegistriesCleared(state);
@@ -596,7 +596,7 @@ test("headless spawn aggregates primitive and cleanup failures", async () => {
 
 	await assert.rejects(
 		() => execution,
-		(error: unknown) => assertAggregateFailure(error, primaryFailure, cleanupFailure),
+		(error: unknown) => assertAggregateFailure(error, "Spawn failed and cleanup failed.", [primaryFailure, cleanupFailure]),
 	);
 	assertChildRegistriesCleared(state);
 });
@@ -612,6 +612,51 @@ test("UI spawn notifies when cleanup also fails after a primary failure", async 
 
 	await assert.rejects(() => execution, (error: unknown) => error === primaryFailure);
 	assert.deepEqual(notifications, [["Spawn cleanup failed: dispose failed", "error"]]);
+	assertChildRegistriesCleared(state);
+});
+
+test("UI spawn aggregates failures without mutating a frozen primary error", async () => {
+	const originalCause = new Error("original cause");
+	const primaryFailure = new Error("prompt failed", { cause: originalCause });
+	const cleanupFailure = new Error("dispose failed");
+	const notifyError = new Error("notify failed");
+	Object.freeze(primaryFailure);
+	const { execution, state } = executeWithFailingCleanup(primaryFailure, cleanupFailure, {
+		hasUI: true,
+		ui: { notify: () => { throw notifyError; } },
+	});
+
+	await assert.rejects(
+		() => execution,
+		(error: unknown) => assertAggregateFailure(
+			error,
+			"Spawn, cleanup, and notification failed.",
+			[primaryFailure, cleanupFailure, notifyError],
+		),
+	);
+	assert.equal(primaryFailure.cause, originalCause);
+	assertChildRegistriesCleared(state);
+});
+
+test("UI spawn aggregates primitive primary, cleanup, and notification failures", async () => {
+	const primaryFailure = "prompt failed";
+	const cleanupFailure = new Error("dispose failed");
+	const notifyError = new Error("notify failed");
+	const notifications: Array<[string, string]> = [];
+	const { execution, state } = executeWithFailingCleanup(primaryFailure, cleanupFailure, {
+		hasUI: true,
+		ui: { notify: (message: string, level: string) => { notifications.push([message, level]); throw notifyError; } },
+	});
+
+	await assert.rejects(
+		() => execution,
+		(error: unknown) => assertAggregateFailure(
+			error,
+			"Spawn, cleanup, and notification failed.",
+			[primaryFailure, cleanupFailure, notifyError],
+		),
+	);
+	assert.equal(notifications.length, 1, "notification is attempted exactly once");
 	assertChildRegistriesCleared(state);
 });
 
