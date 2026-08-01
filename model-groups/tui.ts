@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel, type Api } from "@earendil-works/pi-ai";
-import { Container, Input, Key, matchesKey, SelectList, truncateToWidth, type Component, type Focusable, type SelectItem, type TUI } from "@earendil-works/pi-tui";
+import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, truncateToWidth, type Component, type Focusable, type SelectItem, type TUI } from "@earendil-works/pi-tui";
 import {
 	createGroup,
 	deleteGroup,
@@ -40,6 +40,7 @@ function isEsc(data: string): boolean { return matchesKey(data, Key.escape); }
 function isUp(data: string): boolean { return matchesKey(data, Key.up); }
 function isDown(data: string): boolean { return matchesKey(data, Key.down); }
 function isLeft(data: string): boolean { return matchesKey(data, Key.left); }
+function isBackspace(data: string): boolean { return matchesKey(data, Key.backspace); }
 function isDeleteChord(data: string): boolean { return data === "D" || matchesKey(data, Key.delete); }
 
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
@@ -102,12 +103,20 @@ export function createModelGroupsComponent(
 		finished: false,
 	};
 	const groupNameInput = new Input();
+	let modelSearchInput = new Input();
 	let rootFocused = false;
 	let activeSelect: SelectList | null = null;
 	const nameRow = () => access.policy === "global-project" ? 2 : 1;
 	const modelStartRow = () => nameRow() + 1;
 	function syncInputFocus(): void {
 		groupNameInput.focused = rootFocused && state.screen === "EDITOR" && state.row === nameRow() && state.activeTextInput === "group-name";
+		modelSearchInput.focused = rootFocused && state.screen === "WIZARD_MODEL";
+	}
+	function resetModelSearch(): void {
+		modelSearchInput = new Input();
+		state.row = 0;
+		activeSelect = null;
+		syncInputFocus();
 	}
 	function setGroupNameInputValue(value: string): void {
 		groupNameInput.setValue(value);
@@ -251,6 +260,16 @@ export function createModelGroupsComponent(
 			.sort((a, b) => a.id.localeCompare(b.id));
 	}
 
+	function filteredModelsForProvider(provider: string): Model<Api>[] {
+		const eligible = modelsForProvider(provider);
+		return fuzzyFilter(eligible, modelSearchInput.getValue(), (model) => [
+			model.id,
+			model.provider,
+			`${model.provider}/${model.id}`,
+			model.name ?? "",
+		].join(" "));
+	}
+
 	function currentWizardModel(): Model<Api> | undefined {
 		return modelRegistry.find(state.wizardProvider, state.wizardModelId) as Model<Api> | undefined;
 	}
@@ -267,7 +286,7 @@ export function createModelGroupsComponent(
 			case "EDITOR": return modelStartRow() + (state.editDraft?.models.length ?? 0);
 			case "MODEL_EDIT": return thinkingOptionsFor(modelRegistry.find(state.editDraft?.models[state.modelEditIndex]?.provider ?? "", state.editDraft?.models[state.modelEditIndex]?.modelId ?? "") as Model<Api> | undefined).length;
 			case "WIZARD_PROVIDER": return Math.max(0, allProviders().length - 1);
-			case "WIZARD_MODEL": return Math.max(0, modelsForProvider(state.wizardProvider).length - 1);
+			case "WIZARD_MODEL": return Math.max(0, filteredModelsForProvider(state.wizardProvider).length - 1);
 			case "WIZARD_THINKING": return Math.max(0, thinkingOptionsFor(currentWizardModel()).length - 1);
 			case "DELETE_CONFIRM": return 1;
 		}
@@ -306,6 +325,7 @@ export function createModelGroupsComponent(
 					state.screen = "MODEL_EDIT";
 					state.row = 0;
 				} else {
+					resetModelSearch();
 					state.screen = "WIZARD_PROVIDER";
 					state.row = 0;
 				}
@@ -333,18 +353,12 @@ export function createModelGroupsComponent(
 				const provider = allProviders()[state.row];
 				if (!provider) return;
 				state.wizardProvider = provider;
+				resetModelSearch();
 				state.screen = "WIZARD_MODEL";
 				state.row = 0;
 				return;
 			}
-			case "WIZARD_MODEL": {
-				const model = modelsForProvider(state.wizardProvider)[state.row];
-				if (!model) return;
-				state.wizardModelId = model.id;
-				state.screen = "WIZARD_THINKING";
-				state.row = 0;
-				return;
-			}
+			case "WIZARD_MODEL": return; // Model activation is owned by the same-build filtered SelectList callback.
 			case "WIZARD_THINKING": {
 				if (!state.editDraft) return;
 				const level = thinkingOptionsFor(currentWizardModel())[state.row];
@@ -352,7 +366,7 @@ export function createModelGroupsComponent(
 				const entry = { provider: state.wizardProvider, modelId: state.wizardModelId } as { provider: string; modelId: string; thinkingLevel?: ModelThinkingLevel };
 				if (level !== undefined) entry.thinkingLevel = level;
 				next.models.push(entry);
-				updateDraft(next, () => { state.screen = "EDITOR"; state.row = 0; });
+				updateDraft(next, () => { resetModelSearch(); state.screen = "EDITOR"; state.row = 0; });
 				return;
 			}
 			case "DELETE_CONFIRM": {
@@ -376,8 +390,8 @@ export function createModelGroupsComponent(
 			case "LIST": state.finished = true; done(); return;
 			case "EDITOR": commitName(); state.screen = "LIST"; state.row = 0; return;
 			case "MODEL_EDIT": state.screen = "EDITOR"; state.row = 0; return;
-			case "WIZARD_PROVIDER": state.screen = "EDITOR"; state.row = 0; return;
-			case "WIZARD_MODEL": state.screen = "WIZARD_PROVIDER"; state.row = 0; return;
+			case "WIZARD_PROVIDER": resetModelSearch(); state.screen = "EDITOR"; state.row = 0; return;
+			case "WIZARD_MODEL": resetModelSearch(); state.screen = "WIZARD_PROVIDER"; state.row = 0; return;
 			case "WIZARD_THINKING": state.screen = "WIZARD_MODEL"; state.row = 0; return;
 			case "DELETE_CONFIRM": state.screen = "LIST"; state.row = 0; return;
 		}
@@ -418,6 +432,25 @@ export function createModelGroupsComponent(
 		select.setSelectedIndex(Math.min(state.row, Math.max(0, items.length - 1)));
 		select.onSelectionChange = (item) => { state.row = Number(item.value); syncInputFocus(); };
 		select.onSelect = (item) => { state.row = Number(item.value); activate(); syncInputFocus(); };
+		select.onCancel = () => { goBack(); syncInputFocus(); };
+		activeSelect = select;
+		return select;
+	}
+
+	function buildModelSelect(models: Model<Api>[]): SelectList {
+		const items = models.map((model, index) => ({ value: String(index), label: modelDisplay(model) }));
+		const select = new SelectList(items, 10, selectTheme);
+		select.setSelectedIndex(Math.min(state.row, Math.max(0, items.length - 1)));
+		select.onSelectionChange = (item) => { state.row = Number(item.value); syncInputFocus(); };
+		select.onSelect = (item) => {
+			const model = models[Number(item.value)];
+			if (!model) return;
+			state.row = Number(item.value);
+			state.wizardModelId = model.id;
+			state.screen = "WIZARD_THINKING";
+			state.row = 0;
+			syncInputFocus();
+		};
 		select.onCancel = () => { goBack(); syncInputFocus(); };
 		activeSelect = select;
 		return select;
@@ -484,7 +517,16 @@ export function createModelGroupsComponent(
 			items = allProviders().map((provider, index) => ({ value: String(index), label: escapeDisplayLabel(provider) }));
 		} else if (state.screen === "WIZARD_MODEL") {
 			title = "Add model — Step 2/3 Model";
-			items = modelsForProvider(state.wizardProvider).map((model, index) => ({ value: String(index), label: modelDisplay(model) }));
+			container.addChild(textLine(theme.fg("accent", title)));
+			container.addChild(modelSearchInput);
+			const models = filteredModelsForProvider(state.wizardProvider);
+			if (models.length === 0) {
+				activeSelect = null;
+				container.addChild(textLine(theme.fg("dim", "  No matching models")));
+			} else {
+				container.addChild(buildModelSelect(models));
+			}
+			return container;
 		} else {
 			title = "Add model — Step 3/3 Thinking";
 			items = thinkingOptionsFor(currentWizardModel()).map((level, index) => ({ value: String(index), label: thinkingLabel(level) }));
@@ -522,9 +564,29 @@ export function createModelGroupsComponent(
 			syncInputFocus();
 			return activeComponent().render(width).map((line) => truncateToWidth(line, width));
 		},
-		invalidate: () => groupNameInput.invalidate(),
+		invalidate: () => { groupNameInput.invalidate(); modelSearchInput.invalidate(); },
 		handleInput: (data: string) => {
 			if (state.finished) return;
+			if (state.screen === "WIZARD_MODEL") {
+				const queryBefore = modelSearchInput.getValue();
+				if (isEsc(data)) {
+					goBack();
+				} else if (isUp(data) || isDown(data) || isEnter(data)) {
+					activeSelect?.handleInput(data);
+				} else if (!queryBefore && (isLeft(data) || isBackspace(data))) {
+					goBack();
+				} else {
+					modelSearchInput.handleInput(data);
+					if (modelSearchInput.getValue() !== queryBefore) {
+						state.row = 0;
+						const models = filteredModelsForProvider(state.wizardProvider);
+						activeSelect = models.length > 0 ? buildModelSelect(models) : null;
+					}
+				}
+				syncInputFocus();
+				tui.requestRender();
+				return;
+			}
 			if (state.activeTextInput === "group-name") {
 				if (isUp(data) || isDown(data)) {
 					const previousRow = state.row;
