@@ -624,6 +624,48 @@ test("model groups TUI fuzzy search excludes synthetic provider-space-id matches
 	assert.doesNotMatch(rendered(c), /→ abc\/xyz/);
 });
 
+test("model groups TUI handles Model activation immediately after Provider transition without rendering", () => {
+	let groups = [group("review", { scope: "project" })];
+	const persisted: any[] = [];
+	const store = {
+		updateGroup: (_scope: string, _access: any, name: string, def: any) => {
+			persisted.push(def.models.at(-1));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const models = Array.from({ length: 2 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
+	const c = component({ groups, modelRegistry: catalog(models), store }).c;
+	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, ENTER);
+	assert.match(rendered(c), /Add model — Step 1\/3 Provider/);
+
+	for (const input of [ENTER, ENTER]) c.handleInput?.(input);
+	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	pressAndRender(c, ENTER);
+	assert.deepEqual(persisted, [{ provider: "openai", modelId: "model-0" }]);
+});
+
+test("model groups TUI replaces Thinking control with Model control before rendering the back-step", () => {
+	let groups = [group("review", { scope: "project" })];
+	const persisted: any[] = [];
+	const store = {
+		updateGroup: (_scope: string, _access: any, name: string, def: any) => {
+			persisted.push(def.models.at(-1));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
+	const c = atSearchableModel(models, store);
+	pressAndRender(c, ENTER);
+	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+
+	for (const input of [LEFT, DOWN, ENTER]) c.handleInput?.(input);
+	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	pressAndRender(c, ENTER);
+	assert.deepEqual(persisted, [{ provider: "openai", modelId: "model-1" }]);
+});
+
 test("model groups TUI keeps Model selection live across rapid query, navigation, and selection before render", () => {
 	let groups = [group("review", { scope: "project" })];
 	const persisted: any[] = [];

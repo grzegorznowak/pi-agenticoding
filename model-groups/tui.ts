@@ -356,6 +356,7 @@ export function createModelGroupsComponent(
 				resetModelSearch();
 				state.screen = "WIZARD_MODEL";
 				state.row = 0;
+				installModelSelect();
 				return;
 			}
 			case "WIZARD_MODEL": return; // Model activation is owned by the same-build filtered SelectList callback.
@@ -392,7 +393,7 @@ export function createModelGroupsComponent(
 			case "MODEL_EDIT": state.screen = "EDITOR"; state.row = 0; return;
 			case "WIZARD_PROVIDER": resetModelSearch(); state.screen = "EDITOR"; state.row = 0; return;
 			case "WIZARD_MODEL": resetModelSearch(); state.screen = "WIZARD_PROVIDER"; state.row = 0; return;
-			case "WIZARD_THINKING": state.screen = "WIZARD_MODEL"; state.row = 0; return;
+			case "WIZARD_THINKING": state.screen = "WIZARD_MODEL"; state.row = 0; installModelSelect(); return;
 			case "DELETE_CONFIRM": state.screen = "LIST"; state.row = 0; return;
 		}
 	}
@@ -435,6 +436,11 @@ export function createModelGroupsComponent(
 		select.onCancel = () => { goBack(); syncInputFocus(); };
 		activeSelect = select;
 		return select;
+	}
+
+	function installModelSelect(): void {
+		const models = filteredModelsForProvider(state.wizardProvider);
+		activeSelect = models.length > 0 ? buildModelSelect(models) : null;
 	}
 
 	function buildModelSelect(models: Model<Api>[]): SelectList {
@@ -579,8 +585,7 @@ export function createModelGroupsComponent(
 					modelSearchInput.handleInput(data);
 					if (modelSearchInput.getValue() !== queryBefore) {
 						state.row = 0;
-						const models = filteredModelsForProvider(state.wizardProvider);
-						activeSelect = models.length > 0 ? buildModelSelect(models) : null;
+						installModelSelect();
 					}
 				}
 				syncInputFocus();
