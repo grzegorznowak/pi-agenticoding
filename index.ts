@@ -202,7 +202,6 @@ function consumePendingReadonlyCommands(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 ): void {
-	const commands = pi.getCommands();
 	// Readonly is a TUI-only feature. Headless/RPC sessions must not inherit a
 	// queued slash-command toggle from some earlier interactive input source, so
 	// drop any deferred intents here instead of letting them mutate headless runs.
@@ -228,7 +227,7 @@ function consumePendingReadonlyCommands(
 			const issue = pendingCommand.type === "skill"
 				? cacheLookupSkillIssue(state, pendingCommand.name)
 				: cacheLookupCommandIssue(state, pendingCommand.name);
-				if (issue && isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pendingCommand, issue);
+			if (issue && isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pendingCommand, issue);
 			continue;
 		}
 
