@@ -36,11 +36,12 @@ import {
 	READONLY_CHILD_AUTHORITY_NOTE,
 	buildModelGroupNotification,
 	buildModelGroupErrorNotification,
-	buildModelGroupAuthErrorNotification,
+	buildModelGroupSetModelErrorNotification,
 	buildModelFrontmatterNotification,
 	buildModelGroupOverrideWarningNotification,
 	buildThinkingFrontmatterNotification,
 	buildModelFrontmatterErrorNotification,
+	buildModelFrontmatterSetModelErrorNotification,
 	buildModelFrontmatterAuthErrorNotification,
 	buildStreamingModelSelectionBlockedNotification,
 	buildReadonlyBashBlockReason,
@@ -190,9 +191,9 @@ test("buildModelGroupErrorNotification includes group and detail", () => {
 	assert.equal(msg, "Cannot execute `/review`: Model Group `reviewer` error — not defined.");
 });
 
-test("buildModelGroupAuthErrorNotification includes group, model, and command ref", () => {
-	const msg = buildModelGroupAuthErrorNotification("reviewer", "openai", "gpt-4o", "/review");
-	assert.equal(msg, "Cannot execute `/review`: no API key for routed model openai/gpt-4o from group `reviewer`.");
+test("buildModelGroupSetModelErrorNotification includes group, model, and command ref", () => {
+	const msg = buildModelGroupSetModelErrorNotification("reviewer", "openai", "gpt-4o", "/review");
+	assert.equal(msg, "Cannot execute `/review`: failed to switch to routed model openai/gpt-4o from group `reviewer`.");
 });
 
 test("buildModelFrontmatterNotification includes model and command ref", () => {
@@ -215,6 +216,11 @@ test("buildModelFrontmatterErrorNotification includes model and detail", () => {
 	assert.equal(msg, "Cannot execute `/review`: model openai/gpt-4o not found in registry.");
 });
 
+test("buildModelFrontmatterSetModelErrorNotification includes model and command ref", () => {
+	const msg = buildModelFrontmatterSetModelErrorNotification("openai", "gpt-4o", "/review");
+	assert.equal(msg, "Cannot execute `/review`: failed to switch to model openai/gpt-4o.");
+});
+
 test("buildModelFrontmatterAuthErrorNotification includes model and command ref", () => {
 	const msg = buildModelFrontmatterAuthErrorNotification("openai", "gpt-4o", "/review");
 	assert.equal(msg, "Cannot execute `/review`: no API key for model openai/gpt-4o.");
@@ -230,12 +236,13 @@ test("streaming model-selection notification explains the idle-agent requirement
 test("model-group builders include commandRef in output", () => {
 	assert.ok(buildModelGroupNotification("g", "p", "m", "/cmd").includes("/cmd"));
 	assert.ok(buildModelGroupErrorNotification("g", "/cmd", "d").includes("/cmd"));
-	assert.ok(buildModelGroupAuthErrorNotification("g", "p", "m", "/cmd").includes("/cmd"));
+	assert.ok(buildModelGroupSetModelErrorNotification("g", "p", "m", "/cmd").includes("/cmd"));
 });
 
 test("model frontmatter builders include commandRef in output", () => {
 	assert.ok(buildModelFrontmatterNotification("p", "m", "/cmd").includes("/cmd"));
 	assert.ok(buildModelGroupOverrideWarningNotification("g", "/cmd").includes("/cmd"));
 	assert.ok(buildModelFrontmatterErrorNotification("p", "m", "/cmd", "d").includes("/cmd"));
+	assert.ok(buildModelFrontmatterSetModelErrorNotification("p", "m", "/cmd").includes("/cmd"));
 	assert.ok(buildModelFrontmatterAuthErrorNotification("p", "m", "/cmd").includes("/cmd"));
 });

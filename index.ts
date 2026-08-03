@@ -54,11 +54,12 @@ import {
 	buildModelFrontmatterAuthErrorNotification,
 	buildModelFrontmatterErrorNotification,
 	buildModelFrontmatterNotification,
+	buildModelFrontmatterSetModelErrorNotification,
 	buildStreamingModelSelectionBlockedNotification,
-	buildModelGroupAuthErrorNotification,
 	buildModelGroupErrorNotification,
 	buildModelGroupNotification,
 	buildModelGroupOverrideWarningNotification,
+	buildModelGroupSetModelErrorNotification,
 	buildThinkingFrontmatterNotification,
 	buildReadonlyDisabledContextSuffix,
 	buildReadonlyFrontmatterNotification,
@@ -321,7 +322,7 @@ async function handleExplicitModelFrontmatter(
 	if (!model) return true;
 	const notifyError = () => {
 		const { provider, modelId } = splitModelId(selection.model!);
-		ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
+		ctx.ui.notify(buildModelFrontmatterSetModelErrorNotification(provider, modelId, commandRef), "error");
 	};
 	if (!await safeSetModel(pi, model, notifyError)) return true;
 	const thinking = selection.thinking ? clampThinkingLevel(model, selection.thinking) : null;
@@ -366,7 +367,7 @@ async function applyModelGroupRoute(
 ): Promise<boolean> {
 	const groupName = selection.group!;
 	const onError = () => ctx.ui.notify(
-		buildModelGroupAuthErrorNotification(groupName, route.provider, route.modelId, commandRef), "error",
+		buildModelGroupSetModelErrorNotification(groupName, route.provider, route.modelId, commandRef), "error",
 	);
 	if (!await safeSetModel(pi, route.model, onError)) return true;
 	const thinking = selection.thinking ? clampThinkingLevel(route.model, selection.thinking) : route.thinking;

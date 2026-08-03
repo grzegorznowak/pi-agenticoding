@@ -129,8 +129,8 @@ export function buildModelGroupErrorNotification(groupName: string, commandRef: 
 }
 
 /** Error notification when model change fails after group resolution. */
-export function buildModelGroupAuthErrorNotification(groupName: string, provider: string, modelId: string, commandRef: string): string {
-	return `Cannot execute \`${commandRef}\`: no API key for routed model ${provider}/${modelId} from group \`${groupName}\`.`;
+export function buildModelGroupSetModelErrorNotification(groupName: string, provider: string, modelId: string, commandRef: string): string {
+	return `Cannot execute \`${commandRef}\`: failed to switch to routed model ${provider}/${modelId} from group \`${groupName}\`.`;
 }
 
 // ── Explicit Model Frontmatter Notifications ────────────────────────
@@ -153,6 +153,11 @@ export function buildThinkingFrontmatterNotification(level: ModelThinkingLevel, 
 /** Error notification when an explicit `model` frontmatter cannot be resolved. */
 export function buildModelFrontmatterErrorNotification(provider: string, modelId: string, commandRef: string, detail: string): string {
 	return `Cannot execute \`${commandRef}\`: model ${provider}/${modelId} ${detail}.`;
+}
+
+/** Error notification when model switch fails after validation. */
+export function buildModelFrontmatterSetModelErrorNotification(provider: string, modelId: string, commandRef: string): string {
+	return `Cannot execute \`${commandRef}\`: failed to switch to model ${provider}/${modelId}.`;
 }
 
 /** Error notification when an explicit `model` frontmatter has no API key. */

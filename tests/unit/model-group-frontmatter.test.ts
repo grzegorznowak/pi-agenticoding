@@ -739,18 +739,43 @@ test("unknown model in frontmatter blocks execution", async () => withTemp(async
 	}
 }));
 
-test("unauthenticated model in frontmatter blocks execution", async () => withTemp(async ({ cwd }) => {
+test("model switch failure blocks explicit model selection", async () => withTemp(async ({ cwd }) => {
 	const skillDir = await tmpDir();
 	try {
 		const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o" });
 		const pi = makeMockPI();
-		pi.setModel = async () => false as any; // Simulate auth failure
+		pi.setModel = async () => false as any; // Simulate setModel failure
 		const [inputHandler] = pi.handlers.get("input")!;
 		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
 		const { ctx, notifications } = makeNotifyCtx({
 			cwd,
 			model: mockModel("openai", "gpt-parent"),
 			modelRegistry: mockRegistry(),
+		});
+
+		pi.setCommands([makePromptCommand("review", filePath)]);
+		await sessionStartHandler({ reason: "load" }, ctx);
+		const result = await inputHandler({ text: "/review", source: "interactive" }, ctx);
+
+		assert.deepEqual(result, { action: "handled" });
+		assert.match(notifications.find((n) => n.level === "error")?.message ?? "", /failed to switch/);
+	} finally {
+		await rm(skillDir, { recursive: true, force: true });
+	}
+}));
+
+test("unauthenticated model in registry blocks explicit model selection", async () => withTemp(async ({ cwd }) => {
+	const skillDir = await tmpDir();
+	try {
+		const filePath = await writeSkillMd(skillDir, "review", { model: "openai/gpt-4o" });
+		const pi = makeMockPI();
+		const [inputHandler] = pi.handlers.get("input")!;
+		const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+		const { ctx, notifications } = makeNotifyCtx({
+			cwd,
+			model: mockModel("openai", "gpt-parent"),
+			// Model exists in registry but has no configured auth
+			modelRegistry: mockRegistry([mockModel("openai", "gpt-4o")], new Set()),
 		});
 
 		pi.setCommands([makePromptCommand("review", filePath)]);
@@ -902,7 +927,7 @@ test("setModel failures block explicit and group selection without success entri
 	for (const scenario of cases) {
 		const run = await runPromptInput(cwd, scenario.frontmatter, scenario.behavior);
 		assert.deepEqual(run.result, { action: "handled" });
-		assert.match(run.notifications.find((item) => item.level === "error")?.message ?? "", /no API key/);
+		assert.match(run.notifications.find((item) => item.level === "error")?.message ?? "", /failed to switch/);
 		assert.equal(hasModelSelectionEntry(run.pi), false);
 	}
 }));
