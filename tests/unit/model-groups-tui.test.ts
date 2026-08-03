@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, fuzzyFilter, visibleWidth } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent } from "../../model-groups/tui.js";
 import { ModelGroupsPersistenceError, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
-import { theme } from "./helpers.js";
+import { stripAnsi, theme } from "./helpers.js";
 import { group } from "./model-groups-helpers.js";
 
 function registry(): any {
@@ -23,12 +23,12 @@ function registry(): any {
 
 function boot(groups: ResolvedModelGroup[]): ModelGroupsBootValidation { return { groups, loadIssues: [] }; }
 
-function component(args: { groups?: ResolvedModelGroup[]; store?: any; notify?: (m: string, t?: any) => void; renderTheme?: any; policy?: "global-project" | "global-only" } = {}) {
+function component(args: { groups?: ResolvedModelGroup[]; store?: any; notify?: (m: string, t?: any) => void; renderTheme?: any; policy?: "global-project" | "global-only"; modelRegistry?: any } = {}) {
 	let renders = 0;
 	const c = createModelGroupsComponent(
 		{ requestRender: () => { renders++; } } as any,
 		args.renderTheme ?? theme,
-		registry(),
+		args.modelRegistry ?? registry(),
 		{ cwd: "/tmp/project", policy: args.policy ?? "global-project" },
 		() => {},
 		{ initialValidation: boot(args.groups ?? []), store: args.store, notify: args.notify },
@@ -40,15 +40,45 @@ const ENTER = "\r";
 const ESC = "\u001b";
 const ESC_KITTY = "\u001b[27u";
 const DOWN = "\u001b[B";
+const UP = "\u001b[A";
 const LEFT = "\u001b[D";
+const BACKSPACE = "\u007f";
 const LEFT_SS3 = "\u001bOD";
 
-function press(c: { handleInput?: (data: string) => void }, ...inputs: string[]): void {
-	for (const input of inputs) c.handleInput?.(input);
+function press(c: { handleInput?: (data: string) => void; render?: (width: number) => string[] }, ...inputs: string[]): void {
+	for (const input of inputs) {
+		c.render?.(100);
+		c.handleInput?.(input);
+		c.render?.(100);
+	}
 }
 
-function rendered(c: { render: (width: number) => string[] }): string {
-	return c.render(100).join("\n");
+function rendered(c: { render: (width: number) => string[] }, width = 100): string {
+	return c.render(width).join("\n");
+}
+
+function pressAndRender(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, ...inputs: string[]): void {
+	for (const input of inputs) {
+		c.render(100);
+		c.handleInput?.(input);
+		c.render(100);
+	}
+}
+
+function catalog(models: any[]): any {
+	return {
+		getAll: () => models,
+		getAvailable: () => models,
+		find: (provider: string, id: string) => models.find((model) => model.provider === provider && model.id === id),
+		hasConfiguredAuth: (model: any) => model.configuredAuth !== false,
+	};
+}
+
+function atSearchableModel(models: any[], store?: any) {
+	const c = component({ groups: [group("review", { scope: "project" })], modelRegistry: catalog(models), store }).c;
+	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, ENTER, ENTER);
+	assert.match(rendered(c), /Add model — Step 2\/3 Model/);
+	return c;
 }
 
 test("model groups TUI list renders validation summary, health tags, add row, no Validate row, and confirmed D delete", () => {
@@ -322,7 +352,7 @@ test("model groups TUI notifies and preserves model edit state when updateGroup 
 	assert.match(text, /Remove model/);
 });
 
-test("model groups TUI name edit commits through renameGroup on row-change and D in text input types literally", () => {
+test("model groups TUI renders name editing inline and preserves edit/commit transitions", () => {
 	let groups = [group("abc", { scope: "project" })];
 	const calls: string[] = [];
 	const store = {
@@ -330,19 +360,45 @@ test("model groups TUI name edit commits through renameGroup on row-change and D
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	c.handleInput?.("\r"); // open editor
-	c.handleInput?.("\u001b[B");
-	c.handleInput?.("\u001b[B"); // name row
-	c.handleInput?.("\r"); // focus name
-	c.handleInput?.("d");
-	assert.match(c.render(100).join("\n"), /> abcd/);
-	c.handleInput?.("\u001b[B"); // row-change flushes the pending rename before moving to + Add model
+	c.focused = true;
+	press(c, ENTER, DOWN, DOWN); // selected, inactive name row
+	let text = rendered(c);
+	assert.match(text, /→ Name: abc/);
+	assert.doesNotMatch(text, /(?:^|\n)> /);
+	assert.doesNotMatch(text, /\u001b\[7m/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
+
+	press(c, ENTER, "d"); // D remains literal while the input is active
+	text = rendered(c);
+	assert.match(text, /→ Name: abcd/);
+	assert.doesNotMatch(text, /(?:^|\n)> /);
+	assert.match(text, /\u001b\[7m/);
+	assert.equal(text.split(CURSOR_MARKER).length - 1, 1);
+
+	press(c, LEFT, BACKSPACE);
+	assert.match(stripAnsi(rendered(c)).replaceAll(CURSOR_MARKER, ""), /→ Name: abd/);
+	press(c, "c", ESC); // Escape commits and exits edit mode
 	assert.deepEqual(calls, ["abc->abcd"]);
-	const rendered = c.render(100).join("\n");
-	assert.match(rendered, /Model Group: abcd/);
-	assert.match(rendered, /→ \+ Add model/);
-	assert.doesNotMatch(rendered, /Name: abcd_/);
-	assert.doesNotMatch(rendered, /Delete Model Group/);
+	text = rendered(c);
+	assert.match(text, /Model Group: abcd/);
+	assert.match(text, /  Name: abcd/);
+	assert.doesNotMatch(text, /\u001b\[7m/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
+
+	press(c, DOWN, DOWN, ENTER, "e", ENTER); // Enter also commits and exits edit mode
+	assert.deepEqual(calls, ["abc->abcd", "abcd->abcde"]);
+	assert.match(rendered(c), /  Name: abcde/);
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+
+	press(c, DOWN, DOWN, ENTER, "f", DOWN); // row-change flushes the pending rename before moving
+	assert.deepEqual(calls, ["abc->abcd", "abcd->abcde", "abcde->abcdef"]);
+	text = rendered(c);
+	assert.match(text, /Model Group: abcdef/);
+	assert.match(text, /→ \+ Add model/);
+	assert.match(text, /Name: abcdef/);
+	assert.doesNotMatch(text, /\u001b\[7m/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
+	assert.doesNotMatch(text, /Delete Model Group/);
 });
 
 test("model groups TUI move, wizard add, model thinking, and remove persist through store calls", () => {
@@ -371,10 +427,13 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B"); // + add model
-	c.handleInput?.("\r"); // provider step
-	c.handleInput?.("\r"); // anthropic provider (sorted first)
-	c.handleInput?.("\r"); // claude model
-	c.handleInput?.("\r"); // inherit thinking
+	press(c, ENTER); // provider step
+	assert.match(rendered(c), /Step 1\/3 Provider/);
+	press(c, ENTER); // anthropic provider (sorted first)
+	assert.match(rendered(c), /Step 2\/3 Model/);
+	press(c, ENTER); // claude model
+	assert.match(rendered(c), /Step 3\/3 Thinking/);
+	press(c, ENTER); // inherit thinking
 	assert.match(calls.at(-1)!, /anthropic\/claude\/inherit/);
 
 	c.handleInput?.("\u001b[B");
@@ -409,13 +468,16 @@ test("model groups TUI notifies and keeps visible state on persistence errors", 
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\r");
 	c.handleInput?.("2");
-	c.handleInput?.("\r");
+	c.handleInput?.("\u001b"); // Escape preserves persistence-error handling and exits name input
 	assert.equal(messages.length, 1);
 	assert.match(messages[0], /save failed at temp-write for project scope/);
 	assert.match(messages[0], /source: \/tmp\/project\/\.pi\/pi-agenticoding\/model-groups\.json/);
 	assert.match(messages[0], /target: \/tmp\/project\/\.pi\/pi-agenticoding\/model-groups\.json\.123\.tmp/);
 	assert.match(messages[0], /collision/);
-	assert.match(c.render(100).join("\n"), /Model Group: review/);
+	const text = c.render(100).join("\n");
+	assert.match(text, /Model Group: review/);
+	assert.match(text, /→ Name: review/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
 });
 
 test("model groups TUI uses root Focusable propagation and MODEL_EDIT parent navigation", () => {
@@ -505,10 +567,11 @@ test("model groups TUI decodes then canonicalizes prototype-sensitive names and 
 		store: { renameGroup: () => malformedCalls.push("called"), listResolvedModelGroups: () => boot([group("abc", { scope: "project" })]) },
 		notify: (message) => notifications.push(message),
 	}).c;
-	press(malformed, ENTER, DOWN, DOWN, ENTER, "\\", ENTER);
+	press(malformed, ENTER, DOWN, DOWN, ENTER, "\\", ESC);
 	assert.deepEqual(malformedCalls, []);
 	assert.equal(notifications.length, 1);
-	assert.match(rendered(malformed), /abc/);
+	assert.match(rendered(malformed), /→ Name: abc/);
+	assert.equal(rendered(malformed).includes(CURSOR_MARKER), false);
 });
 
 test("model groups TUI keeps every screen width-bounded without wrapping logical rows", () => {
@@ -519,11 +582,30 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 		assert.equal(narrow.every((line) => visibleWidth(line) <= 12), true);
 	};
 	const longModel = { provider: "openai", modelId: "gpt-5", thinkingLevel: "max" as const };
-	const c = component({ groups: [group("a-very-long-group-name", { scope: "project", models: [longModel] })] }).c;
+	const c = component({ groups: [group("界e\u0301界-a-very-long-group-name", { scope: "project", models: [longModel] })] }).c;
 	assertScreen(c); // LIST
 	press(c, ENTER);
 	assertScreen(c); // EDITOR
-	press(c, DOWN, DOWN, DOWN, ENTER);
+	c.focused = true;
+	press(c, DOWN, DOWN); // inactive group-name row
+	const inactiveWideCount = c.render(200).length;
+	for (const width of [1, 2, 12]) {
+		const lines = c.render(width);
+		assert.equal(lines.length, inactiveWideCount);
+		assert.equal(lines.every((line) => visibleWidth(line) <= width), true);
+		assert.equal(lines.join("\n").includes(CURSOR_MARKER), false);
+		if (width === 12) assert.match(stripAnsi(lines.join("\n")), /界e\u0301/);
+	}
+	press(c, ENTER, "\u0001"); // active group-name input with cursor at line start
+	const activeWideCount = c.render(200).length;
+	for (const width of [1, 2, 12]) {
+		const lines = c.render(width);
+		assert.equal(lines.length, activeWideCount);
+		assert.equal(lines.every((line) => visibleWidth(line) <= width), true);
+		assert.equal(lines.join("\n").includes(CURSOR_MARKER), true);
+		if (width === 12) assert.match(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, ""), /界e\u0301/);
+	}
+	press(c, DOWN, ENTER);
 	assertScreen(c); // MODEL_EDIT
 	press(c, ESC, DOWN, DOWN, DOWN, DOWN, ENTER);
 	assertScreen(c); // WIZARD_PROVIDER
@@ -534,6 +616,292 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 	const deletion = component({ groups: [group("a-very-long-group-name", { scope: "project", models: [longModel] })] }).c;
 	press(deletion, "D");
 	assertScreen(deletion); // DELETE_CONFIRM
+});
+
+test("model groups TUI searchable Model step filters raw fields and handles no matches safely", () => {
+	const models = [
+		{ provider: "openai", id: "alpha-id", name: "Friendly Name", reasoning: true },
+		{ provider: "openai", id: "beta-id", name: "Other", reasoning: true },
+		{ provider: "openai", id: "hidden", name: "Unauthorized", reasoning: true, configuredAuth: false },
+		{ provider: "other", id: "foreign", name: "Friendly Name", reasoning: true },
+	];
+	const c = atSearchableModel(models);
+	assert.match(rendered(c), /→ openai\/alpha-id/);
+	assert.match(rendered(c), /beta-id/);
+	assert.doesNotMatch(rendered(c), /hidden|foreign/);
+
+	for (const query of ["alpha-id", "openai/alpha-id", "Friendly"]) {
+		const queried = atSearchableModel(models);
+		pressAndRender(queried, ...query);
+		assert.match(rendered(queried), /alpha-id/);
+		assert.doesNotMatch(rendered(queried), /beta-id/);
+	}
+	const providerQuery = atSearchableModel(models);
+	pressAndRender(providerQuery, ..."openai");
+	assert.match(rendered(providerQuery), /alpha-id/);
+	assert.match(rendered(providerQuery), /beta-id/);
+
+	pressAndRender(c, ..."Friendly impossible");
+	assert.match(rendered(c), /No matching models/);
+	const before = rendered(c);
+	pressAndRender(c, UP, DOWN, ENTER);
+	assert.equal(rendered(c), before);
+});
+
+test("model groups TUI fuzzy search excludes synthetic provider-space-id matches", () => {
+	const model = { provider: "abc", id: "xyz", name: "", reasoning: true };
+	const query = "azaz";
+	const approvedFields = fuzzyFilter([model], query, (candidate) => [
+		candidate.id,
+		candidate.provider,
+		`${candidate.provider}/${candidate.id}`,
+		candidate.name,
+	].join(" "));
+	const withSyntheticProviderSpaceId = fuzzyFilter([model], query, (candidate) => [
+		candidate.id,
+		candidate.provider,
+		`${candidate.provider}/${candidate.id}`,
+		`${candidate.provider} ${candidate.id}`,
+		candidate.name,
+	].join(" "));
+	assert.equal(approvedFields.length, 0);
+	assert.equal(withSyntheticProviderSpaceId.length, 1);
+
+	const c = atSearchableModel([model]);
+	pressAndRender(c, ...query);
+	assert.match(rendered(c), /No matching models/);
+	assert.doesNotMatch(rendered(c), /→ abc\/xyz/);
+});
+
+test("model groups TUI handles Model activation immediately after Provider transition without rendering", () => {
+	let groups = [group("review", { scope: "project" })];
+	const persisted: any[] = [];
+	const store = {
+		updateGroup: (_scope: string, _access: any, name: string, def: any) => {
+			persisted.push(def.models.at(-1));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const models = Array.from({ length: 2 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
+	const c = component({ groups, modelRegistry: catalog(models), store }).c;
+	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, ENTER);
+	assert.match(rendered(c), /Add model — Step 1\/3 Provider/);
+
+	for (const input of [ENTER, ENTER]) c.handleInput?.(input);
+	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	pressAndRender(c, ENTER);
+	assert.deepEqual(persisted, [{ provider: "openai", modelId: "model-0" }]);
+});
+
+test("model groups TUI replaces Thinking control with Model control before rendering the back-step", () => {
+	let groups = [group("review", { scope: "project" })];
+	const persisted: any[] = [];
+	const store = {
+		updateGroup: (_scope: string, _access: any, name: string, def: any) => {
+			persisted.push(def.models.at(-1));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
+	const c = atSearchableModel(models, store);
+	pressAndRender(c, ENTER);
+	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+
+	for (const input of [LEFT, DOWN, ENTER]) c.handleInput?.(input);
+	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	pressAndRender(c, ENTER);
+	assert.deepEqual(persisted, [{ provider: "openai", modelId: "model-1" }]);
+});
+
+test("model groups TUI keeps Model selection live across rapid query, navigation, and selection before render", () => {
+	let groups = [group("review", { scope: "project" })];
+	const persisted: any[] = [];
+	const store = {
+		updateGroup: (_scope: string, _access: any, name: string, def: any) => {
+			persisted.push(def.models.at(-1));
+			groups = [group(name, { scope: "project", models: def.models })];
+		},
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const models = Array.from({ length: 3 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
+	const c = atSearchableModel(models, store);
+
+	for (const input of ["m", "o", "d", "e", "l", DOWN, ENTER]) c.handleInput?.(input);
+	assert.match(rendered(c), /Add model — Step 3\/3 Thinking/);
+	pressAndRender(c, ENTER);
+	assert.deepEqual(persisted, [{ provider: "openai", modelId: "model-1" }]);
+});
+
+test("model groups TUI Model SelectList keeps all results behind a ten-row viewport and owns wrapping", () => {
+	const models = Array.from({ length: 12 }, (_, index) => ({ provider: "openai", id: `model-${String(index).padStart(2, "0")}`, reasoning: true }));
+	const c = atSearchableModel(models);
+	let text = rendered(c);
+	assert.match(text, /model-00/);
+	assert.match(text, /model-09/);
+	assert.doesNotMatch(text, /model-10|model-11/);
+	assert.match(text, /\(1\/12\)/);
+
+	pressAndRender(c, UP);
+	text = rendered(c);
+	assert.match(text, /→ openai\/model-11/);
+	assert.match(text, /\(12\/12\)/);
+	pressAndRender(c, DOWN);
+	assert.match(rendered(c), /→ openai\/model-00/);
+	pressAndRender(c, ...Array(10).fill(DOWN));
+	assert.match(rendered(c), /→ openai\/model-10/);
+});
+
+test("model groups TUI Model Input directly proves every nonempty, cursor-start, empty, and Esc branch", () => {
+	const models = Array.from({ length: 4 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: true }));
+
+	const cursorMiddle = atSearchableModel(models);
+	pressAndRender(cursorMiddle, ..."model", DOWN, DOWN, LEFT);
+	assert.match(rendered(cursorMiddle), /Add model — Step 2\/3 Model/);
+	assert.match(rendered(cursorMiddle), /→ openai\/model-2/); // Left moved only the Input cursor.
+	pressAndRender(cursorMiddle, BACKSPACE);
+	assert.match(rendered(cursorMiddle), /→ openai\/model-0/); // A real middle-of-query mutation resets selection.
+
+	for (const key of [LEFT, BACKSPACE]) {
+		const cursorStart = atSearchableModel(models);
+		pressAndRender(cursorStart, ..."model", ...Array(5).fill(LEFT), DOWN, DOWN, key);
+		assert.match(rendered(cursorStart), /→ openai\/model-2/); // Cursor-start key left query and selection unchanged.
+		assert.match(rendered(cursorStart), /Add model — Step 2\/3 Model/);
+	}
+
+	const oneCharacter = atSearchableModel(models);
+	pressAndRender(oneCharacter, "m", BACKSPACE);
+	assert.match(rendered(oneCharacter), /Add model — Step 2\/3 Model/);
+	assert.match(rendered(oneCharacter), /openai\/model-3/); // The now-empty query exposes the full set.
+	pressAndRender(oneCharacter, BACKSPACE);
+	assert.match(rendered(oneCharacter), /Step 1\/3 Provider/);
+
+	for (const key of [LEFT, BACKSPACE]) {
+		const emptyQuery = atSearchableModel(models);
+		pressAndRender(emptyQuery, key);
+		assert.match(rendered(emptyQuery), /Step 1\/3 Provider/);
+	}
+	for (const query of ["", "m"]) {
+		const escaped = atSearchableModel(models);
+		pressAndRender(escaped, ...query, ESC);
+		assert.match(rendered(escaped), /Step 1\/3 Provider/);
+	}
+});
+
+test("model groups TUI directly proves query preservation and every abandonment, completion, exit, and reopen clear boundary", () => {
+	let groups = [group("review", { scope: "project" })];
+	const models = [{ provider: "openai", id: "search-target", reasoning: true }];
+	const store = {
+		updateGroup: (_scope: string, _access: any, name: string, def: any) => { groups = [group(name, { scope: "project", models: def.models })]; },
+		listResolvedModelGroups: () => boot(groups),
+	};
+
+	const thinkingBack = atSearchableModel(models, store);
+	pressAndRender(thinkingBack, ..."target", ENTER, LEFT);
+	assert.match(rendered(thinkingBack), /Step 2\/3 Model/);
+	assert.match(rendered(thinkingBack), /> target/);
+
+	const abandonedAndExited = atSearchableModel(models, store);
+	pressAndRender(abandonedAndExited, ..."target", ESC);
+	assert.match(rendered(abandonedAndExited), /Step 1\/3 Provider/);
+	pressAndRender(abandonedAndExited, ESC);
+	assert.match(rendered(abandonedAndExited), /Model Group: review/);
+	pressAndRender(abandonedAndExited, ...Array(4).fill(DOWN), ENTER, ENTER);
+	assert.match(rendered(abandonedAndExited), /Step 2\/3 Model/);
+	assert.doesNotMatch(rendered(abandonedAndExited), /> target/);
+
+	const completedAndReopened = atSearchableModel(models, store);
+	pressAndRender(completedAndReopened, ..."target", ENTER, ENTER);
+	assert.match(rendered(completedAndReopened), /Model Group: review/);
+	pressAndRender(completedAndReopened, ...Array(4).fill(DOWN), ENTER, ENTER);
+	assert.match(rendered(completedAndReopened), /Step 2\/3 Model/);
+	assert.doesNotMatch(rendered(completedAndReopened), /> target/);
+});
+
+test("model groups TUI persists exact raw identity from both filtered/reordered and offscreen selections", () => {
+	let groups = [group("review", { scope: "project" })];
+	const persisted: any[] = [];
+	const store = {
+		updateGroup: (_scope: string, _access: any, name: string, def: any) => { persisted.push(def.models.at(-1)); groups = [group(name, { scope: "project", models: def.models })]; },
+		listResolvedModelGroups: () => boot(groups),
+	};
+
+	const filteredModels = [
+		{ provider: "raw-provider", id: "z-last\u001b", name: "needle exact", reasoning: false },
+		{ provider: "raw-provider", id: "a-first", name: "unrelated", reasoning: false },
+	];
+	const filtered = atSearchableModel(filteredModels, store);
+	pressAndRender(filtered, ..."needle", ENTER, ENTER);
+	assert.deepEqual(persisted[0], { provider: "raw-provider", modelId: "z-last\u001b" });
+
+	const offscreenModels = Array.from({ length: 12 }, (_, index) => ({ provider: "raw-provider", id: `raw/${String(index).padStart(2, "0")}\u001b`, name: `match ${index}`, reasoning: false }));
+	const offscreen = atSearchableModel(offscreenModels, store);
+	pressAndRender(offscreen, ..."match", ...Array(11).fill(DOWN), ENTER, ENTER);
+	assert.deepEqual(persisted[1], { provider: "raw-provider", modelId: "raw/11\u001b" });
+});
+
+test("model groups TUI directly proves every non-Model screen remains search-free and uncapped", () => {
+	const models = Array.from({ length: 12 }, (_, index) => ({ provider: `provider-${String(index).padStart(2, "0")}`, id: "only-model", reasoning: true }));
+	const existingModels = models.map((model) => ({ provider: model.provider, modelId: model.id }));
+	const groups = Array.from({ length: 12 }, (_, index) => group(`group-${String(index).padStart(2, "0")}`, { scope: "project", models: index === 0 ? existingModels : [] }));
+	const c = component({ groups, modelRegistry: catalog(models) }).c;
+	c.focused = true;
+	assert.match(rendered(c), /group-11/); // LIST retains its full native viewport.
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	pressAndRender(c, ENTER);
+	assert.match(rendered(c), /provider-11\/only-model/); // EDITOR remains uncapped.
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	pressAndRender(c, DOWN, DOWN, DOWN, ENTER);
+	assert.match(rendered(c), /Edit model/); // MODEL_EDIT.
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	pressAndRender(c, ESC, ...Array(20).fill(DOWN), ENTER);
+	let text = rendered(c);
+	assert.match(text, /Step 1\/3 Provider/); // WIZARD_PROVIDER remains uncapped.
+	assert.match(text, /provider-11/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
+	pressAndRender(c, ENTER);
+	assert.equal(rendered(c).includes(CURSOR_MARKER), true); // Search exists only on WIZARD_MODEL.
+	pressAndRender(c, ENTER);
+	assert.match(rendered(c), /Step 3\/3 Thinking/); // WIZARD_THINKING.
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+
+	const deletion = component({ groups: [groups[0]], modelRegistry: catalog(models) }).c;
+	deletion.focused = true;
+	pressAndRender(deletion, "D");
+	assert.match(rendered(deletion), /Delete Model Group/); // DELETE_CONFIRM.
+	assert.equal(rendered(deletion).includes(CURSOR_MARKER), false);
+});
+
+test("model groups TUI focus follows root loss and Model, Thinking, Provider screen transitions", () => {
+	const models = [{ provider: "openai", id: "model", reasoning: true }];
+	const c = atSearchableModel(models);
+	c.focused = true;
+	assert.equal(rendered(c).includes(CURSOR_MARKER), true);
+	c.focused = false;
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	c.focused = true;
+	assert.equal(rendered(c).includes(CURSOR_MARKER), true);
+	pressAndRender(c, ENTER);
+	assert.match(rendered(c), /Step 3\/3 Thinking/);
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+	pressAndRender(c, LEFT);
+	assert.equal(rendered(c).includes(CURSOR_MARKER), true);
+	pressAndRender(c, ESC);
+	assert.match(rendered(c), /Step 1\/3 Provider/);
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+});
+
+test("model groups TUI focuses the searchable Model Input only on the focused Model screen and keeps rendering safe", () => {
+	const models = [{ provider: "openai\u001b[31m", id: "a-very-long-model-id\nline", name: "find-me", reasoning: true }];
+	const c = atSearchableModel(models);
+	c.focused = true;
+	let text = rendered(c, 18);
+	assert.equal(text.includes(CURSOR_MARKER), true);
+	assert.equal(c.render(18).every((line) => visibleWidth(line) <= 18), true);
+	assert.doesNotMatch(text, /\u001b\[31m.*a-very/);
+	pressAndRender(c, ESC);
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
 });
 
 test("model groups TUI persistence notifications escape each hostile dynamic field", () => {
