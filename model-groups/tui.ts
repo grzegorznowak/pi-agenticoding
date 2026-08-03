@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel, type Api } from "@earendil-works/pi-ai";
-import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, truncateToWidth, type Component, type Focusable, type SelectItem, type TUI } from "@earendil-works/pi-tui";
+import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type TUI } from "@earendil-works/pi-tui";
 import {
 	createGroup,
 	deleteGroup,
@@ -420,6 +420,26 @@ export function createModelGroupsComponent(
 		return { render: () => [value], invalidate: () => {} };
 	}
 
+	function groupNameLineComponent(): Component {
+		return {
+			render: (width: number) => {
+				if (width <= 0) return [""];
+				const selected = state.row === nameRow();
+				const prefix = selectableLine(selected, "Name:", " ");
+				if (state.activeTextInput !== "group-name") {
+					return [truncateToWidth(`${prefix}${groupNameInput.getValue()}`, width, "")];
+				}
+
+				const clippedPrefix = truncateToWidth(prefix, Math.max(0, width - 1), "");
+				const remainingWidth = width - visibleWidth(clippedPrefix);
+				const inputLine = groupNameInput.render(remainingWidth + 2)[0] ?? "";
+				const inputWithoutPrompt = inputLine.startsWith("> ") ? inputLine.slice(2) : inputLine;
+				return [truncateToWidth(`${clippedPrefix}${inputWithoutPrompt}`, width, "")];
+			},
+			invalidate: () => groupNameInput.invalidate(),
+		};
+	}
+
 	const selectTheme = {
 		selectedPrefix: (text: string) => theme.fg("accent", text),
 		selectedText: (text: string) => theme.fg("accent", text),
@@ -488,8 +508,7 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(theme.fg("accent", `Model Group: ${escapeDisplayLabel(current?.name ?? "")}`)));
 		if (access.policy === "global-project") container.addChild(textLine(selectableLine(state.row === 0, "Location: project", state.editScope === "project" ? " ✓" : "")));
 		container.addChild(textLine(selectableLine(state.row === (access.policy === "global-project" ? 1 : 0), "Location: global", state.editScope === "global" ? " ✓" : "")));
-		container.addChild(textLine(selectableLine(state.row === nameRow(), "Name:")));
-		container.addChild(groupNameInput);
+		container.addChild(groupNameLineComponent());
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
 			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { CURSOR_MARKER, fuzzyFilter, visibleWidth } from "@earendil-works/pi-tui";
 import { createModelGroupsComponent } from "../../model-groups/tui.js";
 import { ModelGroupsPersistenceError, type ModelGroupsBootValidation, type ResolvedModelGroup } from "../../model-groups/types.js";
-import { theme } from "./helpers.js";
+import { stripAnsi, theme } from "./helpers.js";
 import { group } from "./model-groups-helpers.js";
 
 function registry(): any {
@@ -352,7 +352,7 @@ test("model groups TUI notifies and preserves model edit state when updateGroup 
 	assert.match(text, /Remove model/);
 });
 
-test("model groups TUI name edit commits through renameGroup on row-change and D in text input types literally", () => {
+test("model groups TUI renders name editing inline and preserves edit/commit transitions", () => {
 	let groups = [group("abc", { scope: "project" })];
 	const calls: string[] = [];
 	const store = {
@@ -360,19 +360,45 @@ test("model groups TUI name edit commits through renameGroup on row-change and D
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	c.handleInput?.("\r"); // open editor
-	c.handleInput?.("\u001b[B");
-	c.handleInput?.("\u001b[B"); // name row
-	c.handleInput?.("\r"); // focus name
-	c.handleInput?.("d");
-	assert.match(c.render(100).join("\n"), /> abcd/);
-	c.handleInput?.("\u001b[B"); // row-change flushes the pending rename before moving to + Add model
+	c.focused = true;
+	press(c, ENTER, DOWN, DOWN); // selected, inactive name row
+	let text = rendered(c);
+	assert.match(text, /→ Name: abc/);
+	assert.doesNotMatch(text, /(?:^|\n)> /);
+	assert.doesNotMatch(text, /\u001b\[7m/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
+
+	press(c, ENTER, "d"); // D remains literal while the input is active
+	text = rendered(c);
+	assert.match(text, /→ Name: abcd/);
+	assert.doesNotMatch(text, /(?:^|\n)> /);
+	assert.match(text, /\u001b\[7m/);
+	assert.equal(text.split(CURSOR_MARKER).length - 1, 1);
+
+	press(c, LEFT, BACKSPACE);
+	assert.match(stripAnsi(rendered(c)).replaceAll(CURSOR_MARKER, ""), /→ Name: abd/);
+	press(c, "c", ESC); // Escape commits and exits edit mode
 	assert.deepEqual(calls, ["abc->abcd"]);
-	const rendered = c.render(100).join("\n");
-	assert.match(rendered, /Model Group: abcd/);
-	assert.match(rendered, /→ \+ Add model/);
-	assert.doesNotMatch(rendered, /Name: abcd_/);
-	assert.doesNotMatch(rendered, /Delete Model Group/);
+	text = rendered(c);
+	assert.match(text, /Model Group: abcd/);
+	assert.match(text, /  Name: abcd/);
+	assert.doesNotMatch(text, /\u001b\[7m/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
+
+	press(c, DOWN, DOWN, ENTER, "e", ENTER); // Enter also commits and exits edit mode
+	assert.deepEqual(calls, ["abc->abcd", "abcd->abcde"]);
+	assert.match(rendered(c), /  Name: abcde/);
+	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
+
+	press(c, DOWN, DOWN, ENTER, "f", DOWN); // row-change flushes the pending rename before moving
+	assert.deepEqual(calls, ["abc->abcd", "abcd->abcde", "abcde->abcdef"]);
+	text = rendered(c);
+	assert.match(text, /Model Group: abcdef/);
+	assert.match(text, /→ \+ Add model/);
+	assert.match(text, /Name: abcdef/);
+	assert.doesNotMatch(text, /\u001b\[7m/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
+	assert.doesNotMatch(text, /Delete Model Group/);
 });
 
 test("model groups TUI move, wizard add, model thinking, and remove persist through store calls", () => {
@@ -442,13 +468,16 @@ test("model groups TUI notifies and keeps visible state on persistence errors", 
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\r");
 	c.handleInput?.("2");
-	c.handleInput?.("\r");
+	c.handleInput?.("\u001b"); // Escape preserves persistence-error handling and exits name input
 	assert.equal(messages.length, 1);
 	assert.match(messages[0], /save failed at temp-write for project scope/);
 	assert.match(messages[0], /source: \/tmp\/project\/\.pi\/pi-agenticoding\/model-groups\.json/);
 	assert.match(messages[0], /target: \/tmp\/project\/\.pi\/pi-agenticoding\/model-groups\.json\.123\.tmp/);
 	assert.match(messages[0], /collision/);
-	assert.match(c.render(100).join("\n"), /Model Group: review/);
+	const text = c.render(100).join("\n");
+	assert.match(text, /Model Group: review/);
+	assert.match(text, /→ Name: review/);
+	assert.equal(text.includes(CURSOR_MARKER), false);
 });
 
 test("model groups TUI uses root Focusable propagation and MODEL_EDIT parent navigation", () => {
@@ -538,10 +567,11 @@ test("model groups TUI decodes then canonicalizes prototype-sensitive names and 
 		store: { renameGroup: () => malformedCalls.push("called"), listResolvedModelGroups: () => boot([group("abc", { scope: "project" })]) },
 		notify: (message) => notifications.push(message),
 	}).c;
-	press(malformed, ENTER, DOWN, DOWN, ENTER, "\\", ENTER);
+	press(malformed, ENTER, DOWN, DOWN, ENTER, "\\", ESC);
 	assert.deepEqual(malformedCalls, []);
 	assert.equal(notifications.length, 1);
-	assert.match(rendered(malformed), /abc/);
+	assert.match(rendered(malformed), /→ Name: abc/);
+	assert.equal(rendered(malformed).includes(CURSOR_MARKER), false);
 });
 
 test("model groups TUI keeps every screen width-bounded without wrapping logical rows", () => {
@@ -552,11 +582,30 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 		assert.equal(narrow.every((line) => visibleWidth(line) <= 12), true);
 	};
 	const longModel = { provider: "openai", modelId: "gpt-5", thinkingLevel: "max" as const };
-	const c = component({ groups: [group("a-very-long-group-name", { scope: "project", models: [longModel] })] }).c;
+	const c = component({ groups: [group("界e\u0301界-a-very-long-group-name", { scope: "project", models: [longModel] })] }).c;
 	assertScreen(c); // LIST
 	press(c, ENTER);
 	assertScreen(c); // EDITOR
-	press(c, DOWN, DOWN, DOWN, ENTER);
+	c.focused = true;
+	press(c, DOWN, DOWN); // inactive group-name row
+	const inactiveWideCount = c.render(200).length;
+	for (const width of [1, 2, 12]) {
+		const lines = c.render(width);
+		assert.equal(lines.length, inactiveWideCount);
+		assert.equal(lines.every((line) => visibleWidth(line) <= width), true);
+		assert.equal(lines.join("\n").includes(CURSOR_MARKER), false);
+		if (width === 12) assert.match(stripAnsi(lines.join("\n")), /界e\u0301/);
+	}
+	press(c, ENTER, "\u0001"); // active group-name input with cursor at line start
+	const activeWideCount = c.render(200).length;
+	for (const width of [1, 2, 12]) {
+		const lines = c.render(width);
+		assert.equal(lines.length, activeWideCount);
+		assert.equal(lines.every((line) => visibleWidth(line) <= width), true);
+		assert.equal(lines.join("\n").includes(CURSOR_MARKER), true);
+		if (width === 12) assert.match(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, ""), /界e\u0301/);
+	}
+	press(c, DOWN, ENTER);
 	assertScreen(c); // MODEL_EDIT
 	press(c, ESC, DOWN, DOWN, DOWN, DOWN, ENTER);
 	assertScreen(c); // WIZARD_PROVIDER
