@@ -6,7 +6,7 @@ import {
 	buildReadonlyBashBlockReason,
 	buildReadonlyPackageManagerBlockReason,
 	READONLY_INVALID_BASH_COMMAND_REASON,
-} from "./readonly-copy.js";
+} from "./notifications.js";
 import { resolveRealPath } from "./resolve-path.js";
 import { TEMP_DIR } from "./temp-dir.js";
 

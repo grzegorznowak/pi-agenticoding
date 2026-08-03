@@ -7,7 +7,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { normalizeContextPercent } from "./handoff/eligibility.js";
-import { READONLY_HANDOFF_TRIGGER } from "./readonly-copy.js";
+import { READONLY_HANDOFF_TRIGGER } from "./notifications.js";
 import type { AgenticodingState } from "./state.js";
 
 // ── TUI status / widget keys ─────────────────────────────────────────

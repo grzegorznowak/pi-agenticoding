@@ -63,7 +63,7 @@ import {
 	buildReadonlyDisabledContextSuffix,
 	buildReadonlyFrontmatterNotification,
 	buildReadonlyTopicBoundaryNotification,
-} from "./readonly-copy.js";
+} from "./notifications.js";
 import { clampThinkingLevel, type Api, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { registerSpawnTool } from "./spawn/index.js";
 import { registerModelGroupsCommand } from "./model-groups/command.js";

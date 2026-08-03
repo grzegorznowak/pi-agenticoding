@@ -1,8 +1,8 @@
 /**
- * Shared readonly-mode copy.
+ * Shared notification copy.
  *
- * Keep reusable readonly wording here so tool blocks, nudges, TUI, and handoff
- * prompts stay aligned.
+ * Keep reusable notification wording here so tool blocks, nudges, TUI, handoff
+ * prompts, and model-selection messages stay aligned.
  */
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";

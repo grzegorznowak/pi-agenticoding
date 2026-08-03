@@ -11,7 +11,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isHandoffEligible } from "./handoff/eligibility.js";
 import { HANDOFF_REQUIRED_STATUS } from "./handoff/copy.js";
-import { buildReadonlyBoundaryPromotionNotification } from "./readonly-copy.js";
+import { buildReadonlyBoundaryPromotionNotification } from "./notifications.js";
 import type { AgenticodingState } from "./state.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 

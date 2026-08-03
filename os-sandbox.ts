@@ -19,7 +19,7 @@ import path from "node:path";
 import {
 	READONLY_SANDBOX_BLOCK_NOTICE,
 	buildReadonlySandboxPathError,
-} from "./readonly-copy.js";
+} from "./notifications.js";
 import { TEMP_DIR } from "./temp-dir.js";
 import { resolveRealPath } from "./resolve-path.js";
 

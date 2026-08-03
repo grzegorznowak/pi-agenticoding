@@ -1,5 +1,5 @@
 /**
- * Smoke tests for readonly-copy.ts constants.
+ * Smoke tests for notifications.ts constants.
  *
  * Verifies the composition chain integrity — a typo in a base constant
  * would cascade to downstream constants. These tests catch that cheaply.
@@ -52,7 +52,7 @@ import {
 	buildReadonlyRequestedHandoffContinuation,
 	buildReadonlyHandoffWaitNotice,
 	buildReadonlyHandoffCommandNotice,
-} from "../../readonly-copy.js";
+} from "../../notifications.js";
 
 const allConstants = {
 	READONLY_BASH_SCOPE,
