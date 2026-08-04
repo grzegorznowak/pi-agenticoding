@@ -216,10 +216,10 @@ export function registerHandoffTool(
 			"AFTER HANDOFF the agent sees: the handoff prompt and the current notebook with optional pages discarded\n",
 		promptSnippet: "Pivot to a new topic via deliberate handoff compaction",
 		promptGuidelines: [
-			"Before handoff, promote any missing knowledge that the next context will need to the notebook. " +
-				"Then draft a concise but sufficiently detailed prompt for the next clean context. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the prompt or user direction.",
-			"Use discardPages to remove notebook pages that are obsolete and will not be needed again. " +
-				"Pages merely irrelevant to the next task may still be needed when returning to the original topic.",
+			"Before handoff, save durable reusable knowledge to the notebook. " +
+				"Then draft a concise but sufficiently detailed prompt that explicitly carries current state, blockers, and next steps. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the prompt or user direction.",
+			"Prune with discardPages: pages holding only recoverable code facts are discardable; " +
+				"keep and refresh user guidance, decisions, design, and task scope.",
 		],
 
 		executionMode: "sequential",
@@ -230,14 +230,16 @@ export function registerHandoffTool(
 					"What to do next. A concise but sufficiently detailed handoff prompt.\n" +
 					"This becomes the FIRST thing the agent sees after handoff. Capture anything the next context " +
 					"will need that's not included in the notebook.\n" +
-					"The notebook is the long-term knowledge store; this prompt should carry only the remaining situational information.",
+					"The notebook holds reusable knowledge for this stream: user guidance, decisions, " +
+					"design, constraints — plus code facts that are recoverable and discardable. " +
+					"This prompt should explicitly carry current state, blockers, unresolved questions, failed paths worth avoiding, and next steps.",
 			}),
 			discardPages: Type.Optional(Type.Array(Type.String({
 				description: "A notebook page name to discard.",
 			}), {
 				description:
-					"Notebook page names to permanently remove during this handoff. " +
-					"Use to remove pages that are obsolete and will not be needed again; pages merely irrelevant to the next task may still be needed when returning to the original topic.",
+					"Notebook page names to discard during this handoff. " +
+					"Discard pages holding only recoverable code facts; keep non-recoverable knowledge (user guidance, decisions, design, task scope) unless superseded.",
 			})),
 		}),
 

@@ -23,9 +23,9 @@ const notebookWriteParams = Type.Object({
 	}),
 	content: Type.String({
 		description:
-			"Compact markdown for one notebook page. Capture only durable, high-value " +
-			"memory for one subject or thread, such as facts, architecture, decisions, constraints, " +
-			"open questions, or expensive discoveries. Compact sections like Facts / Architecture / Decisions / Constraints / Open questions work well. Truncated at 50KB / 2000 lines.",
+			"Compact markdown for one notebook page. Capture only high-value knowledge for the current " +
+			"work stream (user guidance, decisions, design, constraints); keep re-derivable code facts minimal. " +
+			"Compact sections like Facts / Architecture / Decisions / Constraints / Open questions work well. Truncated at 50KB / 2000 lines.",
 	}),
 });
 
@@ -73,10 +73,11 @@ export function createNotebookToolDefinitions(
 			"Always returns the current list of up to date pages.",
 		...(withHints
 			? {
-					promptSnippet: "Write or refine a compact durable notebook page",
+					promptSnippet: "Write or refine a compact notebook page",
 					promptGuidelines: [
 						"Reuse or refine an existing page when possible.",
 						"Prefer stable subject-oriented pages over workflow-phase pages.",
+						"Don't hoard re-derivable code facts; store what can't be recovered from code (user guidance, decisions, design, scope).",
 						"Write for a fresh context: keep reusable facts, architecture, decisions, constraints, expensive discoveries, and durable open questions.",
 						"Avoid transient task state, scratch reasoning, transcripts, logs, or large tool output; the immediate next task belongs in handoff.",
 					],

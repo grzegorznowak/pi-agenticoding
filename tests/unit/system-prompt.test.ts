@@ -24,8 +24,8 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 
 	assert.match(notebookSection, /notebook_index/);
 	assert.match(notebookSection, /notebook_read/);
-	assert.match(notebookSection, /future contexts/i);
-	assert.match(notebookSection, /durable cross-context memory/i);
+	assert.match(notebookSection, /fresh context/i);
+	assert.match(notebookSection, /two-tier cache/i);
 	assert.match(notebookSection, /shared memory/i);
 	assert.doesNotMatch(notebookSection, /durable cross-context grounding/i);
 	assert.match(topicSection, /semantic frame/i);
@@ -37,11 +37,18 @@ test("CONTEXT_PRIMER states the notebook, topic, and handoff contracts", () => {
 	assert.match(CONTEXT_PRIMER, /When the ask no longer matches the topic, call the handoff tool\./i);
 	assert.match(rulesSection, /one subject, thread, or subsystem/i);
 	assert.match(handoffSection, /situational context/i);
+	assert.match(rulesSection, /non-recoverable knowledge/i,
+		"rules must specify what the notebook must hold before handoff");
+	assert.match(rulesSection, /current state, blockers, and next steps/i,
+		"rules must explicitly list what the prompt carries");
+	assert.doesNotMatch(rulesSection, /remaining situational context/i,
+		"replaced with explicit list of what the prompt carries");
 	assert.match(rulesSection, /Keep pages compact/i);
-	assert.match(rulesSection, /handoff.*scan.*notebook_index/i);
+	assert.match(rulesSection, /handoff.*verify all important findings are persisted/i,
+		"rules must require verifying all important findings are persisted before handoff");
 	assert.match(rulesSection, /chaining handoffs/i);
-	assert.match(handoffSection, /discardPages/i);
-	assert.match(handoffSection, /only when the handoff compaction succeeds/i);
+	assert.match(rulesSection, /discard pages holding only recoverable code facts/i,
+		"rules must explain when notebook pages may be deleted during handoff");
 	assert.match(CONTEXT_PRIMER, /overlong child output is truncated/i);
 });
 

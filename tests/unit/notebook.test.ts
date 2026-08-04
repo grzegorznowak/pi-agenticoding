@@ -665,7 +665,7 @@ test("notebook tool definitions include prompt hints when withPromptHints is tru
 
 	// Conceptual: descriptions mention the notebook-page metaphor and durable memory contract
 	assert.match(notebookWrite.description, /page|future contexts/i);
-	assert.match(JSON.stringify(notebookWrite.parameters), /durable, high-value memory/i);
+	assert.match(JSON.stringify(notebookWrite.parameters), /high-value knowledge/i);
 	assert.doesNotMatch(JSON.stringify(notebookWrite.parameters), /grounding/i);
 	assert.match(notebookRead.description, /notebook page|page/i);
 	assert.match(notebookIndex.description, /notebook index|index/i);

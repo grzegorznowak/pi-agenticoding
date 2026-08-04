@@ -28,12 +28,12 @@ with their own context and the same authority. You receive only condensed
 results; overlong child output is truncated, so ask for concise summaries. Your
 context stays at orchestration level. Siblings run in parallel.
 
-### Notebook — durable cross-context memory
-Treat the notebook as durable memory for future contexts. Each page covers
-one subject, thread, or subsystem. Prefer refining a few living pages organized
-by subject rather than workflow phase. Store only reusable knowledge worth
-carrying across resets: verified facts, architecture learned, decisions and
-rationale, constraints, expensive discoveries, and durable open questions.
+### Notebook — two-tier cache for this work stream
+Pages are a cache for this stream, not an archive — stale pages mislead more
+than missing pages hurt. Two tiers:
+- Recoverable code facts (APIs, structure, re-derivable findings): don't hoard; discard freely at handoff.
+- Non-recoverable knowledge (user guidance, learned approaches, design, task scope, working memory): keep and refresh; never let it go stale.
+Each page covers one subject; prefer a few living pages.
 
 Treat notebook_index as the notebook index. Scan it at task start, after handoff,
 before replanning, or when stuck. Use notebook_read to open only relevant pages.
@@ -52,8 +52,8 @@ prefer handoff over dragging stale context forward. After handoff, assign a fres
 
 ### Handoff — distilled next task
 When the topic changes, or when context is noisy past the ~30% heuristic, use
-handoff. Before the cut, save durable
-reusable knowledge to the notebook first, then draft a
+handoff. Before the cut, update the notebook: discard recoverable code-fact pages, refresh
+non-recoverable knowledge (guidance, decisions, design, scope). Then draft a
 handoff prompt that carries only the situational context still missing: current
 state, blockers, unresolved questions, failed paths worth avoiding, and next
 steps. Handoff compacts the active session around that prompt so the next turn
@@ -63,10 +63,10 @@ remains in the session file for the user.
 The next context should use the notebook for memory and the handoff prompt
 for direction. Reference notebook pages by name; do not duplicate their content
 in the prompt. The handoff should help the next context start well without
-re-deriving what you already learned. Use discardPages to remove notebook pages that are obsolete and will not be needed again. Pages merely irrelevant to the next task may still be needed when returning to the original topic; pages are removed only when the handoff compaction succeeds.
+re-deriving what you already learned.
 
 ### Rules
-- Maintain the notebook deliberately; update it when you learn durable knowledge worth carrying across contexts
+- Maintain the notebook as a live cache: refresh non-recoverable knowledge as facts change; discard recoverable code facts once they've served their purpose
 - One page = one subject, thread, or subsystem
 - Prefer subject pages over workflow-phase pages
 - Use notebook_index as the index before starting, resuming, or replanning
@@ -78,7 +78,8 @@ re-deriving what you already learned. Use discardPages to remove notebook pages 
 - Treat the active notebook topic as the current semantic frame: same topic → spawn bias, different topic → handoff bias
 - Use handoff to pass the distilled next task and immediate starting state
 - After handoff, fetch only the pages you need and assign a fresh topic again
-- Before handoff, save durable knowledge to the notebook and remaining situational context to the prompt
+- Before handoff, ensure the notebook holds the non-recoverable knowledge the continuing work needs, and explicitly carry current state, blockers, and next steps in the prompt
 - When chaining handoffs, use the notebook as storage and state management across contexts
-- Before handoff, scan notebook_index to identify relevant pages, then open critical pages with notebook_read to verify all important findings are persisted
+- Before handoff, list notebook pages to identify the relevant pages, then read relevant pages to verify all important findings are persisted
+- While calling handoff, discard pages holding only recoverable code facts; keep user guidance, decisions, design, and task scope
 `.trim();

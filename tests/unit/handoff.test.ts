@@ -31,7 +31,7 @@ test("/handoff sends the direction back through the LLM without opening the edit
 	assert.equal(pi.sentUserMessages.length, 1);
 	assert.match(pi.sentUserMessages[0].content, /Handoff direction: implement auth/);
 	assert.match(pi.sentUserMessages[0].content, /Prepare a handoff in the current session now/);
-	assert.match(pi.sentUserMessages[0].content, /durable memory needed by future contexts/i);
+	assert.match(pi.sentUserMessages[0].content, /non-recoverable knowledge/i);
 	assert.doesNotMatch(pi.sentUserMessages[0].content, /grounding future contexts/i);
 	assert.match(pi.sentUserMessages[0].content, /A real handoff is required in the current session/);
 	assert.doesNotMatch(pi.sentUserMessages[0].content, /User explicitly requested|\/handoff/);
@@ -690,6 +690,13 @@ test("handoff tool metadata and schema describe the prompt contract", () => {
 	assert.match(tool.description, /current notebook/i);
 	assert.match(tool.promptGuidelines.join(" "), /draft .*prompt/i);
 	assert.doesNotMatch(`${tool.description} ${tool.promptGuidelines.join(" ")} ${JSON.stringify(tool.parameters)}`, /\bbrief\b/i);
+	assert.doesNotMatch(JSON.stringify(tool.parameters), /long-term/i,
+		"schema must not say long-term store; use reusable knowledge");
+	assert.match(JSON.stringify(tool.parameters), /reusable knowledge/i);
+	assert.doesNotMatch(JSON.stringify(tool.parameters), /merely irrelevant|will not be needed again|permanently remove/i,
+		"pruning policy must not require an unverifiable universal negative");
+	assert.match(JSON.stringify(tool.parameters), /current state, blockers/i);
+	assert.match(tool.promptGuidelines.join(" "), /current state, blockers, and next steps/i);
 	assert.equal(Value.Check(tool.parameters, { task: "continue work" }), true);
 	assert.equal(Value.Check(tool.parameters, {}), false);
 	assert.match(JSON.stringify(tool.parameters), /handoff prompt/i);
@@ -704,7 +711,7 @@ test("buildEnrichedTask preserves the continuation contract and task", () => {
 	assert.match(summary, /notebook_index/);
 	assert.match(summary, /spawn/);
 	assert.match(summary, /handoff prompt/i);
-	assert.match(summary, /durable memory/i);
+	assert.match(summary, /cache/i);
 	assert.doesNotMatch(summary, /durable grounding/i);
 	assert.match(summary, /## Task/);
 	assert.ok(summary.endsWith(task));
