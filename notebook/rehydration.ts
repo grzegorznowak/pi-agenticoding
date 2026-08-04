@@ -40,6 +40,11 @@ function isNotebookEpoch(value: unknown): value is number {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
+/** Accept version 1 (current) or absent (legacy); reject unknown future versions. */
+function isKnownNotebookVersion(value: unknown): boolean {
+	return value === undefined || value === 1;
+}
+
 // ── Reconstruction ────────────────────────────────────────────────────
 
 /**
@@ -64,7 +69,7 @@ export function reconstructNotebook(state: AgenticodingState, branch: readonly S
 		const customEntry = entry as CustomEntry;
 		if (customEntry.customType === GENERATION_ENTRY_TYPE) {
 			const data = customEntry.data as NotebookGenerationData;
-			if (isNotebookEpoch(data?.epoch)) {
+			if (isKnownNotebookVersion(data?.version) && isNotebookEpoch(data?.epoch)) {
 				committedEpoch = Math.max(committedEpoch ?? 0, data.epoch);
 				maxObservedEpoch = Math.max(maxObservedEpoch, data.epoch);
 			}
@@ -72,7 +77,7 @@ export function reconstructNotebook(state: AgenticodingState, branch: readonly S
 		}
 		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) continue;
 		const data = customEntry.data as NotebookEntryData;
-		if (data?.name && typeof data.content === "string") {
+		if (isKnownNotebookVersion(data?.version) && data?.name && typeof data.content === "string") {
 			if (isNotebookEpoch(data.epoch)) {
 				maxObservedEpoch = Math.max(maxObservedEpoch, data.epoch);
 			}
@@ -93,7 +98,7 @@ export function reconstructNotebook(state: AgenticodingState, branch: readonly S
 		if (!PAGE_ENTRY_TYPES.has(customEntry.customType)) continue;
 		const data = customEntry.data as NotebookEntryData;
 		const epoch = isNotebookEpoch(data?.epoch) ? data.epoch : 0;
-		if (!data?.name || typeof data.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) continue;
+		if (!isKnownNotebookVersion(data?.version) || !data?.name || typeof data.content !== "string" || epoch !== currentEpoch || candidates.has(data.name)) continue;
 		candidates.set(data.name, { epoch, content: data.content });
 	}
 

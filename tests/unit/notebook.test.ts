@@ -131,6 +131,58 @@ test("notebook rehydration ignores null and malformed branch entries", async () 
 	assert.deepEqual(Array.from(state.notebookPages.entries()), [["keep", "valid"]]);
 });
 
+test("future-version notebook entries have zero effect on rehydrated state", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	registerNotebookRehydration(pi as any, state);
+	const [handler] = pi.handlers.get("session_start")!;
+
+	// Real writes through the real store (both land at epoch 1).
+	await saveNotebookPage(pi as any, state, "current", "ok");
+	await saveNotebookPage(pi as any, state, "other", "old");
+
+	// Simulate a future-format writer through the real persistence API. No
+	// existing writer emits version 2, so the version discriminator is the
+	// only synthetic field; envelope and payload match a real future entry.
+	pi.appendEntry("notebook-generation", { version: 2, epoch: 9 });
+	pi.appendEntry("notebook-entry", { version: 2, epoch: 9, name: "future", content: "x" });
+
+	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
+
+	// Generation marker site: the future epoch 9 must not be adopted.
+	assert.equal(state.epoch, 1);
+	// Watermark site: the future page's epoch 9 must not inflate the discard watermark.
+	assert.equal(state.discardEpochWatermark, 1);
+	// Candidate site: the future page is absent and valid pages survive (skip, not abort).
+	assert.deepEqual(Array.from(state.notebookPages.entries()).sort(), [
+		["current", "ok"],
+		["other", "old"],
+	]);
+});
+
+test("pre-versioned entries without a version field rehydrate on parity", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	registerNotebookRehydration(pi as any, state);
+	const [handler] = pi.handlers.get("session_start")!;
+
+	// Real writes through the real store, then strip the version discriminator
+	// to reproduce a pre-versioned branch: same envelope and fields, no version.
+	await saveNotebookPage(pi as any, state, "legacy", "old");
+	await saveNotebookPage(pi as any, state, "current", "new");
+	const branch = persistedBranch(pi);
+	delete (branch[0] as { data: { version?: unknown } }).data.version;
+
+	await handler({}, { sessionManager: { getBranch: () => branch } });
+
+	assert.equal(state.epoch, 1);
+	assert.equal(state.discardEpochWatermark, 1);
+	assert.deepEqual(Array.from(state.notebookPages.entries()).sort(), [
+		["current", "new"],
+		["legacy", "old"],
+	]);
+});
+
 test("session_start rehydrates the latest persisted notebook state through the full hook chain", async () => {
 	const pi = createTestPI();
 	pi.activeTools = ["read", "notebook_read"];
