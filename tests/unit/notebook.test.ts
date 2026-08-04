@@ -916,3 +916,48 @@ test("restart after a failed discard derives the watermark from observed epochs 
 	assert.equal(final.epoch, 3);
 });
 
+test("session_tree rehydrates notebook state branch-scoped: pages and epoch follow the branch, writes use B state", async () => {
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const notebookWrite = pi.tools.get("notebook_write");
+	const notebookIndex = pi.tools.get("notebook_index");
+	const [sessionTree] = pi.handlers.get("session_tree")!;
+
+	// Branch A: pages a,b at committed epoch 1.
+	const branchA = [
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "page-a", content: "a-v1" } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 1, name: "page-b", content: "b-v1" } },
+	];
+	// Branch B: diverged from A via a discard — committed epoch 2, only x,y kept.
+	const branchB = [
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 1 } },
+		{ type: "custom", customType: "notebook-generation", data: { version: 1, epoch: 2 } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "page-x", content: "x-v1" } },
+		{ type: "custom", customType: "notebook-entry", data: { version: 1, epoch: 2, name: "page-y", content: "y-v1" } },
+	];
+	const treeCtx = (branch: object[]) => ({ hasUI: false, sessionManager: { getBranch: () => branch } } as any);
+
+	// Enter A.
+	await sessionTree({}, treeCtx(branchA));
+	let indexResult = await notebookIndex.execute("1", {}, undefined, undefined, {} as any);
+	assert.deepEqual(indexResult.details.entries, ["page-a", "page-b"]);
+
+	// Navigate to B — pages immediately follow the active branch.
+	await sessionTree({}, treeCtx(branchB));
+	indexResult = await notebookIndex.execute("2", {}, undefined, undefined, {} as any);
+	assert.deepEqual(indexResult.details.entries, ["page-x", "page-y"]);
+
+	// A write on B uses B's committed epoch and lands on B's pages.
+	await notebookWrite.execute("3", { name: "page-z", content: "z-v1" }, undefined, undefined, makeTUICtx({ hasUI: false }));
+	assert.equal(pi.appendedEntries.at(-1)!.data.epoch, 2, "write on B must use B's committed epoch");
+	indexResult = await notebookIndex.execute("4", {}, undefined, undefined, {} as any);
+	assert.deepEqual(indexResult.details.entries, ["page-x", "page-y", "page-z"]);
+
+	// Back to A — A's branch-scoped pages restored, epoch follows A again.
+	await sessionTree({}, treeCtx(branchA));
+	indexResult = await notebookIndex.execute("5", {}, undefined, undefined, {} as any);
+	assert.deepEqual(indexResult.details.entries, ["page-a", "page-b"], "returning to A must restore its pages");
+	await notebookWrite.execute("6", { name: "page-a", content: "a-v2" }, undefined, undefined, makeTUICtx({ hasUI: false }));
+	assert.equal(pi.appendedEntries.at(-1)!.data.epoch, 1, "write after returning to A must use A's epoch");
+});
