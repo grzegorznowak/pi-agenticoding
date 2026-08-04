@@ -46,6 +46,14 @@ export interface AgenticodingState {
 	pendingNotebookDiscard: { generation: number; nextEpoch: number; deleted: string[] } | null;
 
 	/**
+	 * High-water mark for discard epochs. Advanced in-memory by prepare;
+	 * derived from the branch by reconstruction (max valid observed page/
+	 * generation epoch). Survives failed attempts and restarts so retries
+	 * cannot reuse a staged epoch and resurrect orphaned survivor entries.
+	 */
+	discardEpochWatermark: number;
+
+	/**
 	 * Required handoff request that stays alive until a real tool-driven compaction
 	 * succeeds, is explicitly reset, or ages out via watchdog enforcement.
 	 */
@@ -146,6 +154,7 @@ export function createState(): AgenticodingState {
 		handoffGeneration: 0,
 		handoffCompactionGeneration: null,
 		pendingNotebookDiscard: null,
+		discardEpochWatermark: 0,
 		pendingRequestedHandoff: null,
 		modelGroups: { groups: [], validation: null },
 		childSessions,
@@ -183,6 +192,9 @@ export function resetState(state: AgenticodingState): void {
 	state.childSessionEpoch++;
 	state.notebookPages.clear();
 	state.epoch = 0; // sentinel: 0 = not yet initialized; set to 1 on first write
+	// /new abandons the previous session tree; the watermark dies with it. A
+	// fresh session has no staged epochs, so derivation on its empty branch is 0.
+	state.discardEpochWatermark = 0;
 	state.activeNotebookTopic = null;
 	state.activeNotebookTopicSource = null;
 	state.lastContextPercent = null;
@@ -208,9 +220,14 @@ export function invalidateHandoffState(state: AgenticodingState): void {
 	state.pendingHandoff = null;
 	state.handoffCompactionGeneration = null;
 	state.pendingNotebookDiscard = null;
+	// The discard watermark is deliberately NOT reset here. A branch change is
+	// immediately followed by reconstruction, which derives the watermark from
+	// the newly active branch (staged survivor epochs included). Resetting early
+	// would let a retry reuse a staged epoch and resurrect orphaned entries.
+	//
 	// An interrupted discard left staged survivors + a stray generation marker in
-	// the branch; rehydration ignores them (currentEpoch never advances), so the
-	// orphaned entries are harmless.
+	// the branch; reconstruction ignores them (currentEpoch never advances), so
+	// the orphaned entries are harmless.
 	state.pendingRequestedHandoff = null;
 	state.pendingTopicBoundaryHint = null;
 	state.lastWatchdogBand = null;

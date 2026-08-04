@@ -125,7 +125,8 @@ export async function prepareNotebookDiscard(
 		const deleted = [...new Set(names)].filter((name) => state.notebookPages.has(name));
 		if (deleted.length === 0) return deleted;
 
-		const nextEpoch = state.epoch + 1;
+		const nextEpoch = Math.max(state.epoch, state.discardEpochWatermark) + 1;
+		state.discardEpochWatermark = nextEpoch;
 		pi.appendEntry("notebook-generation", { version: 1, epoch: state.epoch });
 		const deletedSet = new Set(deleted);
 		for (const [name, content] of state.notebookPages) {
@@ -149,4 +150,5 @@ export async function prepareNotebookDiscard(
 	state.epoch = pending.nextEpoch;
 	for (const name of pending.deleted) state.notebookPages.delete(name);
 	state.pendingNotebookDiscard = null;
+	state.discardEpochWatermark = 0;
 }

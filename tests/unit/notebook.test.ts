@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Text } from "@earendil-works/pi-tui";
-import { createState, resetState } from "../../state.js";
-import { registerNotebookRehydration } from "../../notebook/rehydration.js";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { createState, resetState, invalidateHandoffState } from "../../state.js";
+import { registerNotebookRehydration, reconstructNotebook } from "../../notebook/rehydration.js";
 import { commitNotebookDiscard, prepareNotebookDiscard, saveNotebookPage, resetNotebookWriteLock } from "../../notebook/store.js";
 import { createNotebookToolDefinitions } from "../../notebook/tools.js";
 import { __setSingletons, createWriteLock, getSingletons } from "../../runtime-singletons.js";
@@ -755,3 +756,163 @@ test("rehydration uses only the active session branch", async () => {
 
 	assert.deepEqual(Array.from(state.notebookPages.entries()), [["active", "kept"]]);
 });
+
+test("failed discard retry with same set uses fresh epoch and does not resurrect orphaned survivors", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+	await saveNotebookPage(pi as any, state, "page-c", "content-c");
+
+	// First attempt: prepare + simulate failure (don't commit)
+	const deleted1 = await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	assert.deepEqual(deleted1, ["page-a"]);
+	assert.equal(state.discardEpochWatermark, 2);
+
+	// Simulate failed handoff — clear pending discard but watermark remains
+	state.pendingNotebookDiscard = null;
+
+	// Retry with same discard set
+	const deleted2 = await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	assert.deepEqual(deleted2, ["page-a"]);
+	assert.equal(state.discardEpochWatermark, 3, "retry must use a higher epoch");
+
+	// Commit the retry
+	commitNotebookDiscard(pi as any, state, 1);
+	assert.equal(state.epoch, 3);
+
+	// Rehydrate: only the retry survivors at epoch 3 should appear
+	const restored = await rehydratePersistedNotebook(pi);
+	assert.deepEqual(Array.from(restored.notebookPages.entries()).sort(), [
+		["page-b", "content-b"], ["page-c", "content-c"],
+	]);
+	assert.equal(restored.epoch, 3);
+});
+
+test("failed discard retry with different set uses fresh epoch", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+	await saveNotebookPage(pi as any, state, "page-c", "content-c");
+
+	// First attempt: discard page-a
+	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	assert.equal(state.discardEpochWatermark, 2);
+	state.pendingNotebookDiscard = null; // simulate failure
+
+	// Retry with different set: discard page-b
+	await prepareNotebookDiscard(pi as any, state, 1, ["page-b"]);
+	assert.equal(state.discardEpochWatermark, 3, "retry must use a higher epoch");
+
+	commitNotebookDiscard(pi as any, state, 1);
+	assert.equal(state.epoch, 3);
+
+	const restored = await rehydratePersistedNotebook(pi);
+	assert.deepEqual(Array.from(restored.notebookPages.entries()).sort(), [
+		["page-a", "content-a"], ["page-c", "content-c"],
+	]);
+	assert.equal(restored.epoch, 3);
+});
+
+test("failed discard retry with all-pages discard uses fresh epoch", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+
+	// First attempt: discard page-a
+	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	state.pendingNotebookDiscard = null; // simulate failure
+
+	// Retry: discard everything
+	await prepareNotebookDiscard(pi as any, state, 1, ["page-a", "page-b"]);
+	assert.equal(state.discardEpochWatermark, 3);
+
+	commitNotebookDiscard(pi as any, state, 1);
+	assert.equal(state.epoch, 3);
+
+	const restored = await rehydratePersistedNotebook(pi);
+	assert.deepEqual(Array.from(restored.notebookPages.entries()), []);
+	assert.equal(restored.epoch, 3);
+});
+
+test("branch invalidation preserves the discard watermark until reconstruction derives a fresh one", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+
+	// Advance watermark via failed discard
+	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	assert.equal(state.discardEpochWatermark, 2);
+	state.pendingNotebookDiscard = null; // simulate failure
+
+	// Branch switch must not prematurely drop the watermark: a retry that reuses
+	// the staged epoch would resurrect orphaned survivors.
+	invalidateHandoffState(state);
+	assert.equal(state.discardEpochWatermark, 2, "invalidation alone must not reset the watermark");
+
+	// Reconstruction on the newly active branch derives the watermark from the
+	// branch itself — staged survivor epochs included (restart-safe).
+	reconstructNotebook(state, persistedBranch(pi) as any);
+	assert.equal(state.epoch, 1, "state.epoch stays the committed epoch");
+	assert.equal(state.discardEpochWatermark, 2);
+
+	// A fresh branch with no staged survivors resets the derived watermark.
+	reconstructNotebook(state, []);
+	assert.equal(state.epoch, 0);
+	assert.equal(state.discardEpochWatermark, 0);
+});
+
+test("resetState clears the discard watermark for a fresh session", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	assert.equal(state.discardEpochWatermark, 2);
+
+	resetState(state);
+	assert.equal(state.discardEpochWatermark, 0, "/new must reset the watermark with the session");
+	assert.equal(state.epoch, 0);
+});
+
+test("restart after a failed discard derives the watermark from observed epochs and cannot resurrect orphaned survivors", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	await saveNotebookPage(pi as any, state, "page-a", "content-a");
+	await saveNotebookPage(pi as any, state, "page-b", "content-b");
+	await saveNotebookPage(pi as any, state, "page-c", "content-c");
+
+	// Failed attempt: survivors staged at epoch 2, never committed.
+	await prepareNotebookDiscard(pi as any, state, 1, ["page-a"]);
+	state.pendingNotebookDiscard = null; // failure path clears pending discard only
+
+	// Restart: a fresh process state rehydrates from the persisted branch. The
+	// watermark must come from the branch itself, not from lost memory.
+	const restarted = createState();
+	const restartedPi = createTestPI();
+	registerNotebookRehydration(restartedPi as any, restarted);
+	const [handler] = restartedPi.handlers.get("session_start")!;
+	await handler({}, { sessionManager: { getBranch: () => persistedBranch(pi) } });
+
+	assert.equal(restarted.epoch, 1, "state.epoch stays the committed epoch after restart");
+	assert.equal(restarted.discardEpochWatermark, 2, "watermark derived from the staged survivor epoch");
+	assert.deepEqual(Array.from(restarted.notebookPages.entries()).sort(), [
+		["page-a", "content-a"], ["page-b", "content-b"], ["page-c", "content-c"],
+	], "staged survivors remain invisible until committed");
+
+	// Retry on the restarted process must not reuse the staged epoch 2.
+	const deleted = await prepareNotebookDiscard(restartedPi as any, restarted, 1, ["page-a"]);
+	assert.deepEqual(deleted, ["page-a"]);
+	assert.equal(restarted.discardEpochWatermark, 3, "retry must skip the previously staged epoch");
+	commitNotebookDiscard(restartedPi as any, restarted, 1);
+	assert.equal(restarted.epoch, 3);
+
+	const final = await rehydratePersistedNotebook(restartedPi);
+	assert.deepEqual(Array.from(final.notebookPages.entries()).sort(), [
+		["page-b", "content-b"], ["page-c", "content-c"],
+	], "orphaned epoch-2 survivors must not resurrect");
+	assert.equal(final.epoch, 3);
+});
+
