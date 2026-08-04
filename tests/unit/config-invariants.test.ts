@@ -199,6 +199,16 @@ test("the lockfile contains the sole allowlisted vulnerable brace-expansion path
 	]);
 });
 
+test("the lockfile contains the allowlisted undici path at a vulnerable version", () => {
+	// undici <8.9.0 is allowlisted only while pi-coding-agent pins 8.5.0 exactly;
+	// once a pi-coding-agent release ships undici ≥8.9.0 this fails and forces
+	// the allowlist entries to be removed.
+	const vulnerablePaths = parseLockfileVulnerablePaths(fileURLToPath(LOCK_PATH), "undici", "8.8.0");
+	assert.deepEqual(vulnerablePaths, [
+		"node_modules/@earendil-works/pi-coding-agent/node_modules/undici",
+	]);
+});
+
 test("workflow keeps the expected matrix and audit/test order", () => {
 	const workflow = readText(WORKFLOW_PATH);
 	const packageJson = parsePackageJson();
