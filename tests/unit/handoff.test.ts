@@ -122,6 +122,8 @@ test("handoff onComplete fails gracefully when the discard commit marker throws"
 	const state = createState();
 	state.epoch = 1;
 	state.notebookPages.set("stale", "obsolete");
+	state.activeNotebookTopic = "oauth";
+	state.pendingRequestedHandoff = { toolCalled: true, resumeReadonlyAfterHandoff: false, enforcementAttempts: 0 };
 	let callbacks: any;
 	registerHandoffTool(pi as any, state);
 
@@ -143,10 +145,83 @@ test("handoff onComplete fails gracefully when the discard commit marker throws"
 	(pi as any).appendEntry = original;
 
 	// Compaction succeeded even though its final discard marker did not. Pages
-	// remain available and the fresh context receives an explicit warning.
+	// remain available and the fresh context receives an explicit warning. The
+	// completion still finalizes durable state like an ordinary success.
 	assert.equal(state.notebookPages.get("stale"), "obsolete", "pages must survive a failed discard");
 	assert.equal(state.pendingHandoff, null);
+	assert.equal(state.pendingRequestedHandoff, null, "requested handoff cleared after successful compaction");
+	assert.equal(state.activeNotebookTopic, null, "active topic cleared after successful compaction");
 	assert.match(pi.sentUserMessages.at(-1)?.content ?? "", /Handoff completed, but notebook discard was not persisted/);
+});
+
+test("post-commit reporting failure does not claim pages were retained", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	state.epoch = 1;
+	state.notebookPages.set("stale", "obsolete");
+	let callbacks: any;
+	registerHandoffTool(pi as any, state);
+
+	await pi.tools.get("handoff").execute(
+		"report-fail",
+		{ task: "continue", discardPages: ["stale"] },
+		undefined,
+		undefined,
+		{
+			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
+			hasUI: true,
+			ui: {
+				setStatus: () => {},
+				notify: () => { throw new Error("notification channel closed"); },
+			},
+			compact: (options: any) => { callbacks = options; },
+		},
+	);
+
+	// Commit succeeds, then the completion notification throws during reporting
+	callbacks.onComplete();
+
+	// Pages are gone (commit succeeded); the failure is explicit through the
+	// remaining reporting channel and never misclaims retention.
+	assert.equal(state.notebookPages.size, 0, "pages must be gone after successful commit");
+	assert.equal(state.pendingHandoff, null);
+	assert.equal(state.activeNotebookTopic, null, "topic cleared after successful commit");
+	const report = pi.sentUserMessages.at(-1)?.content ?? "";
+	assert.match(report, /UI completion notification failed/,
+		"UI report failure must be explicit through sendUserMessage");
+	assert.doesNotMatch(report, /retained/i,
+		"post-commit reporting failure must not claim pages were retained");
+});
+
+test("post-commit sendUserMessage failure propagates instead of being hidden", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	state.epoch = 1;
+	state.notebookPages.set("stale", "obsolete");
+	let callbacks: any;
+	registerHandoffTool(pi as any, state);
+
+	await pi.tools.get("handoff").execute(
+		"report-fail",
+		{ task: "continue", discardPages: ["stale"] },
+		undefined,
+		undefined,
+		{
+			getContextUsage: () => ({ tokens: 50_000, percent: 25, contextWindow: 200_000 }),
+			compact: (options: any) => { callbacks = options; },
+		},
+	);
+
+	// Commit succeeds; the final sendUserMessage fails and must propagate.
+	pi.sendUserMessage = () => { throw new Error("channel closed"); };
+	assert.throws(() => callbacks.onComplete(), /channel closed/);
+
+	// Durable state was finalized before the fallible report, so pages are
+	// gone and the failure was not silently swallowed.
+	assert.equal(state.notebookPages.size, 0, "pages must be gone after successful commit");
+	assert.equal(state.pendingHandoff, null);
+	assert.equal(state.pendingRequestedHandoff, null);
+	assert.equal(state.activeNotebookTopic, null, "topic cleared after successful commit");
 });
 
 test("handoff with empty discardPages retains all pages", async () => {

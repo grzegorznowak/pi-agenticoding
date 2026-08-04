@@ -56,23 +56,25 @@ function validateHandoffTask(task: string, ctx: ExtensionContext): void {
 
 function completeHandoff(
 	pi: ExtensionAPI,
-	state: AgenticodingState,
 	ctx: ExtensionContext,
-	discardWarning?: string,
+	report?: string,
+	level: "info" | "warning" = "info",
 ): void {
-	// Finalize the two-phase clear: pendingHandoff was already cleared by compact.ts;
-	// this is the sole path that clears pendingRequestedHandoff after successful compaction.
-	state.pendingHandoff = null;
-	clearActiveNotebookTopic(state);
-	state.pendingRequestedHandoff = null;
+	const reportText = report ?? "Handoff complete. Fresh context will resume with the queued prompt.";
 	if (ctx.hasUI) {
-		ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
-		ctx.ui.notify(
-			discardWarning ?? "Handoff complete. Fresh context will resume with the queued prompt.",
-			discardWarning ? "warning" : "info",
-		);
+		try {
+			ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+			ctx.ui.notify(reportText, level);
+		} catch (reportError) {
+			// UI completion report failed after compaction succeeded. Surface it
+			// through the remaining reporting channel instead of swallowing it;
+			// a sendUserMessage failure here may propagate.
+			const message = reportError instanceof Error ? reportError.message : String(reportError);
+			pi.sendUserMessage(`Proceed. UI completion notification failed (${message}); ${reportText}`);
+			return;
+		}
 	}
-	pi.sendUserMessage(discardWarning ? `Proceed. ${discardWarning}` : "Proceed.");
+	pi.sendUserMessage(report ? `Proceed. ${report}` : "Proceed.");
 }
 
 function notifyHandoffFailure(ctx: ExtensionContext, error: Error, pendingRequest: AgenticodingState["pendingRequestedHandoff"]): void {
@@ -112,12 +114,23 @@ function failHandoff(
 	sendHandoffFailure(pi, error, pendingRequest);
 }
 
+function finalizeHandoffState(state: AgenticodingState): void {
+	// Completion side of the two-phase clear contract (compact.ts clears
+	// pendingHandoff at the cut). Every successful compaction finalizes the
+	// remaining durable state — including when the discard commit failed.
+	state.pendingHandoff = null;
+	state.pendingRequestedHandoff = null;
+	state.pendingNotebookDiscard = null;
+	clearActiveNotebookTopic(state);
+}
+
 function createHandoffCallbacks(
 	pi: ExtensionAPI,
 	state: AgenticodingState,
 	ctx: ExtensionContext,
 	generation: number,
 	commitDiscard: (() => void) | undefined,
+	discardRequested: boolean,
 ): { onComplete: () => void; onError: (error: unknown) => void } {
 	let settled = false;
 	const clearInFlight = () => {
@@ -134,27 +147,47 @@ function createHandoffCallbacks(
 			if (settled) return;
 			settled = true;
 			if (!isCurrent()) return;
+			// Capture the discard outcome before commit clears the pending record.
+			const discarded = state.pendingNotebookDiscard?.deleted.length ?? 0;
+			// Commit the discard first, before any state mutation or reporting that
+			// could throw. This ensures a post-commit failure never claims pages
+			// were retained when the commit already succeeded.
 			try {
 				// Pi does not await compact callbacks. The next epoch becomes visible
 				// only after compaction has succeeded.
 				commitDiscard?.();
-				clearInFlight();
-				if (isCurrent()) completeHandoff(pi, state, ctx);
-			} catch (error) {
+			} catch (commitError) {
 				clearInFlight();
 				if (!isCurrent()) return;
-				// Compaction already succeeded. Retain the current generation rather
-				// than describing this as a failed handoff when its final marker cannot
-				// be persisted.
-				state.pendingNotebookDiscard = null;
-				const message = error instanceof Error ? error.message : String(error);
+				// Compaction succeeded but the discard commit failed. Pages are
+				// retained, but the completion still finalizes durable state.
+				finalizeHandoffState(state);
+				const message = commitError instanceof Error ? commitError.message : String(commitError);
 				completeHandoff(
 					pi,
-					state,
 					ctx,
 					`Handoff completed, but notebook discard was not persisted (${message}); retained all notebook pages.`,
+					"warning",
 				);
+				return;
 			}
+			// Commit succeeded (or no discard requested). Durable state changes
+			// are cheap and cannot throw; perform them before fallible reporting.
+			clearInFlight();
+			if (!isCurrent()) return;
+			finalizeHandoffState(state);
+			// Reporting is fallible but separate from the durable commit.
+			// completeHandoff reroutes UI-report failures through sendUserMessage;
+			// a sendUserMessage failure propagates rather than being hidden.
+			// Make retention observable: the agent sees what survived the prune.
+			completeHandoff(
+				pi,
+				ctx,
+				discardRequested
+					? `Handoff complete. Notebook: ${state.notebookPages.size} page${state.notebookPages.size === 1 ? "" : "s"} kept` +
+						(discarded > 0 ? `, ${discarded} discarded.` : ".")
+					: undefined,
+			);
 		},
 		onError: (error) => {
 			if (settled) return;
@@ -239,10 +272,10 @@ export function registerHandoffTool(
 				if (ctx.hasUI && ctx.ui.theme) {
 					ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
 				}
-				const callbacks = createHandoffCallbacks(pi, state, ctx, generation, commitDiscard);
+				const callbacks = createHandoffCallbacks(pi, state, ctx, generation, commitDiscard, discardPages.length > 0);
 				ctx.compact(callbacks);
 			} catch (error) {
-				const callbacks = createHandoffCallbacks(pi, state, ctx, generation, undefined);
+				const callbacks = createHandoffCallbacks(pi, state, ctx, generation, undefined, discardPages.length > 0);
 				callbacks.onError(error);
 				throw error;
 			}
