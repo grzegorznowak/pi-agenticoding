@@ -47,6 +47,12 @@ const EXPECTED_MATRIX = new Set([
 ]);
 const EXPECTED_ALLOWLIST_KEYS = new Set([
 	"GHSA-mh99-v99m-4gvg",
+	"GHSA-rgw5-rvv9-x895",
+	"GHSA-4cwx-7wf7-3272|@earendil-works/pi-coding-agent>undici",
+	"GHSA-8xcm-r25x-g524|@earendil-works/pi-coding-agent>undici",
+	"GHSA-jr45-8vmc-qm54|@earendil-works/pi-coding-agent>undici",
+	"GHSA-m8rv-5g2x-5cg5|@earendil-works/pi-coding-agent>undici",
+	"GHSA-v3r7-h72x-cjcm|@earendil-works/pi-coding-agent>undici",
 ]);
 
 function readText(url: URL): string {
@@ -169,7 +175,7 @@ test("Pi 0.82.0 compatibility metadata and source boundaries stay exact", () => 
 	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
-test("audit-ci config keeps only the active expiry-tracked scoped exception", () => {
+test("audit-ci config keeps only the active expiry-tracked scoped exceptions", () => {
 	const config = parseAuditConfig();
 	assert.equal(config.$schema, AUDIT_SCHEMA);
 	assert.equal(config.moderate, true);
