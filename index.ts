@@ -591,8 +591,8 @@ export default function (pi: ExtensionAPI): void {
 		// mutate the interactive frontmatter state.
 		if (!ctx.hasUI || event.source === "extension") return { action: "continue" };
 
-		const skillName = event.text.match(/^\/skill:([^\s/]+)/)?.[1];
-		const commandName = event.text.match(/^\/([^\s/]+)/)?.[1];
+		const skillName = event.text.match(/^\/skill:([^\s]+)/)?.[1];
+		const commandName = event.text.match(/^\/([^\s]+)/)?.[1];
 		if (!skillName && !commandName) return { action: "continue" };
 
 		const commands = pi.getCommands();

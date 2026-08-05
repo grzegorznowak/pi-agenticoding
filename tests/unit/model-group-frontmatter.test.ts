@@ -908,6 +908,43 @@ test("streaming blocks model selection without mutation", async () => withTemp(a
 	}
 }));
 
+test("embedded-slash prompt and skill tokens do not apply model-selection frontmatter", async () => withTemp(async ({ cwd }) => {
+	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
+	const skillDir = await tmpDir();
+	try {
+		const cases = [
+			{ text: "/review/typo", command: "prompt" as const, frontmatter: { model: "openai/gpt-4o", thinking: "high" } },
+			{ text: "/skill:review/typo", command: "skill" as const, frontmatter: { "model-group": "reviewer", thinking: "high" } },
+		];
+		for (const scenario of cases) {
+			const filePath = await writeSkillMd(skillDir, `${scenario.command}-review`, scenario.frontmatter);
+			const pi = makeMockPI();
+			const modelCalls: any[] = [];
+			const thinkingCalls: string[] = [];
+			pi.setModel = async (model: any) => { modelCalls.push(model); return true; };
+			pi.setThinkingLevel = (thinking: string) => thinkingCalls.push(thinking);
+			const [inputHandler] = pi.handlers.get("input")!;
+			const sessionStartHandler = pi.handlers.get("session_start")!.at(-1)!;
+			const { ctx } = makeNotifyCtx({
+				cwd,
+				model: mockModel("openai", "gpt-parent"),
+				modelRegistry: mockRegistry(),
+			});
+			const name = `${scenario.command}-review`;
+			pi.setCommands([scenario.command === "prompt" ? makePromptCommand(name, filePath) : makeSkillCommand(name, filePath)]);
+			await sessionStartHandler({ reason: "load" }, ctx);
+
+			const result = await inputHandler({ text: scenario.text.replace("review", name), source: "interactive" }, ctx);
+			assert.deepEqual(result, { action: "continue" });
+			assert.deepEqual(modelCalls, []);
+			assert.deepEqual(thinkingCalls, []);
+			assert.equal(hasModelSelectionEntry(pi), false);
+		}
+	} finally {
+		await rm(skillDir, { recursive: true, force: true });
+	}
+}));
+
 test("setModel failures block explicit and group selection without success entries", async () => withTemp(async ({ cwd }) => {
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const cases = [

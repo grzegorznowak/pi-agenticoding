@@ -129,6 +129,35 @@ test("dotted /name command activates readonly frontmatter", async () => {
 	assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block, true);
 });
 
+test("embedded-slash prompt and skill tokens do not apply readonly frontmatter", async () => {
+	const cases = [
+		{ text: "/review/typo", type: "prompt" as const },
+		{ text: "/skill:review/typo", type: "skill" as const },
+	];
+	for (const scenario of cases) {
+		const dir = await tmpDir();
+		try {
+			const filePath = await writePrompt(dir, "review", true);
+			const { pi, toolCall } = registerReadonlyPI();
+			const [inputHandler] = pi.handlers.get("input")!;
+			const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+			const ctx = makeBeforeStartCtx();
+			if (scenario.type === "prompt") pi.setCommands([makePromptCommand("review", filePath)]);
+
+			const result = await inputHandler({ text: scenario.text, source: "interactive" }, ctx);
+			assert.deepEqual(result, { action: "continue" });
+			await beforeStartHandler({
+				systemPrompt: "",
+				systemPromptOptions: { skills: scenario.type === "skill" ? [makeSkill("review", filePath)] : [] },
+			}, ctx);
+			assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
+			assert.equal(pi.appendedEntries.some((entry: any) => entry.customType === "agenticoding-readonly"), false);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+});
+
 test("unknown /command without frontmatter produces no toggle", async () => {
 	const { pi, toolCall } = registerReadonlyPI();
 	const [inputHandler] = pi.handlers.get("input")!;
