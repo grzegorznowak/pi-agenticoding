@@ -168,3 +168,7 @@ export function buildModelFrontmatterAuthErrorNotification(provider: string, mod
 export function buildStreamingModelSelectionBlockedNotification(commandRef: string): string {
 	return `Cannot execute \`${commandRef}\` during streaming: model-selection frontmatter requires an idle agent.`;
 }
+
+export function buildStreamingReadonlyFrontmatterBlockedNotification(commandRef: string): string {
+	return `Cannot execute \`${commandRef}\` during streaming: readonly frontmatter requires an idle agent.`;
+}

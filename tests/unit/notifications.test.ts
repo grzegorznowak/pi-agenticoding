@@ -44,6 +44,7 @@ import {
 	buildModelFrontmatterSetModelErrorNotification,
 	buildModelFrontmatterAuthErrorNotification,
 	buildStreamingModelSelectionBlockedNotification,
+	buildStreamingReadonlyFrontmatterBlockedNotification,
 	buildReadonlyBashBlockReason,
 	buildReadonlyFrontmatterNotification,
 	buildReadonlyPackageManagerBlockReason,
@@ -169,6 +170,8 @@ test("shared readonly fragments keep copy aligned across contexts", () => {
 	assert.match(READONLY_CHILD_AUTHORITY_NOTE, /inherit readonly authority/i);
 	assert.equal(buildReadonlyFrontmatterNotification(true, "/review"), "Readonly mode enabled via `/review` frontmatter");
 	assert.equal(buildReadonlyFrontmatterNotification(false, "/review"), "Readonly mode disabled via `/review` frontmatter");
+	assert.match(buildStreamingModelSelectionBlockedNotification("/review"), /model-selection frontmatter requires an idle agent/i);
+	assert.match(buildStreamingReadonlyFrontmatterBlockedNotification("/review"), /readonly frontmatter requires an idle agent/i);
 	assert.match(buildReadonlyPackageManagerBlockReason("npm", "install"), /blocked in readonly mode/i);
 	assert.match(buildReadonlySandboxPathError("/tmp/'bad"), /cannot safely escape/i);
 });

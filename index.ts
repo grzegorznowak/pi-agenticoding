@@ -56,6 +56,7 @@ import {
 	buildModelFrontmatterNotification,
 	buildModelFrontmatterSetModelErrorNotification,
 	buildStreamingModelSelectionBlockedNotification,
+	buildStreamingReadonlyFrontmatterBlockedNotification,
 	buildModelGroupErrorNotification,
 	buildModelGroupNotification,
 	buildModelGroupOverrideWarningNotification,
@@ -146,12 +147,14 @@ type ModelSelection = {
 
 const cacheResolver = {
 	skill: {
+		readonly: cacheLookupSkill,
 		model: cacheLookupSkillExplicitModel,
 		group: cacheLookupSkillModelGroup,
 		thinking: cacheLookupSkillExplicitThinking,
 		issue: cacheLookupSkillIssue,
 	},
 	command: {
+		readonly: cacheLookupCommand,
 		model: cacheLookupCommandExplicitModel,
 		group: cacheLookupCommandModelGroup,
 		thinking: cacheLookupCommandExplicitThinking,
@@ -171,6 +174,10 @@ function resolveModelSelection(state: AgenticodingState, pending: PendingCommand
 
 function hasModelSelection(selection: ModelSelection): boolean {
 	return Boolean(selection.model || selection.group || selection.thinking);
+}
+
+function resolveReadonlySelection(state: AgenticodingState, pending: PendingCommand): boolean | null {
+	return cacheResolver[pending.type].readonly(state, pending.name);
 }
 
 function formatCommandRef(command: PendingCommand): string {
@@ -422,14 +429,20 @@ function handleThinkingOnlyFrontmatter(
 	return false;
 }
 
-function blockStreamingModelSelection(
+function blockStreamingFrontmatter(
 	ctx: ExtensionContext,
 	pending: PendingCommand,
 	selection: ModelSelection,
+	readonly: boolean | null,
 	streamingBehavior: "steer" | "followUp" | undefined,
 ): boolean {
-	if (!streamingBehavior || !hasModelSelection(selection)) return false;
-	ctx.ui.notify(buildStreamingModelSelectionBlockedNotification(formatCommandRef(pending)), "warning");
+	if (!streamingBehavior) return false;
+	if (hasModelSelection(selection)) {
+		ctx.ui.notify(buildStreamingModelSelectionBlockedNotification(formatCommandRef(pending)), "warning");
+		return true;
+	}
+	if (readonly === null) return false;
+	ctx.ui.notify(buildStreamingReadonlyFrontmatterBlockedNotification(formatCommandRef(pending)), "warning");
 	return true;
 }
 
@@ -597,7 +610,8 @@ export default function (pi: ExtensionAPI): void {
 		refreshModelGroupsState(state, ctx);
 
 		const selection = resolveModelSelection(state, pending);
-		if (blockStreamingModelSelection(ctx, pending, selection, event.streamingBehavior)) {
+		const readonly = resolveReadonlySelection(state, pending);
+		if (blockStreamingFrontmatter(ctx, pending, selection, readonly, event.streamingBehavior)) {
 			return { action: "handled" };
 		}
 		if (await preflightModelSelection(state, ctx, pi, pending, selection)) return { action: "handled" };

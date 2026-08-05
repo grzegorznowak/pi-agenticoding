@@ -908,14 +908,6 @@ test("streaming blocks model selection without mutation", async () => withTemp(a
 	}
 }));
 
-test("streaming command without model selection continues", async () => withTemp(async ({ cwd }) => {
-	const run = await runPromptInput(cwd, { readonly: true }, "success", "followUp");
-	assert.deepEqual(run.result, { action: "continue" });
-	assert.equal(run.modelCalls.length, 0);
-	assert.equal(run.thinkingCalls.length, 0);
-	assert.ok(!run.notifications.some((item) => item.level === "warning"));
-}));
-
 test("setModel failures block explicit and group selection without success entries", async () => withTemp(async ({ cwd }) => {
 	writeModelGroupsConfig(cwd, { reviewer: { models: [{ provider: "openai", modelId: "gpt-4o" }] } });
 	const cases = [

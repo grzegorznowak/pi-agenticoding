@@ -44,7 +44,7 @@ function makeNotifyBeforeStartCtx() {
 	};
 }
 
-function makeResolvedCommand(name: string, filePath: string, source: "prompt" | "builtin" = "prompt") {
+function makeResolvedCommand(name: string, filePath: string, source: "prompt" | "builtin" | "skill" = "prompt") {
 	return {
 		name,
 		source,
@@ -55,6 +55,10 @@ function makeResolvedCommand(name: string, filePath: string, source: "prompt" | 
 
 function makePromptCommand(name: string, filePath: string) {
 	return makeResolvedCommand(name, filePath, "prompt");
+}
+
+function makeSkillCommand(name: string, filePath: string) {
+	return makeResolvedCommand(`skill:${name}`, filePath, "skill");
 }
 
 function makeSkill(name: string, filePath: string) {
@@ -373,23 +377,48 @@ test("queued slash + extension message preserves the first pending command", asy
 	}
 });
 
-test("queued slash + plain text preserves the first pending command", async () => {
-	const dir = await tmpDir();
-	try {
-		const filePath = await writePrompt(dir, "my-prompt", true);
-		const { pi, toolCall } = registerReadonlyPI();
-		const [inputHandler] = pi.handlers.get("input")!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
-		const ctx = makeBeforeStartCtx();
-		pi.setCommands([makePromptCommand("my-prompt", filePath)]);
+test("streaming readonly frontmatter is blocked without a delayed toggle", async () => {
+	const cases = [
+		{ readonly: true, streamingBehavior: "steer" as const, type: "prompt" as const },
+		{ readonly: true, streamingBehavior: "followUp" as const, type: "skill" as const },
+		{ readonly: false, streamingBehavior: "steer" as const, type: "skill" as const },
+		{ readonly: false, streamingBehavior: "followUp" as const, type: "prompt" as const },
+	];
+	for (const scenario of cases) {
+		const dir = await tmpDir();
+		try {
+			const targetPath = await writePrompt(dir, "target", scenario.readonly);
+			const { pi, toolCall } = registerReadonlyPI();
+			const [inputHandler] = pi.handlers.get("input")!;
+			const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+			const { ctx, notifications } = makeNotifyBeforeStartCtx();
+			const commands = [scenario.type === "skill" ? makeSkillCommand("target", targetPath) : makePromptCommand("target", targetPath)];
+			if (!scenario.readonly) {
+				const initialPath = await writePrompt(dir, "initial", true);
+				commands.push(makePromptCommand("initial", initialPath));
+			}
+			pi.setCommands(commands);
 
-		await inputHandler({ text: "/my-prompt", source: "interactive", streamingBehavior: "steer" }, ctx);
-		await inputHandler({ text: "also fix this", source: "interactive", streamingBehavior: "steer" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+			if (!scenario.readonly) {
+				await inputHandler({ text: "/initial", source: "interactive" }, ctx);
+				await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+			}
+			const readonlyEntries = pi.appendedEntries.filter((entry: any) => entry.customType === "agenticoding-readonly").length;
 
-		assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block, true);
-	} finally {
-		await rm(dir, { recursive: true, force: true });
+			const text = scenario.type === "skill" ? "/skill:target" : "/target";
+			const result = await inputHandler({ text, source: "interactive", streamingBehavior: scenario.streamingBehavior }, ctx);
+			assert.deepEqual(result, { action: "handled" });
+			assert.equal(Boolean((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block), !scenario.readonly);
+			assert.equal(pi.appendedEntries.filter((entry: any) => entry.customType === "agenticoding-readonly").length, readonlyEntries);
+			assert.match(notifications.at(-1)?.message ?? "", /readonly frontmatter requires an idle agent/i);
+
+			await inputHandler({ text: "unrelated prompt", source: "interactive" }, ctx);
+			await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+			assert.equal(Boolean((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block), !scenario.readonly);
+			assert.equal(pi.appendedEntries.filter((entry: any) => entry.customType === "agenticoding-readonly").length, readonlyEntries);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	}
 });
 
