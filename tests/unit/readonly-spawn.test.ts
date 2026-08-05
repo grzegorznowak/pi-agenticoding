@@ -6,7 +6,7 @@ import {
 	READONLY_CHILD_AUTHORITY_NOTE,
 	READONLY_WRITE_EDIT_SUMMARY,
 	READONLY_INVALID_BASH_COMMAND_REASON,
-} from "../../readonly-copy.js";
+} from "../../notifications.js";
 import {
 	buildChildToolNames,
 	filterReadonlyToolNames,
