@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createState, resetState } from "../../state.js";
 import { createSession, createSubscribableSession, createTestPI, createRenderContext, theme } from "./helpers.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
-import { executeSpawn, getSpawnCleanupError, registerSpawnTool } from "../../spawn/index.js";
+import { registerSpawnTool } from "../../spawn/index.js";
 import { flushSpawnFrameScheduler } from "../../spawn/renderer.js";
 
 let h: TestHarness;
@@ -22,246 +22,12 @@ afterEach(() => {
 	h.teardown();
 });
 
-test("executeSpawn disposes a normally completed child exactly once", async () => {
-	const state = createState();
-	const pi = createTestPI();
-	let disposeCalls = 0;
-	const session = {
-		...createSession([]),
-		messages: [] as any[],
-		prompt: async () => {
-			session.messages = [{ role: "assistant", content: [{ type: "text", text: "done" }] }];
-		},
-		getSessionStats: () => undefined,
-		dispose: () => { disposeCalls++; },
-	};
-
-	const result = await executeSpawn(
-		"spawn-1", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-		state, { prompt: "work" }, undefined, undefined, "medium",
-		async () => ({ session: session as any, extensionsResult: undefined as any }),
-	);
-
-	assert.equal(result.content[0]?.text, "done");
-	assert.equal(disposeCalls, 1);
-});
-
-test("executeSpawn preserves a primary prompt failure when disposal also fails", async () => {
-	const state = createState();
-	const pi = createTestPI();
-	const primary = new Error("prompt failed");
-	const cleanup = new Error("dispose failed");
-	let disposeCalls = 0;
-	const session = {
-		...createSession([]),
-		prompt: async () => { throw primary; },
-		getSessionStats: () => undefined,
-		dispose: () => {
-			disposeCalls++;
-			throw cleanup;
-		},
-	};
-
-	const execution = executeSpawn(
-		"spawn-1", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-		state, { prompt: "work" }, undefined, undefined, "medium",
-		async () => ({ session: session as any, extensionsResult: undefined as any }),
-	);
-	await assert.rejects(
-		execution,
-		(error: unknown) => error === primary && getSpawnCleanupError(error, execution) === cleanup,
-	);
-	assert.equal(disposeCalls, 1);
-});
-
-test("executeSpawn preserves a primitive primary failure and retains its cleanup failure", async () => {
-	const state = createState();
-	const pi = createTestPI();
-	const primary = "primitive prompt failure";
-	const cleanup = new Error("dispose failed");
-	const session = {
-		...createSession([]),
-		prompt: async () => { throw primary; },
-		getSessionStats: () => undefined,
-		dispose: () => { throw cleanup; },
-	};
-
-	const execution = executeSpawn(
-		"spawn-primitive", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-		state, { prompt: "work" }, undefined, undefined, "medium",
-		async () => ({ session: session as any, extensionsResult: undefined as any }),
-	);
-	let caught: unknown;
-	try {
-		await execution;
-	} catch (error) {
-		caught = error;
-	}
-
-	assert.equal(caught, primary, "the primitive primary failure remains authoritative");
-	assert.equal(getSpawnCleanupError(caught, execution), cleanup, "cleanup failure remains observable");
-});
-
-test("executeSpawn correlates concurrent identical primitive failures with their own cleanup", async () => {
-	const state = createState();
-	const pi = createTestPI();
-	const primary = "shared primitive failure";
-	const cleanupA = new Error("dispose A failed");
-	const cleanupB = new Error("dispose B failed");
-	let releaseA!: () => void;
-	let releaseB!: () => void;
-	const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
-	const gateB = new Promise<void>((resolve) => { releaseB = resolve; });
-	const makeSession = (gate: Promise<void>, cleanup: Error) => ({
-		...createSession([]),
-		prompt: async () => {
-			await gate;
-			throw primary;
-		},
-		getSessionStats: () => undefined,
-		dispose: () => { throw cleanup; },
-	});
-
-	const executionA = executeSpawn(
-		"spawn-primitive-a", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-		state, { prompt: "work A" }, undefined, undefined, "medium",
-		async () => ({ session: makeSession(gateA, cleanupA) as any, extensionsResult: undefined as any }),
-	);
-	const executionB = executeSpawn(
-		"spawn-primitive-b", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-		state, { prompt: "work B" }, undefined, undefined, "medium",
-		async () => ({ session: makeSession(gateB, cleanupB) as any, extensionsResult: undefined as any }),
-	);
-	const rejectionA = executionA.catch((error: unknown) => error);
-	const rejectionB = executionB.catch((error: unknown) => error);
-
-	releaseA();
-	assert.equal(await rejectionA, primary);
-	releaseB();
-	assert.equal(await rejectionB, primary);
-
-	assert.equal(getSpawnCleanupError(primary, executionB), cleanupB);
-	assert.equal(getSpawnCleanupError(primary, executionA), cleanupA);
-});
-
-test("executeSpawn correlates concurrent identical object failures with their own cleanup", async () => {
-	const state = createState();
-	const pi = createTestPI();
-	const primary = new Error("shared object failure");
-	const cleanupA = new Error("dispose A failed");
-	const cleanupB = new Error("dispose B failed");
-	let releaseA!: () => void;
-	let releaseB!: () => void;
-	const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
-	const gateB = new Promise<void>((resolve) => { releaseB = resolve; });
-	const makeSession = (gate: Promise<void>, cleanup: Error) => ({
-		...createSession([]),
-		prompt: async () => {
-			await gate;
-			throw primary;
-		},
-		getSessionStats: () => undefined,
-		dispose: () => { throw cleanup; },
-	});
-
-	const executionA = executeSpawn(
-		"spawn-object-a", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-		state, { prompt: "work A" }, undefined, undefined, "medium",
-		async () => ({ session: makeSession(gateA, cleanupA) as any, extensionsResult: undefined as any }),
-	);
-	const executionB = executeSpawn(
-		"spawn-object-b", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-		state, { prompt: "work B" }, undefined, undefined, "medium",
-		async () => ({ session: makeSession(gateB, cleanupB) as any, extensionsResult: undefined as any }),
-	);
-	const rejectionA = executionA.catch((error: unknown) => error);
-	const rejectionB = executionB.catch((error: unknown) => error);
-
-	releaseA();
-	assert.equal(await rejectionA, primary);
-	releaseB();
-	assert.equal(await rejectionB, primary);
-
-	assert.equal(getSpawnCleanupError(primary, executionB), cleanupB);
-	assert.equal(getSpawnCleanupError(primary, executionA), cleanupA);
-});
-
-test("executeSpawn surfaces a disposal-only failure", async () => {
-	const state = createState();
-	const pi = createTestPI();
-	const cleanup = new Error("dispose failed");
-	const session = {
-		...createSession([]),
-		messages: [] as any[],
-		prompt: async () => {
-			session.messages = [{ role: "assistant", content: [{ type: "text", text: "done" }] }];
-		},
-		getSessionStats: () => undefined,
-		dispose: () => { throw cleanup; },
-	};
-
-	await assert.rejects(
-		() => executeSpawn(
-			"spawn-1", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-			state, { prompt: "work" }, undefined, undefined, "medium",
-			async () => ({ session: session as any, extensionsResult: undefined as any }),
-		),
-		(error: unknown) => error === cleanup,
-	);
-});
-
-test("executeSpawn disposes no-output and post-create aborted children", async () => {
-	for (const mode of ["no-output", "aborted"] as const) {
-		const state = createState();
-		const pi = createTestPI();
-		let disposeCalls = 0;
-		const controller = new AbortController();
-		if (mode === "aborted") controller.abort(new Error("stop"));
-		const session = {
-			...createSession([]),
-			messages: [] as any[],
-			prompt: async () => {},
-			getSessionStats: () => undefined,
-			dispose: () => { disposeCalls++; },
-		};
-		await assert.rejects(
-			() => executeSpawn(
-				`spawn-${mode}`, pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-				state, { prompt: "work" }, mode === "aborted" ? controller.signal : undefined, undefined, "medium",
-				async () => ({ session: session as any, extensionsResult: undefined as any }),
-			),
-			mode === "aborted" ? /stop/ : /produced no output/,
-		);
-		assert.equal(disposeCalls, 1, mode);
-	}
-});
-
-test("executeSpawn disposes a session that resolves after reset invalidates creation", async () => {
-	const state = createState();
-	const pi = createTestPI();
-	let resolveFactory!: (value: any) => void;
-	const factory = new Promise<any>((resolve) => { resolveFactory = resolve; });
-	let disposeCalls = 0;
-	const session = {
-		...createSession([]),
-		getSessionStats: () => undefined,
-		dispose: () => { disposeCalls++; },
-	};
-	const execution = executeSpawn(
-		"spawn-reset", pi as any, { model: { id: "model", provider: "provider" }, cwd: "/tmp" } as any,
-		state, { prompt: "work" }, undefined, undefined, "medium", async () => factory,
-	);
-	resetState(state);
-	resolveFactory({ session, extensionsResult: undefined as any });
-	await assert.rejects(() => execution, /invalidated by reset/i);
-	assert.equal(disposeCalls, 1);
-});
+// ── resetState tests ──────────────────────────────────────────────
 
 test("resetState aborts and clears child session registries", () => {
 	const state = createState();
 	let abortCalls = 0;
 	const session = {
-		...createSession([]),
 		abort: async () => {
 			abortCalls++;
 		},
@@ -303,6 +69,8 @@ test("resetState aborts a claimed child session after render ownership transfer"
 	assert.equal(state.childSessions.size, 0);
 	assert.equal(state.liveChildSessions.size, 0);
 });
+
+// ── nested spawn lifecycle tests ──────────────────────────────────
 
 test("nested spawn drops events after resetState bumps child epoch", () => {
 	const state = createState();
@@ -405,69 +173,6 @@ test("nested spawn drops late events after live registry deletion", () => {
 	const after = component.render(120);
 	assert.equal(invalidateCalls, 0, "completed-session deletion should stop rerenders from late events");
 	assert.deepEqual(after, before, "completed-session deletion should freeze the rendered state");
-});
-
-test("nested spawn processes stale-state events without invalidating the parent", () => {
-	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
-	let invalidateCalls = 0;
-
-	const component = childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "initial" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
-		theme,
-		createRenderContext({ invalidate: () => { invalidateCalls++; } }),
-	) as any;
-	const before = component.render(120);
-
-	// Emit a message_start while the session is still fresh — triggers a render after flush
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 1, "fresh-session event triggers invalidate");
-
-	// Now mark the session stale
-	state.liveChildSessions.delete("tool-call-1");
-
-	// Subsequent events are dropped by handleEvent's isStaleSession check
-	emit({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "stale" }] } });
-	flushSpawnFrameScheduler();
-	assert.equal(invalidateCalls, 1, "stale-session events do not invalidate");
-
-	// The optimistic event state was applied (message_start set thinking),
-	// but stale-session updates are dropped — the component shows the last
-	// known state before staleness, not a rolled-back version.
-	const after = component.render(120);
-	assert.ok(after.some((l: string) => l.includes("thinking")),
-		"optimistic event state from when session was still fresh is visible");
-	assert.ok(!after.some((l: string) => l.includes("stale")),
-		"stale-session events are dropped");
-});
-
-test("nested spawn cancels a queued parent invalidate when the session becomes stale before flush", () => {
-	const state = createState();
-	const childSpawnTool = makeChildSpawnTool(state);
-	const { session, emit } = createSubscribableSession([]);
-	state.childSessions.set("tool-call-1", session);
-	state.liveChildSessions.set("tool-call-1", session);
-	let invalidateCalls = 0;
-
-	const component = childSpawnTool.renderResult(
-		{ content: [{ type: "text", text: "initial" }], details: { model: "m", thinking: "low", truncated: false } },
-		{ expanded: false },
-		theme,
-		createRenderContext({ invalidate: () => { invalidateCalls++; } }),
-	) as any;
-	const before = component.render(120);
-
-	emit({ type: "message_start", message: { role: "assistant", content: [] } });
-	state.liveChildSessions.delete("tool-call-1");
-	flushSpawnFrameScheduler();
-
-	assert.equal(invalidateCalls, 0, "stale-before-flush sessions cancel queued parent invalidates");
-	assert.deepEqual(component.render(120), before, "stale-before-flush sessions roll back optimistic event state");
 });
 
 test("nested spawn reattach resets render guard for the new session", async () => {

@@ -2,11 +2,11 @@
  * Handoff tool for the agenticoding extension.
  *
  * Tools can trigger compaction directly, so handoff is implemented as a
- * deliberate compaction that replaces noisy context with a clean restart brief.
+ * deliberate compaction that replaces noisy context with a clean restart prompt.
  *
- * The brief should complete the picture: preserve the important situational
+ * The prompt should complete the picture: preserve the important situational
  * context that is still only present in the current turn, while notebook pages
- * remain durable grounding fetched on demand in the next context.
+ * remain durable memory fetched on demand in the next context.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -33,7 +33,7 @@ function validateHandoffTask(task: string, ctx: ExtensionContext): void {
 	if (!trimmed) {
 		const pct = normalizeContextPercent(ctx.getContextUsage()?.percent);
 		throw new Error(
-			`Context at ${pct === null ? "?" : Math.round(pct) + "%"}. Empty handoff rejected. Save findings to notebook, then draft a substantive brief.`,
+			`Context at ${pct === null ? "?" : Math.round(pct) + "%"}. Empty handoff rejected. Save findings to notebook, then draft a substantive prompt.`,
 		);
 	}
 
@@ -54,17 +54,27 @@ function validateHandoffTask(task: string, ctx: ExtensionContext): void {
 	}
 }
 
-function completeHandoff(pi: ExtensionAPI, state: AgenticodingState, ctx: ExtensionContext): void {
-	// Finalize the two-phase clear: pendingHandoff was already cleared by compact.ts;
-	// this is the sole path that clears pendingRequestedHandoff after successful compaction.
-	state.pendingHandoff = null;
-	clearActiveNotebookTopic(state);
-	state.pendingRequestedHandoff = null;
+function completeHandoff(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	report?: string,
+	level: "info" | "warning" = "info",
+): void {
+	const reportText = report ?? "Handoff complete. Fresh context will resume with the queued prompt.";
 	if (ctx.hasUI) {
-		ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
-		ctx.ui.notify("Handoff complete. Fresh context will resume with the queued brief.", "info");
+		try {
+			ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+			ctx.ui.notify(reportText, level);
+		} catch (reportError) {
+			// UI completion report failed after compaction succeeded. Surface it
+			// through the remaining reporting channel instead of swallowing it;
+			// a sendUserMessage failure here may propagate.
+			const message = reportError instanceof Error ? reportError.message : String(reportError);
+			pi.sendUserMessage(`Proceed. UI completion notification failed (${message}); ${reportText}`);
+			return;
+		}
 	}
-	pi.sendUserMessage("Proceed.");
+	pi.sendUserMessage(report ? `Proceed. ${report}` : "Proceed.");
 }
 
 function notifyHandoffFailure(ctx: ExtensionContext, error: Error, pendingRequest: AgenticodingState["pendingRequestedHandoff"]): void {
@@ -95,10 +105,23 @@ function failHandoff(
 ): void {
 	const error = rawError instanceof Error ? rawError : new Error(String(rawError));
 	state.pendingHandoff = null;
+	state.pendingNotebookDiscard = null;
+	// An interrupted discard left staged survivors + a stray generation marker in
+	// the branch; rehydration ignores them, so the orphaned entries are harmless.
 	const pendingRequest = state.pendingRequestedHandoff;
 	if (pendingRequest) pendingRequest.toolCalled = false;
 	notifyHandoffFailure(ctx, error, pendingRequest);
 	sendHandoffFailure(pi, error, pendingRequest);
+}
+
+function finalizeHandoffState(state: AgenticodingState): void {
+	// Completion side of the two-phase clear contract (compact.ts clears
+	// pendingHandoff at the cut). Every successful compaction finalizes the
+	// remaining durable state — including when the discard commit failed.
+	state.pendingHandoff = null;
+	state.pendingRequestedHandoff = null;
+	state.pendingNotebookDiscard = null;
+	clearActiveNotebookTopic(state);
 }
 
 function createHandoffCallbacks(
@@ -106,6 +129,8 @@ function createHandoffCallbacks(
 	state: AgenticodingState,
 	ctx: ExtensionContext,
 	generation: number,
+	commitDiscard: (() => void) | undefined,
+	discardRequested: boolean,
 ): { onComplete: () => void; onError: (error: unknown) => void } {
 	let settled = false;
 	const clearInFlight = () => {
@@ -121,8 +146,48 @@ function createHandoffCallbacks(
 		onComplete: () => {
 			if (settled) return;
 			settled = true;
+			if (!isCurrent()) return;
+			// Capture the discard outcome before commit clears the pending record.
+			const discarded = state.pendingNotebookDiscard?.deleted.length ?? 0;
+			// Commit the discard first, before any state mutation or reporting that
+			// could throw. This ensures a post-commit failure never claims pages
+			// were retained when the commit already succeeded.
+			try {
+				// Pi does not await compact callbacks. The next epoch becomes visible
+				// only after compaction has succeeded.
+				commitDiscard?.();
+			} catch (commitError) {
+				clearInFlight();
+				if (!isCurrent()) return;
+				// Compaction succeeded but the discard commit failed. Pages are
+				// retained, but the completion still finalizes durable state.
+				finalizeHandoffState(state);
+				const message = commitError instanceof Error ? commitError.message : String(commitError);
+				completeHandoff(
+					pi,
+					ctx,
+					`Handoff completed, but notebook discard was not persisted (${message}); retained all notebook pages.`,
+					"warning",
+				);
+				return;
+			}
+			// Commit succeeded (or no discard requested). Durable state changes
+			// are cheap and cannot throw; perform them before fallible reporting.
 			clearInFlight();
-			if (isCurrent()) completeHandoff(pi, state, ctx);
+			if (!isCurrent()) return;
+			finalizeHandoffState(state);
+			// Reporting is fallible but separate from the durable commit.
+			// completeHandoff reroutes UI-report failures through sendUserMessage;
+			// a sendUserMessage failure propagates rather than being hidden.
+			// Make retention observable: the agent sees what survived the prune.
+			completeHandoff(
+				pi,
+				ctx,
+				discardRequested
+					? `Handoff complete. Notebook: ${state.notebookPages.size} page${state.notebookPages.size === 1 ? "" : "s"} kept` +
+						(discarded > 0 ? `, ${discarded} discarded.` : ".")
+					: undefined,
+			);
 		},
 		onError: (error) => {
 			if (settled) return;
@@ -141,24 +206,20 @@ export function registerHandoffTool(
 		name: "handoff",
 		label: "Handoff",
 		description:
-			"Replace the active context with a compact task brief at the end of " +
-			"the current turn while keeping full history in the session file. Handoff clears the active notebook topic so the next clean context can assign a fresh one.\n\n" +
+			"Clears the current context while keeping the notebook and clearing its topic.\n\n" +
 			"WHEN TO USE:\n" +
-			"  1. Context past ~30% and the current job is no longer cleanly " +
-			"represented near the front of attention.\n" +
+			"  1. Context past ~30% and the current topic is no longer cleanly represented.\n" +
 			"  2. Context is filled with mechanics irrelevant to what comes " +
 			"next (research traces, planning deliberation, dead ends).\n" +
-			"  3. The current job is complete and a new distinct task starts.\n\n" +
-			"Rule: one context, one job. When the job changes, call handoff.\n\n" +
-			"AFTER HANDOFF the LLM sees:\n" +
-			"  • System prompt + context primer\n" +
-			"  • The handoff task — the distilled next work at the top of context\n" +
-			"  • All notebook pages — durable grounding accessible via notebook_read / notebook_index",
-
-		promptSnippet: "Pivot to a new job via deliberate handoff compaction",
+			"  3. The current topic is complete and a new distinct task starts.\n\n" +
+			"Rule: one context, one topic. When the topic changes, call handoff.\n\n" +
+			"AFTER HANDOFF the agent sees: the handoff prompt and the current notebook with optional pages discarded\n",
+		promptSnippet: "Pivot to a new topic via deliberate handoff compaction",
 		promptGuidelines: [
-			"Before handoff, promote any missing durable grounding knowledge that the next context will need to the notebook. " +
-				"Then draft a concise but sufficiently detailed brief with the distilled next task and immediate starting state for the next clean context. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the brief or user direction.",
+			"Before handoff, save durable reusable knowledge to the notebook. " +
+				"Then draft a concise but sufficiently detailed prompt that explicitly carries current state, blockers, and next steps. The active notebook topic will reset after handoff, so the next context should assign a fresh topic from the prompt or user direction.",
+			"Prune with discardPages: pages holding only recoverable code facts are discardable; " +
+				"keep and refresh user guidance, decisions, design, and task scope.",
 		],
 
 		executionMode: "sequential",
@@ -166,11 +227,20 @@ export function registerHandoffTool(
 		parameters: Type.Object({
 			task: Type.String({
 				description:
-					"What to do next. A concise but sufficiently detailed handoff brief. " +
-					"This becomes the FIRST thing the LLM sees after handoff. Capture the distilled next task, " +
-					"immediate starting state, blockers, failed paths worth avoiding, and relevant notebook page names. " +
-					"The notebook is the long-term grounding store; this brief should carry only the remaining situational context.",
+					"What to do next. A concise but sufficiently detailed handoff prompt.\n" +
+					"This becomes the FIRST thing the agent sees after handoff. Capture anything the next context " +
+					"will need that's not included in the notebook.\n" +
+					"The notebook holds reusable knowledge for this stream: user guidance, decisions, " +
+					"design, constraints — plus code facts that are recoverable and discardable. " +
+					"This prompt should explicitly carry current state, blockers, unresolved questions, failed paths worth avoiding, and next steps.",
 			}),
+			discardPages: Type.Optional(Type.Array(Type.String({
+				description: "A notebook page name to discard.",
+			}), {
+				description:
+					"Notebook page names to discard during this handoff. " +
+					"Discard pages holding only recoverable code facts; keep non-recoverable knowledge (user guidance, decisions, design, task scope) unless superseded.",
+			})),
 		}),
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -187,23 +257,27 @@ export function registerHandoffTool(
 				sendHandoffFailure(pi, error instanceof Error ? error : new Error(String(error)), state.pendingRequestedHandoff);
 				throw error;
 			}
+			const discardPages = [...new Set(params.discardPages ?? [])];
 			const requestedHandoff = state.pendingRequestedHandoff;
 			const generation = ++state.handoffGeneration;
-			state.pendingHandoff = {
-				task: params.task,
-				source: "tool",
-				generation,
-			};
+			state.pendingHandoff = { task: params.task, source: "tool", generation };
 			state.handoffCompactionGeneration = generation;
 			if (requestedHandoff) requestedHandoff.toolCalled = true;
-			if (ctx.hasUI && ctx.ui.theme) {
-				ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
-			}
 
-			const callbacks = createHandoffCallbacks(pi, state, ctx, generation);
+			let commitDiscard: (() => void) | undefined;
 			try {
+				if (discardPages.length) {
+					const store = await import("../notebook/store.js");
+					await store.prepareNotebookDiscard(pi, state, generation, discardPages);
+					commitDiscard = () => store.commitNotebookDiscard(pi, state, generation);
+				}
+				if (ctx.hasUI && ctx.ui.theme) {
+					ctx.ui.setStatus(STATUS_KEY_HANDOFF, ctx.ui.theme.fg("accent", HANDOFF_IN_PROGRESS_STATUS));
+				}
+				const callbacks = createHandoffCallbacks(pi, state, ctx, generation, commitDiscard, discardPages.length > 0);
 				ctx.compact(callbacks);
 			} catch (error) {
+				const callbacks = createHandoffCallbacks(pi, state, ctx, generation, undefined, discardPages.length > 0);
 				callbacks.onError(error);
 				throw error;
 			}

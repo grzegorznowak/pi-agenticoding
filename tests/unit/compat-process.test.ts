@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -10,6 +10,7 @@ const {
 	repoRootFromScript,
 	runChecked,
 	runNpm,
+	isValidNpmExecpath,
 } = await import(new URL("../../scripts/compat-process.mjs", import.meta.url).href);
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -25,17 +26,59 @@ test("repoRootFromScript decodes native paths containing spaces", () => {
 });
 
 test("npmInvocation uses npm_execpath through the active Node executable", () => {
-	assert.deepEqual(
-		npmInvocation(["ls", "--json"], {
-			env: { npm_execpath: "/npm install/npm-cli.js" },
+	const tmpDir = mkdtempSync(join(tmpdir(), "npm-invocation-test-"));
+	const stubCli = join(tmpDir, "npm-cli.js");
+	writeFileSync(stubCli, "// npm CLI stub");
+	try {
+		assert.deepEqual(
+			npmInvocation(["ls", "--json"], {
+				env: { npm_execpath: stubCli },
+				platform: "win32",
+				execPath: "/node install/node.exe",
+			}),
+			{
+				command: "/node install/node.exe",
+				args: [stubCli, "ls", "--json"],
+			},
+		);
+	} finally {
+		rmSync(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test("isValidNpmExecpath rejects a nonexistent path", () => {
+	assert.equal(isValidNpmExecpath(join(tmpdir(), "does-not-exist", "npm-cli.js")), false);
+});
+
+test("isValidNpmExecpath rejects a directory named like an npm CLI", () => {
+	const tmpDir = mkdtempSync(join(tmpdir(), "npm-dir-test-"));
+	const dirNamedCli = join(tmpDir, "npm-cli.js");
+	mkdirSync(dirNamedCli);
+	try {
+		assert.equal(isValidNpmExecpath(dirNamedCli), false, "a directory must not validate as an npm CLI file");
+	} finally {
+		rmSync(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test("npmInvocation resolves a relative npm_execpath to an absolute path", () => {
+	const tmpDir = mkdtempSync(join(process.cwd(), "npm-rel-test-"));
+	const stubCli = join(tmpDir, "npm-cli.js");
+	writeFileSync(stubCli, "// npm CLI stub");
+	try {
+		const relPath = relative(process.cwd(), stubCli);
+		assert.ok(!isAbsolute(relPath), "sanity: constructed path is relative");
+		const invocation = npmInvocation(["ls", "--json"], {
+			env: { npm_execpath: relPath },
 			platform: "win32",
 			execPath: "/node install/node.exe",
-		}),
-		{
-			command: "/node install/node.exe",
-			args: ["/npm install/npm-cli.js", "ls", "--json"],
-		},
-	);
+		});
+		assert.ok(isAbsolute(invocation.args[0]), "resolved execpath is absolute");
+		assert.equal(invocation.args[0], resolve(relPath), "relative execpath is resolved against cwd");
+		assert.equal(invocation.command, "/node install/node.exe");
+	} finally {
+		rmSync(tmpDir, { recursive: true, force: true });
+	}
 });
 
 test("runNpm launches npm portably", () => {
