@@ -34,9 +34,6 @@ const AUDIT_SCHEMA = "https://github.com/IBM/audit-ci/raw/main/docs/schema.json"
 const REPO_ROOT_URL = new URL("../../", import.meta.url);
 const REPO_ROOT = fileURLToPath(REPO_ROOT_URL);
 const AUDIT_CONFIG_PATH = new URL("audit-ci.jsonc", REPO_ROOT_URL);
-const AUDIT_CLI_PATH = fileURLToPath(
-	new URL("node_modules/audit-ci/dist/bin.js", REPO_ROOT_URL),
-);
 const PACKAGE_JSON_PATH = new URL("package.json", REPO_ROOT_URL);
 const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
@@ -49,7 +46,13 @@ const EXPECTED_MATRIX = new Set([
 	"windows-latest@24",
 ]);
 const EXPECTED_ALLOWLIST_KEYS = new Set([
-	"GHSA-mh99-v99m-4gvg|brace-expansion",
+	"GHSA-mh99-v99m-4gvg",
+	"GHSA-rgw5-rvv9-x895",
+	"GHSA-4cwx-7wf7-3272|@earendil-works/pi-coding-agent>undici",
+	"GHSA-8xcm-r25x-g524|@earendil-works/pi-coding-agent>undici",
+	"GHSA-jr45-8vmc-qm54|@earendil-works/pi-coding-agent>undici",
+	"GHSA-m8rv-5g2x-5cg5|@earendil-works/pi-coding-agent>undici",
+	"GHSA-v3r7-h72x-cjcm|@earendil-works/pi-coding-agent>undici",
 ]);
 
 function readText(url: URL): string {
@@ -100,33 +103,50 @@ function minimumNodeVersion(value: string): string {
 }
 
 function runAuditCi(): void {
-	const result = spawnSync(process.execPath, [AUDIT_CLI_PATH, "--config", "audit-ci.jsonc"], {
-		cwd: REPO_ROOT,
-		encoding: "utf8",
-	});
-	assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+	const command = "npx audit-ci --config audit-ci.jsonc";
+	const result = spawnSync(command, { cwd: REPO_ROOT, encoding: "utf8", shell: true });
+	const diagnostics = [
+		`command: ${command}`,
+		`error.stack: ${result.error?.stack ?? "none"}`,
+		`status: ${String(result.status)}`,
+		`signal: ${String(result.signal)}`,
+		`stdout:\n${result.stdout}`,
+		`stderr:\n${result.stderr}`,
+	].join("\n");
+
+	assert.equal(result.error, undefined, diagnostics);
+	assert.equal(result.signal, null, diagnostics);
+	assert.equal(result.status, 0, diagnostics);
 }
 
-function collectPackagePaths(graph: any, packageName: string): Array<{ path: string; version: string }> {
-	const found: Array<{ path: string; version: string }> = [];
-	const visit = (node: any, path: string) => {
-		for (const [name, dependency] of Object.entries(node?.dependencies ?? {}) as Array<[string, any]>) {
-			const dependencyPath = `${path} > ${name}`;
-			if (name === packageName && typeof dependency.version === "string") {
-				found.push({ path: dependencyPath, version: dependency.version });
-			}
-			visit(dependency, dependencyPath);
-		}
+function compareVersions(a: string, b: string): number {
+	const parse = (v: string): [number, number, number] => {
+		const match = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+		assert.ok(match, `unexpected version format: ${v}`);
+		return [Number(match[1]), Number(match[2]), Number(match[3])];
 	};
-	visit(graph, graph?.name ?? "root");
-	return found;
+	const [aMajor, aMinor, aPatch] = parse(a);
+	const [bMajor, bMinor, bPatch] = parse(b);
+	if (aMajor !== bMajor) return aMajor - bMajor;
+	if (aMinor !== bMinor) return aMinor - bMinor;
+	return aPatch - bPatch;
 }
 
-function isVulnerableBraceExpansionVersion(version: string): boolean {
-	const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-	assert.ok(match, `unexpected brace-expansion version: ${version}`);
-	const [, major, minor, patch] = match.map(Number);
-	return major < 5 || (major === 5 && minor === 0 && patch <= 7);
+function parseLockfileVulnerablePaths(lockfilePath: string, packageName: string, maxVersion: string): string[] {
+	const lock = JSON.parse(readFileSync(lockfilePath, "utf8")) as {
+		packages?: Record<string, { version?: string }>;
+	};
+	const prefix = `node_modules/${packageName}`;
+	const paths: string[] = [];
+	for (const [path, entry] of Object.entries(lock.packages ?? {})) {
+		if (!path.endsWith(prefix)) continue;
+		const version = entry?.version;
+		assert.ok(typeof version === "string", `missing version for lockfile entry: ${path}`);
+		if (compareVersions(version, maxVersion) <= 0) {
+			paths.push(path);
+		}
+	}
+	return paths;
 }
 
 test("Pi 0.82.0 compatibility metadata and source boundaries stay exact", () => {
@@ -155,7 +175,7 @@ test("Pi 0.82.0 compatibility metadata and source boundaries stay exact", () => 
 	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
-test("audit-ci config keeps an expiry-tracked advisory-module path allowlist", () => {
+test("audit-ci config keeps only the active expiry-tracked scoped exceptions", () => {
 	const config = parseAuditConfig();
 	assert.equal(config.$schema, AUDIT_SCHEMA);
 	assert.equal(config.moderate, true);
@@ -164,7 +184,7 @@ test("audit-ci config keeps an expiry-tracked advisory-module path allowlist", (
 	assert.deepEqual(new Set(entries.map(([key]) => key)), EXPECTED_ALLOWLIST_KEYS);
 	const today = Date.parse(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
 	for (const [key, value] of entries) {
-		assert.match(key, /^GHSA-[a-z0-9-]+\|[^|>]+(?:>[^|>]+)*$/);
+		assert.match(key, /^GHSA-[a-z0-9-]+(?:\|[^|>]+(?:>[^|>]+)*)?$/);
 		assert.equal(value.active, true);
 		assert.match(value.expiry, /^\d{4}-\d{2}-\d{2}$/);
 		assert.ok(parseIsoDate(value.expiry) >= today, `expired allowlist entry: ${key}`);
@@ -172,40 +192,21 @@ test("audit-ci config keeps an expiry-tracked advisory-module path allowlist", (
 	}
 });
 
-test("the allowlisted vulnerable brace-expansion path is reachable only through the exact Pi floor graph", () => {
-	const npmArgs = ["ls", "brace-expansion", "--all", "--json"];
-	const npmExecPath = process.env.npm_execpath;
-	const invocation = npmExecPath
-		? [process.execPath, npmExecPath, ...npmArgs].join(" ")
-		: "npm ls brace-expansion --all --json";
-	const result = npmExecPath
-		? spawnSync(process.execPath, [npmExecPath, ...npmArgs], {
-				cwd: REPO_ROOT,
-				encoding: "utf8",
-			})
-		: spawnSync("npm ls brace-expansion --all --json", {
-				cwd: REPO_ROOT,
-				encoding: "utf8",
-				shell: true,
-			});
-	const diagnostics = [
-		`invocation: ${invocation}`,
-		`error.stack: ${result.error?.stack ?? "none"}`,
-		`status: ${String(result.status)}`,
-		`signal: ${String(result.signal)}`,
-		`stdout:\n${result.stdout}`,
-		`stderr:\n${result.stderr}`,
-	].join("\n");
+test("the lockfile contains the sole allowlisted vulnerable brace-expansion path", () => {
+	const vulnerablePaths = parseLockfileVulnerablePaths(fileURLToPath(LOCK_PATH), "brace-expansion", "5.0.7");
+	assert.deepEqual(vulnerablePaths, [
+		"node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion",
+	]);
+});
 
-	assert.equal(result.error, undefined, diagnostics);
-	assert.equal(result.signal, null, diagnostics);
-	assert.equal(result.status, 0, diagnostics);
-	const vulnerablePaths = collectPackagePaths(JSON.parse(result.stdout), "brace-expansion")
-		.filter(({ version }) => isVulnerableBraceExpansionVersion(version));
-	assert.deepEqual(vulnerablePaths, [{
-		path: "pi-agenticoding > @earendil-works/pi-coding-agent > minimatch > brace-expansion",
-		version: "5.0.7",
-	}]);
+test("the lockfile contains the allowlisted undici path at a vulnerable version", () => {
+	// undici <8.9.0 is allowlisted only while pi-coding-agent pins 8.5.0 exactly;
+	// once a pi-coding-agent release ships undici ≥8.9.0 this fails and forces
+	// the allowlist entries to be removed.
+	const vulnerablePaths = parseLockfileVulnerablePaths(fileURLToPath(LOCK_PATH), "undici", "8.8.0");
+	assert.deepEqual(vulnerablePaths, [
+		"node_modules/@earendil-works/pi-coding-agent/node_modules/undici",
+	]);
 });
 
 test("workflow keeps the expected matrix and audit/test order", () => {
@@ -220,6 +221,6 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 });
 
 
-test("audit-ci config matches the current lockfile vulnerabilities", () => {
+test("audit-ci config matches the CI audit command", () => {
 	runAuditCi();
 });

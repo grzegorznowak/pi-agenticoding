@@ -26,7 +26,7 @@ export function registerHandoffCompaction(pi: ExtensionAPI, state: AgenticodingS
 		//   pendingHandoff — cleared here (the compaction hook consumed the queued task)
 		//   pendingRequestedHandoff — kept; cleared later by completeHandoff in tool.ts
 		//                              (on success) or preserved for retry (on error).
-		// Read readonlyEnabled at the cut so the brief reflects a toggle made after
+		// Read readonlyEnabled at the cut so the prompt reflects a toggle made after
 		// the handoff tool was called but before Pi consumes the queued task.
 		const task = buildEnrichedTask(pending.task, {
 			resumeReadonlyAfterHandoff: state.readonlyEnabled,

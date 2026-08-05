@@ -3,7 +3,7 @@
  *
  * Wires together the three primitives:
  *   spawn     — delegate isolated work to child contexts
- *   notebook   — durable cross-context grounding
+ *   notebook   — durable cross-context memory
  *   handoff   — deliberate task pivot via compaction
  *
  * Also registers:
@@ -24,7 +24,7 @@ import { createState, invalidateHandoffState, resetState, type AgenticodingState
 import { CONTEXT_PRIMER } from "./system-prompt.js";
 import { buildNudge, registerWatchdog } from "./watchdog.js";
 import { registerNotebookTools } from "./notebook/tools.js";
-import { registerNotebookRehydration } from "./notebook/rehydration.js";
+import { ensureNotebookToolsActive, registerNotebookRehydration, reconstructNotebook } from "./notebook/rehydration.js";
 import { registerNotebookTopicTool } from "./notebook/topic-tool.js";
 import { setActiveNotebookTopic } from "./notebook/topic.js";
 import { formatPagePreview } from "./notebook/store.js";
@@ -241,7 +241,7 @@ function consumePendingReadonlyCommands(
 
 		// Keep a queued required handoff aligned with the latest resolved readonly
 		// intent even when the frontmatter decision is a no-op for current mode.
-		// Otherwise the eventual handoff brief could resume with stale readonly
+		// Otherwise the eventual handoff prompt could resume with stale readonly
 		// semantics despite the slash command itself producing no visible toggle.
 		alignPendingReadonlyHandoff(state, readonly);
 		if (state.readonlyEnabled === readonly) {
@@ -930,10 +930,18 @@ export default function (pi: ExtensionAPI): void {
 		updateIndicators(ctx, state);
 	});
 
-	// ── session_tree: invalidate branch-local handoff work, then rehydrate readonly ──
+	// ── session_tree: invalidate branch-local handoff work, rehydrate the
+	//    branch-scoped notebook state, then rehydrate readonly ──
 	pi.on("session_tree", async (_event, ctx: ExtensionContext) => {
 		invalidateHandoffState(state);
 		if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY_HANDOFF, undefined);
+		// Notebook persistence is branch-scoped: pages, the committed epoch, and
+		// the discard watermark follow the branch the user navigated to. Reconstruction
+		// runs immediately after invalidation, so the watermark derived from the new
+		// branch replaces the in-memory value before any retry could reuse a staged
+		// epoch from the abandoned branch.
+		reconstructNotebook(state, ctx.sessionManager?.getBranch?.() ?? []);
+		ensureNotebookToolsActive(pi);
 		rehydrateReadonlyState(ctx);
 		updateIndicators(ctx, state);
 	});

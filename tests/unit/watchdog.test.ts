@@ -72,7 +72,7 @@ test("context injects watchdog reminder before each LLM call", async () => {
 	assert.match(result.messages[1].content, /oauth/);
 	assert.match(result.messages[1].content, /spawn/i);
 	assert.match(result.messages[1].content, /parent context/i);
-	assert.doesNotMatch(result.messages[1].content, /draft a clear brief|what comes next/i);
+	assert.doesNotMatch(result.messages[1].content, /draft a clear prompt|what comes next/i);
 });
 
 
@@ -198,6 +198,30 @@ test("buildNudge does not require an ineligible pending handoff by default", () 
 	}, null, false);
 	assert.match(nudge, /not yet ready for compaction/i);
 	assert.doesNotMatch(nudge, /complete a real handoff in this session now/i);
+});
+
+test("buildNudge uses prompt wording for eligible requested handoffs and topic boundaries", () => {
+	const requested = buildNudge({
+		activeNotebookTopic: null,
+		pendingTopicBoundaryHint: null,
+		readonlyEnabled: false,
+		pendingRequestedHandoff: { toolCalled: false, resumeReadonlyAfterHandoff: false, enforcementAttempts: 0 },
+	}, 30, true);
+	assert.match(requested, /real handoff is required/i);
+	assert.match(requested, /draft the prompt/i);
+	assert.match(requested, /call handoff/i);
+	assert.doesNotMatch(requested, /\bbrief\b/i);
+
+	const boundary = buildNudge({
+		activeNotebookTopic: "billing",
+		pendingTopicBoundaryHint: { from: "oauth", to: "billing", source: "human" },
+		readonlyEnabled: false,
+		pendingRequestedHandoff: null,
+	}, 30, true);
+	assert.match(boundary, /task-boundary signal/i);
+	assert.match(boundary, /situational prompt/i);
+	assert.match(boundary, /call handoff/i);
+	assert.doesNotMatch(boundary, /\bbrief\b/i);
 });
 
 test("buildNudge handles null percent and boundary hints before topic guidance", () => {

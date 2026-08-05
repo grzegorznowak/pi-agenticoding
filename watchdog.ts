@@ -17,7 +17,7 @@ import {
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Max turns a required handoff stays sticky before auto-clear.
- * 5 eligible turns gives the LLM ~2-3 response cycles to draft and execute a brief,
+ * 5 eligible turns gives the LLM ~2-3 response cycles to draft and execute a prompt,
  * including one async compaction retry path where handoff/tool.ts resets
  * toolCalled=false after failure so enforcement can resume. */
 export const MAX_HANDOFF_ATTEMPTS = 5;
@@ -34,7 +34,7 @@ function buildRequestedHandoffNudge(state: NudgeState, eligible: boolean): strin
 	const requestedHandoff = state.pendingRequestedHandoff!;
 	const readonlyContinuation = requestedHandoff.resumeReadonlyAfterHandoff
 		? buildReadonlyRequestedHandoffContinuation()
-		: "Draft the brief so the next context can start cleanly.";
+		: "Draft the prompt so the next context can start cleanly.";
 	return `A real handoff is required in this session now.
 You must complete it before continuing normal work.
 Save durable findings to the notebook if needed, then call handoff.
@@ -44,7 +44,7 @@ ${readonlyContinuation}`;
 function buildBoundaryNudge(state: NudgeState, eligible: boolean): string {
 	const boundary = state.pendingTopicBoundaryHint!;
 	const action = eligible
-		? "Prefer a deliberate handoff before continuing under the new topic: save durable findings to the notebook, draft a concise situational brief, and call handoff."
+		? "Prefer a deliberate handoff before continuing under the new topic: save durable findings to the notebook, draft a concise situational prompt, and call handoff."
 		: "Continue working until context is ready for handoff; this boundary remains advisory for now.";
 	return `Notebook topic changed from ${boundary.from ?? "(unset)"} to ${boundary.to}.
 Treat this as a strong task-boundary signal. ${action}

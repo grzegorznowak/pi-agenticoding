@@ -49,14 +49,6 @@ import {
 const CHILD_MAX_LINES = 2000;
 const CHILD_MAX_BYTES = 50 * 1024;
 
-const spawnCleanupErrors = new WeakMap<Promise<unknown>, { primary: unknown; cleanup: unknown }>();
-
-/** Return a disposal failure retained alongside a primary spawn failure. */
-export function getSpawnCleanupError(error: unknown, execution: Promise<unknown>): unknown {
-	const retained = spawnCleanupErrors.get(execution);
-	return retained && Object.is(retained.primary, error) ? retained.cleanup : undefined;
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────
 
 // Widen to accept AgentMessage variants from session messages.
@@ -114,6 +106,12 @@ export function truncateText(text: string, maxLines: number, maxBytes: number): 
  * Appends a "[Result truncated...]" advisory when truncation occurs.
  * Returns { text, truncated }.
  */
+function notifyCleanupFailure(ctx: ExtensionContext, error: unknown): void {
+	if (!ctx.hasUI) return;
+	const message = error instanceof Error ? error.message : String(error);
+	ctx.ui.notify(`Spawn cleanup failed: ${message}`, "error");
+}
+
 function truncateResult(text: string): { text: string; truncated: boolean } {
 	const lines = text.split("\n");
 	const bytes = new TextEncoder().encode(text).length;
@@ -265,7 +263,6 @@ export function createChildTools(
  *   - state.liveChildSessions.set(toolCallId, session) on creation
  *   - both registries delete(toolCallId) on error and completion paths
  *
- * @param sessionFactory - Test seam for mocking createAgentSession.
  */
 export function executeSpawn(
 	toolCallId: string,
@@ -332,7 +329,7 @@ export function executeSpawn(
 		`Children cannot spawn further children. ` +
 		`Your result will be read by the parent, so be concise and complete.\n\n` +
 		`${notebookListing}\n\n` +
-		`If you write notebook pages, store only durable grounding knowledge for future contexts. ` +
+		`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
 		`Keep transient task state in your final reply to the parent.\n\n` +
 		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
 		`When complete, provide a concise summary of findings. ` +
@@ -398,8 +395,8 @@ export function executeSpawn(
 		throw invalidatedError;
 	};
 
-	let primaryError: unknown;
 	let hasPrimaryError = false;
+	let primaryError: unknown;
 	try {
 		if (isStale()) {
 			await abortAndInvalidate();
@@ -519,8 +516,8 @@ export function executeSpawn(
 			details,
 		};
 	} catch (error) {
-		primaryError = error;
 		hasPrimaryError = true;
+		primaryError = error;
 		throw error;
 	} finally {
 		clearChildSession();
@@ -529,13 +526,22 @@ export function executeSpawn(
 			// partial test doubles compatible with the public session boundary.
 			if (typeof session.dispose === "function") session.dispose();
 		} catch (cleanupError) {
-			if (hasPrimaryError) {
-				spawnCleanupErrors.set(execution, {
-					primary: primaryError,
-					cleanup: cleanupError,
-				});
-			} else {
+			if (!hasPrimaryError) {
 				throw cleanupError;
+			}
+			// Headless callers get no UI notification, so preserve both failures.
+			if (ctx.hasUI) {
+				try {
+					notifyCleanupFailure(ctx, cleanupError);
+				} catch (notifyError) {
+					// Do not mutate the primary error: its own cause may carry the root failure.
+					throw new AggregateError(
+						[primaryError, cleanupError, notifyError],
+						"Spawn, cleanup, and notification failed.",
+					);
+				}
+			} else {
+				throw new AggregateError([primaryError, cleanupError], "Spawn failed and cleanup failed.");
 			}
 		}
 	}
@@ -552,7 +558,6 @@ export function executeSpawn(
  *
  * @param pi - Extension API instance for tool registration
  * @param state - Shared session state (child sessions, epoch, notebook)
- * @param sessionFactory - Optional test seam for mocking createAgentSession
  */
 export function registerSpawnTool(
 	pi: ExtensionAPI,
