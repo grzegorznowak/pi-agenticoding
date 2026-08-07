@@ -113,10 +113,10 @@ function assertResetClears(state: AgenticodingState): void {
 	assert.equal(state.modelGroups.validation, null, "modelGroups.validation must be null after reset");
 	assert.equal(state.readonlyEnabled, false, "readonlyEnabled must be false after reset");
 	assert.equal(state.readonlyNudgePending, false, "readonlyNudgePending must be false after reset");
-	assert.equal(state.readonlySkillCache.size, 0, "readonlySkillCache must be empty after reset");
-	assert.equal(state.readonlyPromptCache.size, 0, "readonlyPromptCache must be empty after reset");
-	assert.equal(state.readonlySkillIssues.size, 0, "readonlySkillIssues must be empty after reset");
-	assert.equal(state.readonlyPromptIssues.size, 0, "readonlyPromptIssues must be empty after reset");
+	assert.equal(state.frontmatterSkillCache.size, 0, "frontmatterSkillCache must be empty after reset");
+	assert.equal(state.frontmatterPromptCache.size, 0, "frontmatterPromptCache must be empty after reset");
+	assert.equal(state.frontmatterSkillIssues.size, 0, "frontmatterSkillIssues must be empty after reset");
+	assert.equal(state.frontmatterPromptIssues.size, 0, "frontmatterPromptIssues must be empty after reset");
 	assert.equal(state.pendingReadonlyCommands.length, 0, "pendingReadonlyCommands must be empty after reset");
 	assert.equal(state.lastWatchdogBand, null, "lastWatchdogBand must be null after reset");
 }
@@ -269,10 +269,10 @@ test("Property 4: Reset clears all state fields", async () => {
 					await saveNotebookPage(mockPi, s2, "my-page", "some content");
 					s2.readonlyEnabled = true;
 					s2.readonlyNudgePending = true;
-					s2.readonlySkillCache.set("skill-a", { readonly: true, mtimeMs: 1, filePath: "/tmp/skill-a.md" });
-					s2.readonlyPromptCache.set("prompt-a", { readonly: false, mtimeMs: 1, filePath: "/tmp/prompt-a.md" });
-					s2.readonlySkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
-					s2.readonlyPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
+					s2.frontmatterSkillCache.set("skill-a", { readonly: true, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: 1, filePath: "/tmp/skill-a.md" });
+					s2.frontmatterPromptCache.set("prompt-a", { readonly: false, modelGroup: null, explicitModel: null, explicitThinking: null, mtimeMs: 1, filePath: "/tmp/prompt-a.md" });
+					s2.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
+					s2.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
 					s2.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
 					s2.modelGroups.groups = [{
 						name: "stale",
@@ -370,6 +370,14 @@ test("invalidateHandoffState clears branch-local compaction reservations", () =>
 	assert.equal(state.handoffCompactionGeneration, null);
 	assert.equal(state.pendingRequestedHandoff, null);
 	assert.equal(state.pendingTopicBoundaryHint, null);
+});
+
+test("reset clears deferred readonly frontmatter commands", () => {
+	const state = createState();
+	state.pendingReadonlyCommands.push({ type: "skill", name: "a" });
+
+	resetState(state);
+	assert.equal(state.pendingReadonlyCommands.length, 0, "readonly queue cleared");
 });
 
 test("Property 6: childSessionEpoch monotonicity (never decreases)", async () => {

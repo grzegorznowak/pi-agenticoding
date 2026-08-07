@@ -13,7 +13,7 @@ import {
 	READONLY_HANDOFF_RETRY_ADVICE,
 	buildReadonlyHandoffWaitNotice,
 	buildReadonlyRequestedHandoffContinuation,
-} from "./readonly-copy.js";
+} from "./notifications.js";
 import { STATUS_KEY_HANDOFF } from "./tui.js";
 
 /** Max turns a required handoff stays sticky before auto-clear.

@@ -1,5 +1,5 @@
 /**
- * Smoke tests for readonly-copy.ts constants.
+ * Smoke tests for notifications.ts constants.
  *
  * Verifies the composition chain integrity — a typo in a base constant
  * would cascade to downstream constants. These tests catch that cheaply.
@@ -34,6 +34,17 @@ import {
 	READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION,
 	READONLY_HANDOFF_RETRY_ADVICE,
 	READONLY_CHILD_AUTHORITY_NOTE,
+	buildModelGroupNotification,
+	buildModelGroupErrorNotification,
+	buildModelGroupSetModelErrorNotification,
+	buildModelFrontmatterNotification,
+	buildModelGroupOverrideWarningNotification,
+	buildThinkingFrontmatterNotification,
+	buildModelFrontmatterErrorNotification,
+	buildModelFrontmatterSetModelErrorNotification,
+	buildModelFrontmatterAuthErrorNotification,
+	buildStreamingModelSelectionBlockedNotification,
+	buildStreamingReadonlyFrontmatterBlockedNotification,
 	buildReadonlyBashBlockReason,
 	buildReadonlyFrontmatterNotification,
 	buildReadonlyPackageManagerBlockReason,
@@ -43,7 +54,7 @@ import {
 	buildReadonlyRequestedHandoffContinuation,
 	buildReadonlyHandoffWaitNotice,
 	buildReadonlyHandoffCommandNotice,
-} from "../../readonly-copy.js";
+} from "../../notifications.js";
 
 const allConstants = {
 	READONLY_BASH_SCOPE,
@@ -159,6 +170,8 @@ test("shared readonly fragments keep copy aligned across contexts", () => {
 	assert.match(READONLY_CHILD_AUTHORITY_NOTE, /inherit readonly authority/i);
 	assert.equal(buildReadonlyFrontmatterNotification(true, "/review"), "Readonly mode enabled via `/review` frontmatter");
 	assert.equal(buildReadonlyFrontmatterNotification(false, "/review"), "Readonly mode disabled via `/review` frontmatter");
+	assert.match(buildStreamingModelSelectionBlockedNotification("/review"), /model-selection frontmatter requires an idle agent/i);
+	assert.match(buildStreamingReadonlyFrontmatterBlockedNotification("/review"), /readonly frontmatter requires an idle agent/i);
 	assert.match(buildReadonlyPackageManagerBlockReason("npm", "install"), /blocked in readonly mode/i);
 	assert.match(buildReadonlySandboxPathError("/tmp/'bad"), /cannot safely escape/i);
 });
@@ -167,4 +180,72 @@ test("readonly command consumes the centralized description", () => {
 	const pi = createTestPI();
 	registerAgenticoding(pi as any);
 	assert.equal(pi.commands.get("readonly")?.description, READONLY_COMMAND_DESCRIPTION);
+});
+
+// ── Model group / model / thinking frontmatter builders ───────────
+
+test("buildModelGroupNotification includes group, model, and command ref", () => {
+	const msg = buildModelGroupNotification("reviewer", "openai", "gpt-4o", "/review");
+	assert.equal(msg, "Model changed to openai/gpt-4o via group `reviewer` from `/review` frontmatter");
+});
+
+test("buildModelGroupErrorNotification includes group and detail", () => {
+	const msg = buildModelGroupErrorNotification("reviewer", "/review", "not defined");
+	assert.equal(msg, "Cannot execute `/review`: Model Group `reviewer` error — not defined.");
+});
+
+test("buildModelGroupSetModelErrorNotification includes group, model, and command ref", () => {
+	const msg = buildModelGroupSetModelErrorNotification("reviewer", "openai", "gpt-4o", "/review");
+	assert.equal(msg, "Cannot execute `/review`: failed to switch to routed model openai/gpt-4o from group `reviewer`.");
+});
+
+test("buildModelFrontmatterNotification includes model and command ref", () => {
+	const msg = buildModelFrontmatterNotification("openai", "gpt-4o", "/review");
+	assert.equal(msg, "Model switched to openai/gpt-4o via `/review` frontmatter");
+});
+
+test("buildModelGroupOverrideWarningNotification includes group and command ref", () => {
+	const msg = buildModelGroupOverrideWarningNotification("reviewer", "/review");
+	assert.equal(msg, "Model Group `reviewer` overridden by explicit `model` from `/review` frontmatter");
+});
+
+test("buildThinkingFrontmatterNotification includes level and command ref", () => {
+	const msg = buildThinkingFrontmatterNotification("high", "/review");
+	assert.equal(msg, "Thinking level set to high via `/review` frontmatter");
+});
+
+test("buildModelFrontmatterErrorNotification includes model and detail", () => {
+	const msg = buildModelFrontmatterErrorNotification("openai", "gpt-4o", "/review", "not found in registry");
+	assert.equal(msg, "Cannot execute `/review`: model openai/gpt-4o not found in registry.");
+});
+
+test("buildModelFrontmatterSetModelErrorNotification includes model and command ref", () => {
+	const msg = buildModelFrontmatterSetModelErrorNotification("openai", "gpt-4o", "/review");
+	assert.equal(msg, "Cannot execute `/review`: failed to switch to model openai/gpt-4o.");
+});
+
+test("buildModelFrontmatterAuthErrorNotification includes model and command ref", () => {
+	const msg = buildModelFrontmatterAuthErrorNotification("openai", "gpt-4o", "/review");
+	assert.equal(msg, "Cannot execute `/review`: no API key for model openai/gpt-4o.");
+});
+
+test("streaming model-selection notification explains the idle-agent requirement", () => {
+	assert.equal(
+		buildStreamingModelSelectionBlockedNotification("/review"),
+		"Cannot execute `/review` during streaming: model-selection frontmatter requires an idle agent.",
+	);
+});
+
+test("model-group builders include commandRef in output", () => {
+	assert.ok(buildModelGroupNotification("g", "p", "m", "/cmd").includes("/cmd"));
+	assert.ok(buildModelGroupErrorNotification("g", "/cmd", "d").includes("/cmd"));
+	assert.ok(buildModelGroupSetModelErrorNotification("g", "p", "m", "/cmd").includes("/cmd"));
+});
+
+test("model frontmatter builders include commandRef in output", () => {
+	assert.ok(buildModelFrontmatterNotification("p", "m", "/cmd").includes("/cmd"));
+	assert.ok(buildModelGroupOverrideWarningNotification("g", "/cmd").includes("/cmd"));
+	assert.ok(buildModelFrontmatterErrorNotification("p", "m", "/cmd", "d").includes("/cmd"));
+	assert.ok(buildModelFrontmatterSetModelErrorNotification("p", "m", "/cmd").includes("/cmd"));
+	assert.ok(buildModelFrontmatterAuthErrorNotification("p", "m", "/cmd").includes("/cmd"));
 });

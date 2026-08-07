@@ -12,7 +12,7 @@
  *   - state reset on /new
  */
 
-import type { ExtensionAPI, ExtensionContext, Skill, SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -51,12 +51,25 @@ import {
 	READONLY_PENDING_HANDOFF_READONLY_OFF_NOTIFICATION,
 	READONLY_PENDING_HANDOFF_READONLY_ON_NOTIFICATION,
 	READONLY_WRITE_EDIT_BLOCK_REASON,
+	buildModelFrontmatterAuthErrorNotification,
+	buildModelFrontmatterErrorNotification,
+	buildModelFrontmatterNotification,
+	buildModelFrontmatterSetModelErrorNotification,
+	buildStreamingModelSelectionBlockedNotification,
+	buildStreamingReadonlyFrontmatterBlockedNotification,
+	buildModelGroupErrorNotification,
+	buildModelGroupNotification,
+	buildModelGroupOverrideWarningNotification,
+	buildModelGroupSetModelErrorNotification,
+	buildThinkingFrontmatterNotification,
 	buildReadonlyDisabledContextSuffix,
 	buildReadonlyFrontmatterNotification,
 	buildReadonlyTopicBoundaryNotification,
-} from "./readonly-copy.js";
+} from "./notifications.js";
+import { clampThinkingLevel, type Api, type Model, type ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { registerSpawnTool } from "./spawn/index.js";
 import { registerModelGroupsCommand } from "./model-groups/command.js";
+import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
 import { getEffectiveModelGroupNames } from "./model-groups/router.js";
 import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
@@ -64,14 +77,21 @@ import { escapeDisplayLabel } from "./model-groups/display.js";
 import type { ModelGroupsAccess } from "./model-groups/types.js";
 import {
 	cacheLookupCommand,
+	cacheLookupCommandExplicitModel,
+	cacheLookupCommandExplicitThinking,
 	cacheLookupCommandIssue,
+	cacheLookupCommandModelGroup,
 	cacheLookupSkill,
+	cacheLookupSkillExplicitModel,
+	cacheLookupSkillExplicitThinking,
 	cacheLookupSkillIssue,
-	formatReadonlyFrontmatterIssue,
+	cacheLookupSkillModelGroup,
+	formatFrontmatterIssue,
 	populateFromSkills,
 	populatePromptCacheFromResolvedCommandsAndDirs,
-	type ReadonlyCacheIssue,
-} from "./readonly-cache.js";
+	populateSkillCacheFromResolvedCommands,
+	type FrontmatterIssue,
+} from "./frontmatter-cache.js";
 import {
 	STATUS_KEY_HANDOFF,
 	STATUS_KEY_READONLY,
@@ -83,22 +103,23 @@ import { applyReadonlyBashGuard } from "./readonly-bash.js";
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /**
- * Populate the readonly frontmatter cache from loaded skills and prompt
+ * Populate the frontmatter cache from loaded skills and prompt
  * commands/directories. Always called before toggle resolution so the cache
  * is fresh for the current input.
  */
-function populateReadonlyCache(
+function populateFrontmatterCache(
 	state: AgenticodingState,
-	event: { systemPromptOptions?: { skills?: Skill[] } },
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
+	skills?: Skill[],
 ): void {
-	populateFromSkills(state, event.systemPromptOptions?.skills ?? []);
-	populatePromptCacheFromResolvedCommandsAndDirs(state, pi.getCommands(), ctx.cwd, ctx.isProjectTrusted());
-}
-
-function isPromptCommand(commands: SlashCommandInfo[], name: string): boolean {
-	return commands.some((command) => command.name === name && command.source === "prompt");
+	const commands = pi.getCommands();
+	if (skills) {
+		populateFromSkills(state, skills);
+	} else {
+		populateSkillCacheFromResolvedCommands(state, commands);
+	}
+	populatePromptCacheFromResolvedCommandsAndDirs(state, commands, ctx.cwd, ctx.isProjectTrusted());
 }
 
 const READONLY_BYPASS_COMMANDS = new Set(["readonly", "notebook", "handoff"]);
@@ -116,32 +137,79 @@ function alignPendingReadonlyHandoff(state: AgenticodingState, readonly: boolean
 	state.pendingRequestedHandoff.resumeReadonlyAfterHandoff = readonly;
 }
 
-function formatReadonlyCommandRef(command: { type: "skill" | "command"; name: string }): string {
+type PendingCommand = { type: "skill" | "command"; name: string };
+type ModelSelection = {
+	model: string | null;
+	group: string | null;
+	thinking: ModelThinkingLevel | null;
+	issue: FrontmatterIssue | null;
+};
+
+const cacheResolver = {
+	skill: {
+		readonly: cacheLookupSkill,
+		model: cacheLookupSkillExplicitModel,
+		group: cacheLookupSkillModelGroup,
+		thinking: cacheLookupSkillExplicitThinking,
+		issue: cacheLookupSkillIssue,
+	},
+	command: {
+		readonly: cacheLookupCommand,
+		model: cacheLookupCommandExplicitModel,
+		group: cacheLookupCommandModelGroup,
+		thinking: cacheLookupCommandExplicitThinking,
+		issue: cacheLookupCommandIssue,
+	},
+};
+
+function resolveModelSelection(state: AgenticodingState, pending: PendingCommand): ModelSelection {
+	const resolver = cacheResolver[pending.type];
+	return {
+		model: resolver.model(state, pending.name),
+		group: resolver.group(state, pending.name),
+		thinking: resolver.thinking(state, pending.name),
+		issue: resolver.issue(state, pending.name),
+	};
+}
+
+function hasModelSelection(selection: ModelSelection): boolean {
+	return Boolean(selection.model || selection.group || selection.thinking);
+}
+
+function resolveReadonlySelection(state: AgenticodingState, pending: PendingCommand): boolean | null {
+	return cacheResolver[pending.type].readonly(state, pending.name);
+}
+
+function formatCommandRef(command: PendingCommand): string {
 	return command.type === "skill" ? `/skill:${command.name}` : `/${command.name}`;
 }
 
-function recordReadonlyFrontmatterIssue(
+function recordFrontmatterIssue(
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
-	command: { type: "skill" | "command"; name: string },
-	issue: ReadonlyCacheIssue,
+	command: PendingCommand,
+	issue: FrontmatterIssue,
 ): void {
-	pi.appendEntry("agenticoding-readonly-frontmatter-issue", { name: command.name, type: command.type, issue });
+	pi.appendEntry("agenticoding-frontmatter-issue", { name: command.name, type: command.type, issue });
 	if (ctx.hasUI) {
-		ctx.ui.notify(formatReadonlyFrontmatterIssue(formatReadonlyCommandRef(command), issue), "warning");
+		ctx.ui.notify(formatFrontmatterIssue(formatCommandRef(command), issue), "warning");
 	}
+}
+
+// Parallel deferred queues must assign each cache issue to one reporter.
+function isReadonlyFrontmatterIssue(issue: FrontmatterIssue): boolean {
+	return issue.kind === "invalid-readonly-value" || issue.kind === "malformed-frontmatter" || issue.kind === "unreadable-file";
 }
 
 /**
  * Consume any deferred readonly toggle recorded by the `input` handler.
- * Must be called after `populateReadonlyCache` so the cache is populated.
+ * Must be called after `populateFrontmatterCache` so the cache is populated.
  */
-function consumePendingReadonlyToggle(
+function consumePendingReadonlyCommands(
 	state: AgenticodingState,
 	ctx: ExtensionContext,
 	pi: ExtensionAPI,
 ): void {
-	const commands = pi.getCommands();
 	// Readonly is a TUI-only feature. Headless/RPC sessions must not inherit a
 	// queued slash-command toggle from some earlier interactive input source, so
 	// drop any deferred intents here instead of letting them mutate headless runs.
@@ -167,7 +235,7 @@ function consumePendingReadonlyToggle(
 			const issue = pendingCommand.type === "skill"
 				? cacheLookupSkillIssue(state, pendingCommand.name)
 				: cacheLookupCommandIssue(state, pendingCommand.name);
-			if (issue) recordReadonlyFrontmatterIssue(ctx, pi, pendingCommand, issue);
+			if (issue && isReadonlyFrontmatterIssue(issue)) recordFrontmatterIssue(ctx, pi, pendingCommand, issue);
 			continue;
 		}
 
@@ -185,11 +253,197 @@ function consumePendingReadonlyToggle(
 		pi.appendEntry("agenticoding-readonly", { enabled: readonly });
 
 		if (ctx.hasUI) {
-			const commandRef = formatReadonlyCommandRef(pendingCommand);
+			const commandRef = formatCommandRef(pendingCommand);
 			ctx.ui.notify(buildReadonlyFrontmatterNotification(readonly, commandRef), "info");
 		}
 		return;
 	}
+}
+
+async function safeSetModel(pi: ExtensionAPI, model: Model<Api>, onError: () => void): Promise<boolean> {
+	try {
+		if (await pi.setModel(model)) return true;
+	} catch {
+		// Pi can reject after its configured-auth check succeeds.
+	}
+	onError();
+	return false;
+}
+
+async function preflightModelSelection(
+	state: AgenticodingState,
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	pending: PendingCommand,
+	selection = resolveModelSelection(state, pending),
+): Promise<boolean> {
+	if (!ctx.hasUI || !ctx.model) return false;
+	if (selection.issue && !isReadonlyFrontmatterIssue(selection.issue)) {
+		recordFrontmatterIssue(ctx, pi, pending, selection.issue);
+	}
+	const commandRef = formatCommandRef(pending);
+	if (selection.model) return handleExplicitModelFrontmatter(ctx, pi, selection, commandRef);
+	if (selection.group) return handleModelGroupFrontmatter(state, ctx, pi, selection, commandRef, ctx.model);
+	if (selection.thinking) return handleThinkingOnlyFrontmatter(ctx, pi, selection.thinking, commandRef, ctx.model);
+	return false;
+}
+
+function splitModelId(raw: string): { provider: string; modelId: string } {
+	const idx = raw.indexOf("/");
+	return { provider: raw.slice(0, idx), modelId: raw.slice(idx + 1) };
+}
+
+function findExplicitModel(ctx: ExtensionContext, raw: string, commandRef: string): Model<Api> | null {
+	const { provider, modelId } = splitModelId(raw);
+	const model = ctx.modelRegistry.find(provider, modelId);
+	if (!model) {
+		ctx.ui.notify(buildModelFrontmatterErrorNotification(provider, modelId, commandRef, "not found in registry"), "error");
+		return null;
+	}
+	if (ctx.modelRegistry.hasConfiguredAuth(model)) return model;
+	ctx.ui.notify(buildModelFrontmatterAuthErrorNotification(provider, modelId, commandRef), "error");
+	return null;
+}
+
+function recordExplicitModelSwitch(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	modelRef: string,
+	thinking: ModelThinkingLevel | null,
+	commandRef: string,
+): void {
+	const { provider, modelId } = splitModelId(modelRef);
+	if (thinking) pi.setThinkingLevel(thinking);
+	ctx.ui.notify(buildModelFrontmatterNotification(provider, modelId, commandRef), "info");
+	pi.appendEntry("agenticoding-model-switch", { command: commandRef, provider, modelId, thinking });
+}
+
+async function handleExplicitModelFrontmatter(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	selection: ModelSelection,
+	commandRef: string,
+): Promise<boolean> {
+	if (selection.group) ctx.ui.notify(buildModelGroupOverrideWarningNotification(selection.group, commandRef), "warning");
+	const model = findExplicitModel(ctx, selection.model!, commandRef);
+	if (!model) return true;
+	const notifyError = () => {
+		const { provider, modelId } = splitModelId(selection.model!);
+		ctx.ui.notify(buildModelFrontmatterSetModelErrorNotification(provider, modelId, commandRef), "error");
+	};
+	if (!await safeSetModel(pi, model, notifyError)) return true;
+	const thinking = selection.thinking ? clampThinkingLevel(model, selection.thinking) : null;
+	recordExplicitModelSwitch(ctx, pi, selection.model!, thinking, commandRef);
+	return false;
+}
+
+type ModelRoute = ReturnType<typeof resolveSpawnModelRoute>;
+
+function unknownGroupDetail(state: AgenticodingState, groupName: string): string {
+	const names = getEffectiveModelGroupNames(state.modelGroups.groups);
+	const hint = names.length > 5 ? " Run /model-groups to see all available groups."
+		: names.length > 0 ? ` Available groups: ${names.join(", ")}.` : "";
+	return `Model Group '${groupName}' is not defined.${hint}`;
+}
+
+function recordModelGroupSwitch(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	route: Exclude<ModelRoute, { status: "unknown-fallback" }>,
+	groupName: string,
+	thinking: ModelThinkingLevel,
+	commandRef: string,
+): void {
+	pi.setThinkingLevel(thinking);
+	ctx.ui.notify(buildModelGroupNotification(groupName, route.provider, route.modelId, commandRef), "info");
+	pi.appendEntry("agenticoding-model-group-switch", {
+		command: commandRef,
+		groupName,
+		provider: route.provider,
+		modelId: route.modelId,
+		thinking,
+	});
+}
+
+async function applyModelGroupRoute(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	route: Exclude<ModelRoute, { status: "unknown-fallback" }>,
+	selection: ModelSelection,
+	commandRef: string,
+): Promise<boolean> {
+	const groupName = selection.group!;
+	const onError = () => ctx.ui.notify(
+		buildModelGroupSetModelErrorNotification(groupName, route.provider, route.modelId, commandRef), "error",
+	);
+	if (!await safeSetModel(pi, route.model, onError)) return true;
+	const thinking = selection.thinking ? clampThinkingLevel(route.model, selection.thinking) : route.thinking;
+	recordModelGroupSwitch(ctx, pi, route, groupName, thinking, commandRef);
+	return false;
+}
+
+function resolveModelGroupRoute(
+	state: AgenticodingState,
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	groupName: string,
+	currentModel: Model<Api>,
+): ModelRoute {
+	return resolveSpawnModelRoute({
+		requestedGroup: groupName,
+		groups: state.modelGroups.groups,
+		parentModel: currentModel,
+		parentThinking: pi.getThinkingLevel(),
+		modelRegistry: ctx.modelRegistry,
+	});
+}
+
+async function handleModelGroupFrontmatter(
+	state: AgenticodingState, ctx: ExtensionContext, pi: ExtensionAPI,
+	selection: ModelSelection, commandRef: string, currentModel: Model<Api>,
+): Promise<boolean> {
+	try {
+		const route = resolveModelGroupRoute(state, ctx, pi, selection.group!, currentModel);
+		if (route.status !== "unknown-fallback") return applyModelGroupRoute(ctx, pi, route, selection, commandRef);
+		const detail = unknownGroupDetail(state, selection.group!);
+		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, detail), "error");
+		return true;
+	} catch (error) {
+		if (!(error instanceof SpawnRouteError)) throw error;
+		ctx.ui.notify(buildModelGroupErrorNotification(selection.group!, commandRef, error.message), "error");
+		return true;
+	}
+}
+
+function handleThinkingOnlyFrontmatter(
+	ctx: ExtensionContext,
+	pi: ExtensionAPI,
+	explicitThinking: ModelThinkingLevel,
+	commandRef: string,
+	currentModel: Model<Api>,
+): boolean {
+	const thinking = clampThinkingLevel(currentModel, explicitThinking);
+	pi.setThinkingLevel(thinking);
+	ctx.ui.notify(buildThinkingFrontmatterNotification(thinking, commandRef), "info");
+	pi.appendEntry("agenticoding-thinking-change", { command: commandRef, thinking });
+	return false;
+}
+
+function blockStreamingFrontmatter(
+	ctx: ExtensionContext,
+	pending: PendingCommand,
+	selection: ModelSelection,
+	readonly: boolean | null,
+	streamingBehavior: "steer" | "followUp" | undefined,
+): boolean {
+	if (!streamingBehavior) return false;
+	if (hasModelSelection(selection)) {
+		ctx.ui.notify(buildStreamingModelSelectionBlockedNotification(formatCommandRef(pending)), "warning");
+		return true;
+	}
+	if (readonly === null) return false;
+	ctx.ui.notify(buildStreamingReadonlyFrontmatterBlockedNotification(formatCommandRef(pending)), "warning");
+	return true;
 }
 
 function modelGroupsAccess(ctx: ExtensionContext): ModelGroupsAccess {
@@ -331,47 +585,40 @@ export default function (pi: ExtensionAPI): void {
 		}
 	});
 
-	// ── Readonly: record slash-command intent for deferred toggle ─
-	// Input interception runs earlier than the point where Pi has resolved the
-	// authoritative skill/prompt-command metadata for this turn. Record only the
-	// slash-command token here, then resolve readonly frontmatter later in
-	// before_agent_start once the cache and registry view are current.
+	// ── Preflight model-selection frontmatter before slash-command expansion ──
 	pi.on("input", async (event, ctx) => {
-		// Only TUI sessions should enqueue a readonly toggle. Headless/RPC runs
-		// preserve the existing contract: readonly is a UI-only feature.
-		// Extension-sourced steer/followUp text must not mutate readonly state.
-		// Only interactive slash commands have authority to enqueue a toggle.
+		// Extension-sourced steer/followUp text and headless sessions must not
+		// mutate the interactive frontmatter state.
 		if (!ctx.hasUI || event.source === "extension") return { action: "continue" };
 
-		const text = event.text;
-		// Capture the full first slash-command token and defer authority to the
-		// resolved registry in before_agent_start. This avoids drifting from Pi's
-		// naming rules when prompt/skill names include dots or suffixed segments.
-		const skillName = text.match(/^\/skill:([^\s/]+)/)?.[1];
-		if (skillName) {
-			state.pendingReadonlyCommands.push({ type: "skill", name: skillName });
-			return { action: "continue" };
-		}
+		const skillName = event.text.match(/^\/skill:([^\s]+)/)?.[1];
+		const commandName = event.text.match(/^\/([^\s]+)/)?.[1];
+		if (!skillName && !commandName) return { action: "continue" };
 
-		const commandName = text.match(/^\/([^\s/]+)/)?.[1];
-		if (!commandName) return { action: "continue" };
-
-		// Prefer the live command registry when it's already available, but don't
-		// rely on it as the sole authority at input time: some runtimes surface
-		// prompt commands only later in before_agent_start. If the command is
-		// unknown here, defer it optimistically unless it's one of the builtin
-		// commands that must never create a stale no-op queue entry.
 		const commands = pi.getCommands();
-		if (isBuiltinReadonlyBypassCommand(commandName)) return { action: "continue" };
-		if (isPromptCommand(commands, commandName)) {
-			state.pendingReadonlyCommands.push({ type: "command", name: commandName });
-			return { action: "continue" };
-		}
-		if (commands.some((command) => command.name === commandName)) {
+		const pending = skillName
+			? { type: "skill" as const, name: skillName }
+			: { type: "command" as const, name: commandName! };
+		if (!skillName && isBuiltinReadonlyBypassCommand(pending.name)) return { action: "continue" };
+		if (!skillName && commands.some((command) => command.name === pending.name && command.source !== "prompt")) {
 			return { action: "continue" };
 		}
 
-		state.pendingReadonlyCommands.push({ type: "command", name: commandName });
+		// Command metadata is already available at input time. This prevents a
+		// failed selection from reaching Pi's expansion/agent-start lifecycle.
+		populateFrontmatterCache(state, ctx, pi);
+		refreshModelGroupsState(state, ctx);
+
+		const selection = resolveModelSelection(state, pending);
+		const readonly = resolveReadonlySelection(state, pending);
+		if (blockStreamingFrontmatter(ctx, pending, selection, readonly, event.streamingBehavior)) {
+			return { action: "handled" };
+		}
+		if (await preflightModelSelection(state, ctx, pi, pending, selection)) return { action: "handled" };
+
+		// Readonly intentionally remains deferred: its authority is resolved with
+		// Pi's final skill metadata in before_agent_start.
+		state.pendingReadonlyCommands.push(pending);
 		return { action: "continue" };
 	});
 
@@ -479,14 +726,13 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── before_agent_start: populate readonly cache, consume the deferred
-	//    queue until the first real readonly decision, then inject context
+	// ── before_agent_start: resolve deferred readonly, then inject context
 	//    primer + notebook ─────────────────────────────────────────────
 	pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
 		if (state.pendingReadonlyCommands.length > 0) {
-			populateReadonlyCache(state, event, ctx, pi);
+			populateFrontmatterCache(state, ctx, pi, event.systemPromptOptions.skills);
 		}
-		consumePendingReadonlyToggle(state, ctx, pi);
+		consumePendingReadonlyCommands(state, ctx, pi);
 
 		// Update TUI indicators before each user-prompt agent run
 		updateIndicators(ctx, state);

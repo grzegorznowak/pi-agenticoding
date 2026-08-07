@@ -6,9 +6,9 @@ pi-agenticoding is a Pi extension. It registers tools and hooks into the agent l
 
 | Hook | Role |
 |---|---|
-| `before_agent_start` | Refreshes Model Groups, injects the context-management primer, names-only group guidance, and live notebook index; resolves deferred `readonly:` frontmatter |
+| `before_agent_start` | Refreshes Model Groups, resolves deferred readonly frontmatter, then injects the context-management primer, names-only group guidance, and live notebook index |
 | `context` | Advisory watchdog reminders when context is elevated; readonly toggle nudges |
-| `input` | Queues skill/prompt names for deferred readonly frontmatter resolution |
+| `input` | Resolves model-selection frontmatter during idle input; blocks it during streaming; queues readonly resolution |
 | `tool_call` | Readonly blocks write/edit/unguarded bash; blocks handoff unless a requested bypass is active |
 | `session_start` | Reconstructs notebook pages/epoch/watermark from the active branch and rehydrates readonly state; loads and validates Model Groups, registers group autocomplete, reports config issues, and resets session state on `/new` |
 | `session_tree` | Invalidates branch-local handoff work, reconstructs notebook pages/epoch/watermark from the newly active branch, rehydrates readonly state, refreshes indicators |
@@ -50,7 +50,15 @@ interface AgenticodingState {
 
 **Handoff** — Requires a real prompt and a meaningful context load (rejects empty prompts, very small sessions, or missing usage). Notebook bodies are not inlined into the prompt; the next context in this work stream fetches pages by name. Under readonly, handoff is blocked unless the user runs `/handoff` or crosses an eligible human topic boundary; readonly can resume after compaction. Compaction replaces the prior transcript with the prompt: the next turns see a small context again (quality), and providers start a new input prefix for billing/cache (the dropped history is no longer in that prefix). Spawn runs children in separate context so their token use does not permanently inflate the parent. This extension does not configure provider cache TTLs or breakpoints.
 
-**Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Skills/prompts may set `readonly: true` in frontmatter to defer-enable when invoked. Write/edit always blocked at the tool boundary. Bash uses a two-layer guard:
+**Skill and prompt frontmatter** — Interactive TUI invocations resolve model selection during idle `input`; headless/RPC invocations ignore it. `readonly: true|false` alone is deferred to `before_agent_start`, where complete skill metadata is available.
+
+- `model: <provider>/<model-id>` selects a configured, authenticated model. Only the first slash separates the provider, so model IDs may contain slashes.
+- `model-group: <group-name>` routes through a configured Model Group. An explicit `model` takes precedence.
+- `thinking: off|minimal|low|medium|high|xhigh|max` is capability-clamped for the selected or current model and overrides group thinking.
+
+A failed model change visibly blocks command expansion and records no success entry. During streaming steer/follow-up, commands with model-selection frontmatter are visibly blocked without model or thinking mutation; commands without it continue. Invalid frontmatter is ignored with a TUI warning.
+
+**Readonly** — Session-persisted research posture. Toggle via `/readonly`, Ctrl+Shift+R, or `--readonly`. Write/edit always blocked at the tool boundary. Bash uses a two-layer guard:
 
 | Platform | Enforcement |
 |---|---|

@@ -2,7 +2,7 @@
  * Readonly frontmatter integration tests.
  *
  * Exercises the full pipeline:
- *   input queue → before_agent_start → consumePendingReadonlyToggle
+ *   input queue → before_agent_start → consumePendingReadonlyCommands
  */
 
 import test from "node:test";
@@ -44,7 +44,7 @@ function makeNotifyBeforeStartCtx() {
 	};
 }
 
-function makeResolvedCommand(name: string, filePath: string, source: "prompt" | "builtin" = "prompt") {
+function makeResolvedCommand(name: string, filePath: string, source: "prompt" | "builtin" | "skill" = "prompt") {
 	return {
 		name,
 		source,
@@ -55,6 +55,10 @@ function makeResolvedCommand(name: string, filePath: string, source: "prompt" | 
 
 function makePromptCommand(name: string, filePath: string) {
 	return makeResolvedCommand(name, filePath, "prompt");
+}
+
+function makeSkillCommand(name: string, filePath: string) {
+	return makeResolvedCommand(`skill:${name}`, filePath, "skill");
 }
 
 function makeSkill(name: string, filePath: string) {
@@ -125,6 +129,35 @@ test("dotted /name command activates readonly frontmatter", async () => {
 	assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block, true);
 });
 
+test("embedded-slash prompt and skill tokens do not apply readonly frontmatter", async () => {
+	const cases = [
+		{ text: "/review/typo", type: "prompt" as const },
+		{ text: "/skill:review/typo", type: "skill" as const },
+	];
+	for (const scenario of cases) {
+		const dir = await tmpDir();
+		try {
+			const filePath = await writePrompt(dir, "review", true);
+			const { pi, toolCall } = registerReadonlyPI();
+			const [inputHandler] = pi.handlers.get("input")!;
+			const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+			const ctx = makeBeforeStartCtx();
+			if (scenario.type === "prompt") pi.setCommands([makePromptCommand("review", filePath)]);
+
+			const result = await inputHandler({ text: scenario.text, source: "interactive" }, ctx);
+			assert.deepEqual(result, { action: "continue" });
+			await beforeStartHandler({
+				systemPrompt: "",
+				systemPromptOptions: { skills: scenario.type === "skill" ? [makeSkill("review", filePath)] : [] },
+			}, ctx);
+			assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
+			assert.equal(pi.appendedEntries.some((entry: any) => entry.customType === "agenticoding-readonly"), false);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}
+});
+
 test("unknown /command without frontmatter produces no toggle", async () => {
 	const { pi, toolCall } = registerReadonlyPI();
 	const [inputHandler] = pi.handlers.get("input")!;
@@ -171,7 +204,7 @@ test("before_agent_start skips readonly cache population while no slash-command 
 		pi.setCommands([makePromptCommand("broken", filePath)]);
 
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
-		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly-frontmatter-issue"), undefined);
+		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-frontmatter-issue"), undefined);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -373,23 +406,48 @@ test("queued slash + extension message preserves the first pending command", asy
 	}
 });
 
-test("queued slash + plain text preserves the first pending command", async () => {
-	const dir = await tmpDir();
-	try {
-		const filePath = await writePrompt(dir, "my-prompt", true);
-		const { pi, toolCall } = registerReadonlyPI();
-		const [inputHandler] = pi.handlers.get("input")!;
-		const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
-		const ctx = makeBeforeStartCtx();
-		pi.setCommands([makePromptCommand("my-prompt", filePath)]);
+test("streaming readonly frontmatter is blocked without a delayed toggle", async () => {
+	const cases = [
+		{ readonly: true, streamingBehavior: "steer" as const, type: "prompt" as const },
+		{ readonly: true, streamingBehavior: "followUp" as const, type: "skill" as const },
+		{ readonly: false, streamingBehavior: "steer" as const, type: "skill" as const },
+		{ readonly: false, streamingBehavior: "followUp" as const, type: "prompt" as const },
+	];
+	for (const scenario of cases) {
+		const dir = await tmpDir();
+		try {
+			const targetPath = await writePrompt(dir, "target", scenario.readonly);
+			const { pi, toolCall } = registerReadonlyPI();
+			const [inputHandler] = pi.handlers.get("input")!;
+			const [beforeStartHandler] = pi.handlers.get("before_agent_start")!;
+			const { ctx, notifications } = makeNotifyBeforeStartCtx();
+			const commands = [scenario.type === "skill" ? makeSkillCommand("target", targetPath) : makePromptCommand("target", targetPath)];
+			if (!scenario.readonly) {
+				const initialPath = await writePrompt(dir, "initial", true);
+				commands.push(makePromptCommand("initial", initialPath));
+			}
+			pi.setCommands(commands);
 
-		await inputHandler({ text: "/my-prompt", source: "interactive", streamingBehavior: "steer" }, ctx);
-		await inputHandler({ text: "also fix this", source: "interactive", streamingBehavior: "steer" }, ctx);
-		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+			if (!scenario.readonly) {
+				await inputHandler({ text: "/initial", source: "interactive" }, ctx);
+				await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+			}
+			const readonlyEntries = pi.appendedEntries.filter((entry: any) => entry.customType === "agenticoding-readonly").length;
 
-		assert.equal((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {})).block, true);
-	} finally {
-		await rm(dir, { recursive: true, force: true });
+			const text = scenario.type === "skill" ? "/skill:target" : "/target";
+			const result = await inputHandler({ text, source: "interactive", streamingBehavior: scenario.streamingBehavior }, ctx);
+			assert.deepEqual(result, { action: "handled" });
+			assert.equal(Boolean((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block), !scenario.readonly);
+			assert.equal(pi.appendedEntries.filter((entry: any) => entry.customType === "agenticoding-readonly").length, readonlyEntries);
+			assert.match(notifications.at(-1)?.message ?? "", /readonly frontmatter requires an idle agent/i);
+
+			await inputHandler({ text: "unrelated prompt", source: "interactive" }, ctx);
+			await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
+			assert.equal(Boolean((await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}))?.block), !scenario.readonly);
+			assert.equal(pi.appendedEntries.filter((entry: any) => entry.customType === "agenticoding-readonly").length, readonlyEntries);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	}
 });
 
@@ -526,7 +584,7 @@ test("invalid /prompt readonly value records a warning for the prompt source", a
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
-		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-readonly-frontmatter-issue");
+		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-frontmatter-issue");
 		assert.equal(pi.appendedEntries.at(-1)?.data.type, "command");
 		assert.match(notifications.at(-1)?.message ?? "", /\/broken-prompt/);
 		assert.match(notifications.at(-1)?.message ?? "", /`readonly` frontmatter must be `true` or `false`/);
@@ -552,7 +610,7 @@ test("invalid /skill:name readonly value records a warning for the skill source"
 		}, ctx);
 
 		assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
-		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-readonly-frontmatter-issue");
+		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-frontmatter-issue");
 		assert.equal(pi.appendedEntries.at(-1)?.data.type, "skill");
 		assert.match(notifications.at(-1)?.message ?? "", /\/skill:broken-skill/);
 		assert.match(notifications.at(-1)?.message ?? "", /`readonly` frontmatter must be `true` or `false`/);
@@ -576,7 +634,7 @@ test("unreadable /prompt frontmatter records a warning for the prompt source", a
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
-		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-readonly-frontmatter-issue");
+		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-frontmatter-issue");
 		assert.equal(pi.appendedEntries.at(-1)?.data.type, "command");
 		assert.match(notifications.at(-1)?.message ?? "", /\/dir-prompt/);
 		assert.match(notifications.at(-1)?.message ?? "", /prompt\/skill file could not be read/);
@@ -602,7 +660,7 @@ test("unreadable /skill:name frontmatter records a warning for the skill source"
 		}, ctx);
 
 		assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
-		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-readonly-frontmatter-issue");
+		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-frontmatter-issue");
 		assert.equal(pi.appendedEntries.at(-1)?.data.type, "skill");
 		assert.match(notifications.at(-1)?.message ?? "", /\/skill:dir-skill/);
 		assert.match(notifications.at(-1)?.message ?? "", /prompt\/skill file could not be read/);
@@ -630,7 +688,7 @@ test("invalid queued frontmatter warns and the next valid queued command still t
 		await inputHandler({ text: "/valid-after-broken", source: "interactive" }, ctx);
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
-		assert.equal(pi.appendedEntries.at(-2)?.customType, "agenticoding-readonly-frontmatter-issue");
+		assert.equal(pi.appendedEntries.at(-2)?.customType, "agenticoding-frontmatter-issue");
 		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-readonly");
 		assert.equal(pi.appendedEntries.at(-1)?.data.enabled, true);
 		assert.match(notifications.at(-2)?.message ?? "", /`readonly` frontmatter must be `true` or `false`/);
@@ -657,7 +715,7 @@ test("prompt without readonly frontmatter stays a silent no-op through the defer
 
 		assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
 		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly"), undefined);
-		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly-frontmatter-issue"), undefined);
+		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-frontmatter-issue"), undefined);
 		assert.equal(notifications.length, 0);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -682,7 +740,7 @@ test("skill without readonly frontmatter stays a silent no-op through the deferr
 
 		assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
 		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly"), undefined);
-		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly-frontmatter-issue"), undefined);
+		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-frontmatter-issue"), undefined);
 		assert.equal(notifications.length, 0);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -704,7 +762,7 @@ test("/readonly bypasses deferred frontmatter lookup", async () => {
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly"), undefined);
-		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly-frontmatter-issue"), undefined);
+		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-frontmatter-issue"), undefined);
 		assert.equal(notifications.length, 0);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -726,7 +784,7 @@ test("/handoff bypasses deferred frontmatter lookup", async () => {
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly"), undefined);
-		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly-frontmatter-issue"), undefined);
+		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-frontmatter-issue"), undefined);
 		assert.equal(notifications.length, 0);
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -752,7 +810,7 @@ test("/notebook bypasses deferred frontmatter lookup", async () => {
 		});
 
 		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly"), undefined);
-		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-readonly-frontmatter-issue"), undefined);
+		assert.equal(pi.appendedEntries.find((entry: any) => entry.customType === "agenticoding-frontmatter-issue"), undefined);
 		assert.equal(notifications.length, 0);
 	} finally {
 		await rm(workspace, { recursive: true, force: true });
@@ -774,7 +832,7 @@ test("malformed /prompt frontmatter records a parse warning for the prompt sourc
 		await beforeStartHandler({ systemPrompt: "", systemPromptOptions: { skills: [] } }, ctx);
 
 		assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
-		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-readonly-frontmatter-issue");
+		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-frontmatter-issue");
 		assert.match(notifications.at(-1)?.message ?? "", /\/broken-yaml-prompt/);
 		assert.match(notifications.at(-1)?.message ?? "", /frontmatter could not be parsed/);
 	} finally {
@@ -799,7 +857,7 @@ test("malformed /skill:name frontmatter records a parse warning for the skill so
 		}, ctx);
 
 		assert.equal(await toolCall({ toolName: "write", input: { path: "/tmp/x", content: "x" } }, {}), undefined);
-		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-readonly-frontmatter-issue");
+		assert.equal(pi.appendedEntries.at(-1)?.customType, "agenticoding-frontmatter-issue");
 		assert.equal(pi.appendedEntries.at(-1)?.data.type, "skill");
 		assert.match(notifications.at(-1)?.message ?? "", /\/skill:broken-yaml-skill/);
 		assert.match(notifications.at(-1)?.message ?? "", /frontmatter could not be parsed/);

@@ -4,7 +4,7 @@ import {
 	READONLY_BYPASS_CLEARED,
 	READONLY_NEXT_CONTEXT_RESUMES,
 	READONLY_NON_TEMP_MUTATION_SCOPE,
-} from "../readonly-copy.js";
+} from "../notifications.js";
 
 /**
  * Build the enriched task that becomes the compaction summary.

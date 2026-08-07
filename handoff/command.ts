@@ -11,7 +11,7 @@ import { isHandoffEligible } from "./eligibility.js";
 import {
 	READONLY_HANDOFF_EXCEPTION_NOTIFICATION,
 	buildReadonlyHandoffCommandNotice,
-} from "../readonly-copy.js";
+} from "../notifications.js";
 import type { AgenticodingState } from "../state.js";
 import { STATUS_KEY_HANDOFF } from "../tui.js";
 

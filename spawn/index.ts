@@ -20,7 +20,7 @@ import { StringEnum, type TextContent } from "@earendil-works/pi-ai";
 import {
 	READONLY_CHILD_AUTHORITY_NOTE,
 	READONLY_WRITE_EDIT_SUMMARY,
-} from "../readonly-copy.js";
+} from "../notifications.js";
 import {
 	createAgentSession,
 	createBashToolDefinition,
