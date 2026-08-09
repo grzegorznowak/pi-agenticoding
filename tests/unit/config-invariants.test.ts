@@ -39,6 +39,10 @@ const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
 const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
+// Pinned versions verified against package.json + lockfile.
+// Update when Pi devDependencies are bumped.
+const EXPECTED_PI_VERSION = "0.84.1";
+const EXPECTED_TYPEBOX_VERSION = "1.3.7";
 const EXPECTED_MATRIX = new Set([
 	"ubuntu-latest@22.19.0",
 	"ubuntu-latest@24",
@@ -149,7 +153,7 @@ function parseLockfileVulnerablePaths(lockfilePath: string, packageName: string,
 	return paths;
 }
 
-test("Pi 0.82.0 compatibility metadata and source boundaries stay exact", () => {
+test("pinned Pi compatibility metadata and source boundaries stay exact", () => {
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
 	assert.equal(packageJson.engines.node, ">=22.19.0");
@@ -157,11 +161,11 @@ test("Pi 0.82.0 compatibility metadata and source boundaries stay exact", () => 
 		assert.equal(packageJson.peerDependencies[name], "*", `${name} peer must remain host-provided`);
 	}
 	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
-		assert.equal(packageJson.devDependencies[name], "0.82.0");
-		assert.equal(lock.packages[`node_modules/${name}`]?.version, "0.82.0");
+		assert.equal(packageJson.devDependencies[name], EXPECTED_PI_VERSION);
+		assert.equal(lock.packages[`node_modules/${name}`]?.version, EXPECTED_PI_VERSION);
 	}
-	assert.equal(packageJson.devDependencies.typebox, "1.1.38");
-	assert.equal(lock.packages["node_modules/typebox"]?.version, "1.1.38");
+	assert.equal(packageJson.devDependencies.typebox, EXPECTED_TYPEBOX_VERSION);
+	assert.equal(lock.packages["node_modules/typebox"]?.version, EXPECTED_TYPEBOX_VERSION);
 
 	const spawnSource = readText(SPAWN_SOURCE_PATH);
 	assert.doesNotMatch(spawnSource, /\bAuthStorage\b|\bModelRegistry\b/);

@@ -181,6 +181,7 @@ export function createTestPI() {
 		},
 		getFlag: (name: string) => _flags.get(name),
 		registerMessageRenderer: () => {},
+		registerMarkdownTransformer: () => {},
 		registerEntryRenderer: () => {},
 		setLabel: () => {},
 		unregisterProvider: () => {},
