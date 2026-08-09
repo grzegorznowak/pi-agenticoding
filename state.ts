@@ -96,6 +96,9 @@ export interface AgenticodingState {
 	 */
 	childSessionEpoch: number;
 
+	/** One abort promise per child session, shared by signal and reset cleanup. */
+	childAbortPromises: WeakMap<AgentSession, Promise<void>>;
+
 	/** Whether readonly mode is active — write/edit blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */
 	readonlyEnabled: boolean;
 
@@ -160,6 +163,7 @@ export function createState(): AgenticodingState {
 		childSessions,
 		liveChildSessions,
 		childSessionEpoch: 0,
+		childAbortPromises: new WeakMap(),
 		readonlyEnabled: false,
 		readonlyNudgePending: false,
 		frontmatterSkillCache,
@@ -236,15 +240,32 @@ export function invalidateHandoffState(state: AgenticodingState): void {
 	// from work that no longer belongs to the active session tree.
 }
 
+/** Return the session's single shared abort operation, starting it if necessary. */
+export function abortChildSession(state: AgenticodingState, session: AgentSession): Promise<void> {
+	const existing = state.childAbortPromises.get(session);
+	if (existing) return existing;
+
+	let resolve!: () => void;
+	let reject!: (error: unknown) => void;
+	const abortPromise = new Promise<void>((ok, fail) => {
+		resolve = ok;
+		reject = fail;
+	});
+	state.childAbortPromises.set(session, abortPromise);
+	try {
+		Promise.resolve(session.abort()).then(resolve, reject);
+	} catch (error) {
+		reject(error);
+	}
+	return abortPromise;
+}
+
 /** Abort all active child sessions and clear both registries. Called on /new (session reset). */
 export function abortAndClearChildSessions(state: AgenticodingState): void {
-	const seen = new Map<any, string>(); // session → first id (for logging)
-	for (const [id, session] of [...state.childSessions.entries(), ...state.liveChildSessions.entries()]) {
-		if (!seen.has(session)) seen.set(session, id);
-	}
+	const sessions = new Set([...state.childSessions.values(), ...state.liveChildSessions.values()]);
 	state.childSessions.clear();
 	state.liveChildSessions.clear();
-	for (const [session, id] of seen) {
-		session.abort().catch(() => {});
+	for (const session of sessions) {
+		void abortChildSession(state, session).catch(() => {});
 	}
 }

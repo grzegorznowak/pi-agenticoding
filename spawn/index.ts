@@ -28,7 +28,7 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { AgenticodingState } from "../state.js";
+import { abortChildSession, type AgenticodingState } from "../state.js";
 import { formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
@@ -373,13 +373,15 @@ export function executeSpawn(
 
 	const invalidatedError = new Error("Spawn invalidated by reset.");
 	let wasAborted = false;
-	let abortPromise: Promise<void> | undefined;
+	let reportedAbortPromise: Promise<void> | undefined;
 	const abortChild = () => {
 		wasAborted = true;
-		if (!abortPromise) {
-			abortPromise = session.abort();
-			abortPromise.catch(() => {});
+		const abortPromise = abortChildSession(state, session);
+		if (abortPromise !== reportedAbortPromise) {
+			reportedAbortPromise = abortPromise;
+			void abortPromise.catch((error) => notifyCleanupFailure(ctx, error));
 		}
+		return abortPromise;
 	};
 	const clearChildSession = () => {
 		if (state.childSessions.get(toolCallId) === session) {
@@ -391,7 +393,7 @@ export function executeSpawn(
 	};
 	const abortAndInvalidate = async () => {
 		clearChildSession();
-		await session.abort().catch(() => {});
+		await abortChild();
 		throw invalidatedError;
 	};
 
@@ -409,8 +411,7 @@ export function executeSpawn(
 
 	try {
 		if (signal?.aborted) {
-			abortChild();
-			await abortPromise;
+			await abortChild();
 			throw signal.reason instanceof Error
 				? signal.reason
 				: new Error("Spawn aborted before child session started.");
@@ -435,8 +436,7 @@ export function executeSpawn(
 		});
 
 		if (signal?.aborted) {
-			abortChild();
-			await abortPromise;
+			await abortChild();
 			throw signal.reason instanceof Error
 				? signal.reason
 				: new Error("Spawn aborted before child session started.");
@@ -445,7 +445,17 @@ export function executeSpawn(
 			await abortAndInvalidate();
 		}
 
-		await session.prompt(fullPrompt);
+		try {
+			await session.prompt(fullPrompt);
+		} catch (error) {
+			// Only a signal-aborted AbortError is expected from prompt when wasAborted is true.
+			// Other errors (real prompt failures) must not be swallowed — they should surface
+			// even if an abort raced with the rejection. Reset invalidation still takes
+			// precedence over abort handling, so isStale() always rethrows.
+			if (isStale()) throw error;
+			if (!wasAborted) throw error;
+			if ((error as Error)?.name !== "AbortError") throw error;
+		}
 	} catch (error) {
 		clearChildSession();
 		if (isStale()) {
@@ -462,12 +472,12 @@ export function executeSpawn(
 	}
 
 	const resultText = getLastAssistantText(session.messages as AssistantMessageLike[]);
-	if (!resultText) {
+	if (!resultText && !wasAborted) {
 		clearChildSession();
 		throw new Error("Child agent produced no output.");
 	}
 	const outcome = wasAborted ? "aborted" : getLastAssistantOutcome(session.messages as AssistantMessageLike[]);
-	const { text: finalText, truncated } = truncateResult(resultText);
+	const { text: finalText, truncated } = truncateResult(resultText ?? "");
 
 	// Execution should not retain live children after completion. If the TUI
 	// already rendered the child, it still owns the session object itself.

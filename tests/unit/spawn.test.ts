@@ -79,20 +79,10 @@ test("spawn execute passes broad active registered tool formula to child session
 	const requestedCwd = "/tmp";
 
 	let seenConfig: any;
-	const mockFactory = async (config: any) => {
+	registerSpawnTool(pi as any, state, async (config: any) => {
 		seenConfig = config;
-		const session = {
-			messages: [] as any[],
-			prompt: async () => {
-				session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-			},
-			abort: async () => {},
-			getSessionStats: () => undefined,
-		};
-		return { session: session as any };
-	};
-
-	registerSpawnTool(pi as any, state, mockFactory as any);
+		return { session: mockSessionFactory({ prompt: async () => {} }), extensionsResult: undefined as any };
+	});
 
 	await pi.tools.get("spawn").execute(
 		"spawn-1",
@@ -126,21 +116,10 @@ test("spawn forwards requested thinking and reports the session effective thinki
 	const state = createState();
 	const updates: any[] = [];
 	let seenConfig: any;
-	const session = {
-		messages: [] as any[],
-		get thinkingLevel() { return "off" as const; },
-		prompt: async () => {
-			session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-		},
-		abort: async () => {},
-		dispose: () => {},
-		getSessionStats: () => undefined,
-	};
-
-	registerSpawnTool(pi as any, state, (async (config: any) => {
+	registerSpawnTool(pi as any, state, async (config: any) => {
 		seenConfig = config;
-		return { session: session as any };
-	}) as any);
+		return { session: mockSessionFactory({ thinkingLevel: "off", prompt: async () => {} }), extensionsResult: undefined as any };
+	});
 
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-effective-thinking",
@@ -176,21 +155,12 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 	};
 	let seenConfig: any;
 	let seenPrompt = "";
-	const mockFactory = async (config: any) => {
+	registerSpawnTool(pi as any, state, async (config: any) => {
 		seenConfig = config;
-		const session = {
-			messages: [] as any[],
-			prompt: async (prompt: string) => {
-				seenPrompt = prompt;
-				session.messages = [{ role: "assistant", content: [{ type: "text", text: "routed result" }] }];
-			},
-			abort: async () => {},
-			dispose: () => {},
-			getSessionStats: () => undefined,
-		};
-		return { session: session as any };
-	};
-	registerSpawnTool(pi as any, state, mockFactory as any);
+		return { session: mockSessionFactory({
+			prompt: async (p?: string) => { seenPrompt = p ?? ""; },
+		}), extensionsResult: undefined as any };
+	});
 
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-routed",
@@ -225,20 +195,9 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 	state.notebookPages.set("entry-a", "preview line\nfull body");
 
 	let seenPrompt = "";
-	const mockFactory = async (config: any) => {
-		const session = {
-			messages: [] as any[],
-			prompt: async (prompt: string) => {
-				seenPrompt = prompt;
-				session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-			},
-			abort: async () => {},
-			getSessionStats: () => undefined,
-		};
-		return { session: session as any };
-	};
-
-	registerSpawnTool(pi as any, state, mockFactory as any);
+	registerSpawnTool(pi as any, state, mockFactoryWith({
+		prompt: async (p?: string) => { seenPrompt = p ?? ""; },
+	}));
 
 	await pi.tools.get("spawn").execute(
 		"spawn-1",
@@ -450,23 +409,14 @@ test("spawn execute returns result and stats", async () => {
 	const state = createState();
 
 	const updates: any[] = [];
-	const mockFactory = async () => {
-		const session = {
-			messages: [] as any[],
-			prompt: async () => {
-				session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-			},
-			abort: async () => {},
-			getSessionStats: () => ({
-				tokens: { input: 11, output: 22, cacheRead: 3, cacheWrite: 4, total: 40 },
-				cost: 0.5,
-				assistantMessages: 2,
-			}),
-		};
-		return { session: session as any };
-	};
-
-	registerSpawnTool(pi as any, state, mockFactory as any);
+	registerSpawnTool(pi as any, state, mockFactoryWith({
+		prompt: async () => {},
+		getSessionStats: () => ({
+			tokens: { input: 11, output: 22, cacheRead: 3, cacheWrite: 4, total: 40 },
+			cost: 0.5,
+			assistantMessages: 2,
+		}),
+	}));
 
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-1",
@@ -498,21 +448,10 @@ test("spawn execute marks stats unavailable when stats collection throws", async
 	pi.setActiveTools(["read", "bash", "spawn"]);
 	const state = createState();
 
-	const mockFactory = async () => {
-		const session = {
-			messages: [] as any[],
-			prompt: async () => {
-				session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-			},
-			abort: async () => {},
-			getSessionStats: () => {
-				throw new Error("stats failed");
-			},
-		};
-		return { session: session as any };
-	};
-
-	registerSpawnTool(pi as any, state, mockFactory as any);
+	registerSpawnTool(pi as any, state, mockFactoryWith({
+		prompt: async () => {},
+		getSessionStats: () => { throw new Error("stats failed"); },
+	}));
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-1",
 		{ prompt: "Do the task" },
@@ -530,17 +469,7 @@ test("spawn execute throws when child produces no output", async () => {
 	pi.setActiveTools(["read", "bash", "spawn"]);
 	const state = createState();
 
-	const mockFactory = async () => {
-		const session = {
-			messages: [] as any[],
-			prompt: async () => {},
-			abort: async () => {},
-			getSessionStats: () => undefined,
-		};
-		return { session: session as any };
-	};
-
-	registerSpawnTool(pi as any, state, mockFactory as any);
+	registerSpawnTool(pi as any, state, mockFactoryWith({ result: [] }));
 
 	await assert.rejects(
 		() => pi.tools.get("spawn").execute("spawn-1", { prompt: "Do the task" }, undefined, undefined, { model: { id: "mock-model" }, cwd: "/tmp" }),
@@ -553,19 +482,9 @@ test("spawn execute clears childSessions when prompt throws", async () => {
 	pi.setActiveTools(["read", "bash", "spawn"]);
 	const state = createState();
 
-	const mockFactory = async () => {
-		const session = {
-			messages: [] as any[],
-			prompt: async () => {
-				throw new Error("prompt failed");
-			},
-			abort: async () => {},
-			getSessionStats: () => undefined,
-		};
-		return { session: session as any };
-	};
-
-	registerSpawnTool(pi as any, state, mockFactory as any);
+	registerSpawnTool(pi as any, state, mockFactoryWith({
+		prompt: async () => { throw new Error("prompt failed"); },
+	}));
 
 	await assert.rejects(
 		() => pi.tools.get("spawn").execute("spawn-1", { prompt: "Do the task" }, undefined, undefined, { model: { id: "mock-model" }, cwd: "/tmp" }),
@@ -665,19 +584,9 @@ test("spawn execute clears childSessions after successful completion when unrend
 	pi.setActiveTools(["read", "bash", "spawn"]);
 	const state = createState();
 
-	const mockFactory = async () => {
-		const session = {
-			messages: [] as any[],
-			prompt: async () => {
-				session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-			},
-			abort: async () => {},
-			getSessionStats: () => undefined,
-		};
-		return { session: session as any };
-	};
-
-	registerSpawnTool(pi as any, state, mockFactory as any);
+	registerSpawnTool(pi as any, state, mockFactoryWith({
+		prompt: async () => {},
+	}));
 	const result = await pi.tools.get("spawn").execute(
 		"spawn-1",
 		{ prompt: "Do the task" },
@@ -870,6 +779,179 @@ test("spawn execute aborts child session when signal fires during execution", as
 	assert.equal(result.content[0].text, "aborted mid-flight");
 	assert.equal(result.details.outcome, "aborted");
 	assert.equal(disposeCalls, 1, "mid-prompt abort disposes exactly once");
+});
+
+function mockSessionFactory(opts: {
+	prompt?: (prompt?: string) => Promise<any>;
+	abort?: () => Promise<any>;
+	dispose?: () => void;
+	result?: any[];
+	thinkingLevel?: string;
+	getSessionStats?: () => any;
+} = {}) {
+	const defaultResult = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
+	const session: any = {
+		messages: [] as any[],
+		get thinkingLevel() { return opts.thinkingLevel; },
+		prompt: async (p?: string) => {
+			if (opts.prompt) await opts.prompt(p);
+			session.messages = opts.result ?? defaultResult;
+		},
+		abort: opts.abort ?? (async () => {}),
+		dispose: opts.dispose ?? (() => {}),
+		getSessionStats: opts.getSessionStats ?? (() => undefined),
+	};
+	return session;
+}
+
+/** Create a session factory for spawn tests — wraps mockSessionFactory with the expected return shape. */
+function mockFactoryWith(opts: Parameters<typeof mockSessionFactory>[0] = {}) {
+	return async () => ({ session: mockSessionFactory(opts), extensionsResult: undefined as any });
+}
+
+test("spawn execute swallows prompt rejection when signal aborts mid-flight", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	const controller = new AbortController();
+	let abortCalled = false;
+	let disposeCalls = 0;
+	let promptStarted!: () => void;
+	let rejectPrompt!: (err: Error) => void;
+	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
+	const mockFactory = async () => {
+		return { session: mockSessionFactory({
+			prompt: async () => {
+				promptStarted();
+				await new Promise<void>((_, reject) => { rejectPrompt = reject; });
+			},
+			abort: async () => {
+				abortCalled = true;
+				rejectPrompt(Object.assign(new Error("aborted"), { name: "AbortError" }));
+			},
+			dispose: () => { disposeCalls++; },
+		}) };
+	};
+	registerSpawnTool(pi as any, state, mockFactory as any);
+
+	const executePromise = pi.tools.get("spawn").execute(
+		"spawn-aborted-throw",
+		{ prompt: "Do the task" },
+		controller.signal,
+		undefined,
+		{ model: { id: "mock-model" }, cwd: "/tmp" },
+	);
+	await started;
+	controller.abort();
+	const result = await executePromise;
+	assert.equal(abortCalled, true);
+	assert.equal(state.childSessions.size, 0);
+	assert.equal(state.liveChildSessions.size, 0);
+	assert.equal(result.details.outcome, "aborted");
+	// Outcome and cleanup are the external contracts; text format is secondary.
+	assert.equal(result.content[0]?.text ?? "", "");
+	assert.equal(disposeCalls, 1, "mid-prompt abort disposes exactly once");
+});
+
+test("spawn execute preserves a real prompt failure that races with abort", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	const controller = new AbortController();
+	let disposeCalls = 0;
+	let promptStarted!: () => void;
+	let rejectPrompt!: (error: Error) => void;
+	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
+	const promptError = new Error("prompt failed despite abort");
+	registerSpawnTool(pi as any, state, async () => ({ session: mockSessionFactory({
+		prompt: async () => {
+			promptStarted();
+			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+		},
+		dispose: () => { disposeCalls++; },
+	}), extensionsResult: undefined as any }));
+
+	const execution = pi.tools.get("spawn").execute(
+		"spawn-abort-real-error", { prompt: "Do the task" }, controller.signal,
+		undefined, { model: { id: "mock-model" }, cwd: "/tmp" },
+	);
+	await started;
+	controller.abort();
+	rejectPrompt(promptError);
+
+	await assert.rejects(execution, (error: unknown) => error === promptError);
+	assert.equal(disposeCalls, 1);
+	assert.equal(state.childSessions.size, 0);
+	assert.equal(state.liveChildSessions.size, 0);
+});
+
+test("spawn invalidation wins the abort and prompt-rejection race", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	const controller = new AbortController();
+	let abortCalls = 0;
+	let disposeCalls = 0;
+	let promptStarted!: () => void;
+	let rejectPrompt!: (error: Error) => void;
+	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
+	const mockFactory = async () => ({ session: mockSessionFactory({
+		prompt: async () => {
+			promptStarted();
+			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+		},
+		abort: async () => { abortCalls++; },
+		dispose: () => { disposeCalls++; },
+	}) });
+	registerSpawnTool(pi as any, state, mockFactory as any);
+
+	const execution = pi.tools.get("spawn").execute(
+		"spawn-abort-reset-race", { prompt: "Do the task" }, controller.signal,
+		undefined, { model: { id: "mock-model" }, cwd: "/tmp" },
+	);
+	await started;
+	controller.abort();
+	resetState(state);
+	rejectPrompt(new Error("prompt rejected after abort and reset"));
+
+	await assert.rejects(() => execution, /invalidated by reset/i);
+	assert.equal(abortCalls, 1, "signal cancellation and reset share one abort");
+	assert.equal(disposeCalls, 1, "the raced child disposes exactly once");
+	assert.equal(state.childSessions.size, 0);
+	assert.equal(state.liveChildSessions.size, 0);
+});
+
+test("executeSpawn throws invalidatedError even when abort rejects during reset", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	let disposeCalls = 0;
+	let promptStarted!: () => void;
+	let rejectPrompt!: (error: Error) => void;
+	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
+	const abortError = new Error("abort failed");
+	const mockFactory = async () => ({ session: mockSessionFactory({
+		prompt: async () => {
+			promptStarted();
+			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+		},
+		abort: async () => { throw abortError; },
+		dispose: () => { disposeCalls++; },
+	}), extensionsResult: undefined as any });
+	registerSpawnTool(pi as any, state, mockFactory as any);
+
+	const execution = pi.tools.get("spawn").execute(
+		"spawn-abort-rejects", { prompt: "Do the task" }, undefined,
+		undefined, { model: { id: "mock-model" }, cwd: "/tmp" },
+	);
+	await started;
+	resetState(state);
+	rejectPrompt(new Error("prompt rejected"));
+
+	await assert.rejects(execution, /invalidated by reset/i);
+	assert.equal(disposeCalls, 1, "the aborted child disposes exactly once");
+	assert.equal(state.childSessions.size, 0);
+	assert.equal(state.liveChildSessions.size, 0);
 });
 
 test("spawn renderCall shows prompt preview and optional routing controls", () => {
@@ -1207,15 +1289,10 @@ test("executeSpawn does not prompt when onUpdate synchronously resets the child 
 		undefined,
 		() => { resetState(state); },
 		"medium",
-		async () => ({
-			extensionsResult: undefined as any,
-			session: {
-				messages: [] as any[],
-				prompt: async () => { promptCalls++; },
-				abort: async () => { abortCalls++; },
-				dispose: () => { disposeCalls++; },
-				getSessionStats: () => undefined,
-			} as any,
+		mockFactoryWith({
+			prompt: async () => { promptCalls++; },
+			abort: async () => { abortCalls++; },
+			dispose: () => { disposeCalls++; },
 		}),
 	);
 
@@ -1246,15 +1323,10 @@ test("executeSpawn does not prompt when onUpdate synchronously aborts the signal
 		controller.signal,
 		() => { controller.abort(reason); },
 		"medium",
-		async () => ({
-			extensionsResult: undefined as any,
-			session: {
-				messages: [] as any[],
-				prompt: async () => { promptCalls++; },
-				abort: async () => { abortCalls++; },
-				dispose: () => { disposeCalls++; },
-				getSessionStats: () => undefined,
-			} as any,
+		mockFactoryWith({
+			prompt: async () => { promptCalls++; },
+			abort: async () => { abortCalls++; },
+			dispose: () => { disposeCalls++; },
 		}),
 	);
 
@@ -1308,16 +1380,14 @@ test("executeSpawn aborts stale child when resetState fires during prompt", asyn
 
 	// Wait for session to be created and prompt to start
 	await promptStartedPromise;
-	// Reset state triggers abortAndClearChildSessions which calls session.abort()
-	// abort() rejects the pending prompt, which causes the stale check to fire
+	// Reset cleanup starts the shared abort, then prompt rejection reaches invalidation.
 	resetState(state);
 
 	await assert.rejects(
 		() => executePromise,
 		/invalidated by reset/i,
 	);
-	// abort is called once by clearChildSession (identity match via liveChildSessions)
-	assert.equal(abortCalls >= 1, true);
+	assert.equal(abortCalls, 1, "reset and invalidation share one abort");
 	assert.equal(state.childSessions.size, 0);
 	assert.equal(state.liveChildSessions.size, 0);
 	assert.equal(disposeCalls, 1, "prompt-reset invalidation disposes exactly once");
