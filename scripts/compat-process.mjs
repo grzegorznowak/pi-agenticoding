@@ -12,6 +12,11 @@ function formatInvocation(command, args) {
   return [command, ...args].map((value) => JSON.stringify(value)).join(" ");
 }
 
+function truncateOutput(value, limit = 8192) {
+  if (!value) return "";
+  return value.length > limit ? `${value.slice(0, limit)}\n… [truncated ${value.length - limit} chars]` : value;
+}
+
 /** Run a subprocess and fail with launch/status/signal and captured-output context. */
 export function runChecked(command, args, options = {}) {
   const { cwd, capture = false, env = process.env } = options;
@@ -28,8 +33,8 @@ export function runChecked(command, args, options = {}) {
       `error.stack: ${result.error?.stack ?? "none"}`,
       `status: ${String(result.status)}`,
       `signal: ${String(result.signal)}`,
-      `stdout:\n${result.stdout ?? ""}`,
-      `stderr:\n${result.stderr ?? ""}`,
+      `stdout:\n${truncateOutput(result.stdout ?? "")}`,
+      `stderr:\n${truncateOutput(result.stderr ?? "")}`,
     ].join("\n");
     throw new Error(diagnostics);
   }
@@ -83,4 +88,27 @@ export function npmInvocation(args, options = {}) {
 export function runNpm(cwd, args, options = {}) {
   const invocation = npmInvocation(args, options);
   return runChecked(invocation.command, invocation.args, { cwd, ...options });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry runNpm with exponential backoff for transient registry failures.
+ * Retries on non-zero status/signal/error; immediate success returns.
+ */
+export async function runNpmWithRetry(cwd, args, options = {}, retryOptions = {}) {
+  const { retries = 3, baseMs = 800 } = retryOptions;
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return runNpm(cwd, args, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt === retries) break;
+      await sleep(baseMs * 2 ** attempt);
+    }
+  }
+  throw lastError;
 }

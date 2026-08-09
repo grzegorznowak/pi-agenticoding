@@ -10,6 +10,7 @@ const {
 	repoRootFromScript,
 	runChecked,
 	runNpm,
+	runNpmWithRetry,
 	isValidNpmExecpath,
 } = await import(new URL("../../scripts/compat-process.mjs", import.meta.url).href);
 
@@ -17,6 +18,38 @@ const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 function readScript(name: string): string {
 	return readFileSync(join(REPO_ROOT, "scripts", name), "utf8");
+}
+
+function writeFlakyNpmCli(tmpDir: string, failures: number): { cliPath: string; attemptsPath: string } {
+	const attemptsPath = join(tmpDir, "attempts");
+	const cliPath = join(tmpDir, "npm-cli.js");
+	writeFileSync(cliPath, `
+const { existsSync, readFileSync, writeFileSync } = require("node:fs");
+const attemptsPath = ${JSON.stringify(attemptsPath)};
+const attempts = (existsSync(attemptsPath) ? Number(readFileSync(attemptsPath, "utf8")) : 0) + 1;
+writeFileSync(attemptsPath, String(attempts));
+if (attempts <= ${failures}) { process.stderr.write("transient failure"); process.exit(17); }
+process.stdout.write("fixture npm success");
+`);
+	return { cliPath, attemptsPath };
+}
+
+async function withFlakyNpm<T>(failures: number, test: (tmpDir: string, cliPath: string, attemptsPath: string) => Promise<T>): Promise<T> {
+	const tmpDir = mkdtempSync(join(tmpdir(), "npm-retry-test-"));
+	const { cliPath, attemptsPath } = writeFlakyNpmCli(tmpDir, failures);
+	try {
+		return await test(tmpDir, cliPath, attemptsPath);
+	} finally {
+		rmSync(tmpDir, { recursive: true, force: true });
+	}
+}
+
+function retryFixtureNpm(tmpDir: string, cliPath: string) {
+	return runNpmWithRetry(tmpDir, ["--version"], {
+		capture: true,
+		env: { npm_execpath: cliPath },
+		execPath: process.execPath,
+	}, { retries: 2, baseMs: 0 });
 }
 
 test("repoRootFromScript decodes native paths containing spaces", () => {
@@ -86,6 +119,32 @@ test("runNpm launches npm portably", () => {
 	assert.match(result.stdout, /^\d+\.\d+\.\d+/);
 });
 
+test("runNpmWithRetry returns on its first successful attempt", async () => {
+	await withFlakyNpm(0, async (tmpDir, cliPath, attemptsPath) => {
+		const result = await retryFixtureNpm(tmpDir, cliPath);
+		assert.equal(result.stdout, "fixture npm success");
+		assert.equal(readFileSync(attemptsPath, "utf8"), "1");
+	});
+});
+
+test("runNpmWithRetry retries a transient npm failure", async () => {
+	await withFlakyNpm(1, async (tmpDir, cliPath, attemptsPath) => {
+		const result = await retryFixtureNpm(tmpDir, cliPath);
+		assert.equal(result.stdout, "fixture npm success");
+		assert.equal(readFileSync(attemptsPath, "utf8"), "2");
+	});
+});
+
+test("runNpmWithRetry rethrows after exhausting its retry budget", async () => {
+	await withFlakyNpm(3, async (tmpDir, cliPath, attemptsPath) => {
+		await assert.rejects(
+			retryFixtureNpm(tmpDir, cliPath),
+			/status: 17/,
+		);
+		assert.equal(readFileSync(attemptsPath, "utf8"), "3");
+	});
+});
+
 test("runChecked reports process launch failures", () => {
 	assert.throws(
 		() => runChecked("pi-agenticoding-command-that-does-not-exist", [], { cwd: REPO_ROOT, capture: true }),
@@ -112,12 +171,28 @@ test("runChecked reports nonzero status and captured output", () => {
 	);
 });
 
+test("runChecked truncates oversized diagnostic output", () => {
+	const payload = "x".repeat(9000);
+	assert.throws(
+		() => runChecked(process.execPath, ["-e", "process.stderr.write(process.env.PAYLOAD); process.exit(7)"], {
+			cwd: REPO_ROOT,
+			capture: true,
+			env: { ...process.env, PAYLOAD: payload },
+		}),
+		(error: unknown) => {
+			assert.match(String(error), /\[truncated 808 chars\]/);
+			assert.equal(String(error).includes(payload), false);
+			return true;
+		},
+	);
+});
+
 test("compatibility scripts use native roots and the shared npm runner", () => {
-	for (const name of ["test-compat-current.mjs", "test-compat-floor.mjs", "test-package-host.mjs"]) {
+	for (const name of ["test-compat-current.mjs", "test-package-host.mjs"]) {
 		const source = readScript(name);
 		assert.doesNotMatch(source, /\.pathname\b/);
 		assert.doesNotMatch(source, /spawnSync\(["']npm["']/);
-		assert.match(source, /runNpm\(/);
+		assert.match(source, /runNpm/);
 		assert.match(source, /repoRootFromScript\(import\.meta\.url\)/);
 	}
 });

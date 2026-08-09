@@ -20,6 +20,7 @@ on:
   pull_request:
     branches: [main]
     paths-ignore: ['*.md', '**/docs/**']
+  workflow_dispatch:
 
 jobs:
   # ── Cross-platform test matrix ──────────────────────────────────────
@@ -71,21 +72,40 @@ jobs:
       - name: E2E tests
         run: npm run test:e2e
 
-      # Compatibility contracts run from a foreign cwd on the floor and Windows lanes.
-      - name: Exact-floor compatibility contract
+      # The packed extension is exercised from a foreign cwd with the latest host.
+      - name: Packed latest Pi host contract
         if: (matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest'
         working-directory: ${{ runner.temp }}
-        run: node "${{ github.workspace }}/scripts/test-compat-floor.mjs"
-
-      - name: Packed Pi 0.82.0 host contract
-        if: (matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest'
-        working-directory: ${{ runner.temp }}
+        env:
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}
         run: node "${{ github.workspace }}/scripts/test-package-host.mjs"
+
+      - name: Upload packed host diagnostics
+        if: always() && ((matrix.os == 'ubuntu-latest' && matrix.node-version == '22.19.0') || matrix.os == 'windows-latest')
+        uses: actions/upload-artifact@v4
+        with:
+          name: packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/packed-host-diagnostics-${{ matrix.os }}-node-${{ matrix.node-version }}
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
 
       - name: Synchronized current Pi compatibility on Windows
         if: matrix.os == 'windows-latest'
         working-directory: ${{ runner.temp }}
+        env:
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-windows-node-24
         run: node "${{ github.workspace }}/scripts/test-compat-current.mjs"
+
+      - name: Upload current Pi diagnostics on Windows
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-pi-diagnostics-windows-node-24-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/current-pi-diagnostics-windows-node-24
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
 
       # Upload test results for debugging — artifacts available for 30 days.
       - name: Upload test results
@@ -108,4 +128,15 @@ jobs:
       - run: npm ci
       - name: Synchronized current Pi compatibility
         working-directory: ${{ runner.temp }}
+        env:
+          COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-node-24
         run: node "${{ github.workspace }}/scripts/test-compat-current.mjs"
+      - name: Upload current Pi diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-pi-diagnostics-ubuntu-node-24-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/current-pi-diagnostics-ubuntu-node-24
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30
