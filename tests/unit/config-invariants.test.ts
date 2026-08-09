@@ -1,9 +1,8 @@
 /**
  * Invariant tests for the audit-ci security audit configuration.
  *
- * Validates that allowlist entries have unexpired expiry dates, that the
- * CI workflow ordering (audit → unit → e2e) is preserved, and that the
- * allowlist matches the current lockfile's actual vulnerability state.
+ * Validates the audit policy, that any allowlist entries have unexpired expiry
+ * dates, and that CI preserves the audit → unit → e2e order.
  */
 
 import assert from "node:assert/strict";
@@ -49,15 +48,7 @@ const EXPECTED_MATRIX = new Set([
 	"macos-latest@24",
 	"windows-latest@24",
 ]);
-const EXPECTED_ALLOWLIST_KEYS = new Set([
-	"GHSA-mh99-v99m-4gvg",
-	"GHSA-rgw5-rvv9-x895",
-	"GHSA-4cwx-7wf7-3272|@earendil-works/pi-coding-agent>undici",
-	"GHSA-8xcm-r25x-g524|@earendil-works/pi-coding-agent>undici",
-	"GHSA-jr45-8vmc-qm54|@earendil-works/pi-coding-agent>undici",
-	"GHSA-m8rv-5g2x-5cg5|@earendil-works/pi-coding-agent>undici",
-	"GHSA-v3r7-h72x-cjcm|@earendil-works/pi-coding-agent>undici",
-]);
+const EXPECTED_ALLOWLIST_KEYS = new Set<string>();
 
 function readText(url: URL): string {
 	return readFileSync(url, "utf8");
@@ -123,36 +114,6 @@ function runAuditCi(): void {
 	assert.equal(result.status, 0, diagnostics);
 }
 
-function compareVersions(a: string, b: string): number {
-	const parse = (v: string): [number, number, number] => {
-		const match = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
-		assert.ok(match, `unexpected version format: ${v}`);
-		return [Number(match[1]), Number(match[2]), Number(match[3])];
-	};
-	const [aMajor, aMinor, aPatch] = parse(a);
-	const [bMajor, bMinor, bPatch] = parse(b);
-	if (aMajor !== bMajor) return aMajor - bMajor;
-	if (aMinor !== bMinor) return aMinor - bMinor;
-	return aPatch - bPatch;
-}
-
-function parseLockfileVulnerablePaths(lockfilePath: string, packageName: string, maxVersion: string): string[] {
-	const lock = JSON.parse(readFileSync(lockfilePath, "utf8")) as {
-		packages?: Record<string, { version?: string }>;
-	};
-	const prefix = `node_modules/${packageName}`;
-	const paths: string[] = [];
-	for (const [path, entry] of Object.entries(lock.packages ?? {})) {
-		if (!path.endsWith(prefix)) continue;
-		const version = entry?.version;
-		assert.ok(typeof version === "string", `missing version for lockfile entry: ${path}`);
-		if (compareVersions(version, maxVersion) <= 0) {
-			paths.push(path);
-		}
-	}
-	return paths;
-}
-
 test("pinned Pi compatibility metadata and source boundaries stay exact", () => {
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
@@ -179,7 +140,7 @@ test("pinned Pi compatibility metadata and source boundaries stay exact", () => 
 	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
-test("audit-ci config keeps only the active expiry-tracked scoped exceptions", () => {
+test("audit-ci config enforces the empty allowlist policy", () => {
 	const config = parseAuditConfig();
 	assert.equal(config.$schema, AUDIT_SCHEMA);
 	assert.equal(config.moderate, true);
@@ -194,23 +155,6 @@ test("audit-ci config keeps only the active expiry-tracked scoped exceptions", (
 		assert.ok(parseIsoDate(value.expiry) >= today, `expired allowlist entry: ${key}`);
 		assert.notEqual(value.notes.trim(), "");
 	}
-});
-
-test("the lockfile contains the sole allowlisted vulnerable brace-expansion path", () => {
-	const vulnerablePaths = parseLockfileVulnerablePaths(fileURLToPath(LOCK_PATH), "brace-expansion", "5.0.7");
-	assert.deepEqual(vulnerablePaths, [
-		"node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion",
-	]);
-});
-
-test("the lockfile contains the allowlisted undici path at a vulnerable version", () => {
-	// undici <8.9.0 is allowlisted only while pi-coding-agent pins 8.5.0 exactly;
-	// once a pi-coding-agent release ships undici ≥8.9.0 this fails and forces
-	// the allowlist entries to be removed.
-	const vulnerablePaths = parseLockfileVulnerablePaths(fileURLToPath(LOCK_PATH), "undici", "8.8.0");
-	assert.deepEqual(vulnerablePaths, [
-		"node_modules/@earendil-works/pi-coding-agent/node_modules/undici",
-	]);
 });
 
 test("workflow keeps the expected matrix and audit/test order", () => {
