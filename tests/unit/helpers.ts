@@ -181,7 +181,7 @@ export function createTestPI() {
 		},
 		getFlag: (name: string) => _flags.get(name),
 		registerMessageRenderer: () => {},
-		registerMarkdownTransformer: () => {},
+		registerMarkdownTransformer: () => {}, // Pi 0.84.1 ExtensionAPI compat stub
 		registerEntryRenderer: () => {},
 		setLabel: () => {},
 		unregisterProvider: () => {},

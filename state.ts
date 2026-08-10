@@ -96,7 +96,7 @@ export interface AgenticodingState {
 	 */
 	childSessionEpoch: number;
 
-	/** One abort promise per child session, shared by signal and reset cleanup. */
+	/** One abort promise per child session, shared by signal and reset cleanup. WeakMap entries are GC'd with the session; no manual clear needed. */
 	childAbortPromises: WeakMap<AgentSession, Promise<void>>;
 
 	/** Whether readonly mode is active — write/edit blocked; handoff needs explicit /handoff or a human topic boundary; bash writes limited to temp. */

@@ -472,6 +472,7 @@ export function executeSpawn(
 	}
 
 	const resultText = getLastAssistantText(session.messages as AssistantMessageLike[]);
+	// Aborted children legitimately have no text — empty result is allowed (outcome "aborted"), not "no output" error.
 	if (!resultText && !wasAborted) {
 		clearChildSession();
 		throw new Error("Child agent produced no output.");
