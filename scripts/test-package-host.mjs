@@ -1,7 +1,7 @@
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLatestPi, writeCompatDiagnostics } from "./compat-fixture.mjs";
+import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLatestPi, writeCompatArtifacts, writeCompatDiagnostics } from "./compat-fixture.mjs";
 import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-process.mjs";
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
@@ -54,11 +54,10 @@ if (loaded.errors.length > 0) throw new Error(JSON.stringify(loaded.errors));
 if (loaded.extensions.length !== 1) throw new Error("packed extension did not load");
 `);
     runChecked(process.execPath, ["smoke.mjs"], { cwd: host });
-    if (artifactDir) {
-      mkdirSync(artifactDir, { recursive: true });
-      copyFileSync(join(host, "package-lock.json"), join(artifactDir, "package-lock.json"));
-      writeFileSync(join(artifactDir, "versions.txt"), `pi=${latestPi.piVersion}\ntypebox=${latestPi.typeboxVersion}\nnode=${process.version}\n`);
-    }
+    writeCompatArtifacts(artifactDir, host, {
+      piVersion: latestPi.piVersion,
+      typeboxVersion: latestPi.typeboxVersion,
+    });
     process.stdout.write(`Packed latest Pi ${latestPi.piVersion} host smoke passed with host-provided peers.\n`);
   } catch (error) {
     writeCompatDiagnostics(artifactDir, host, error);

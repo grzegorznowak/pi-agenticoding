@@ -1,7 +1,7 @@
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLatestPi, writeCompatDiagnostics } from "./compat-fixture.mjs";
+import { createCompatCopy, latestPiDependencies, prepareCompatCopy, resolveLatestPi, writeCompatArtifacts, writeCompatDiagnostics } from "./compat-fixture.mjs";
 import { repoRootFromScript, runChecked, runNpmWithRetry } from "./compat-process.mjs";
 import { assertSynchronizedPackageVersions } from "./dependency-graph-assertions.mjs";
 
@@ -43,11 +43,7 @@ async function main() {
       "tests/unit/compat-process.test.ts",
     ], { cwd: copy });
     runChecked(process.execPath, ["./scripts/run-node-test.mjs", "tests/e2e/basic.test.ts"], { cwd: copy });
-    if (artifactDir) {
-      mkdirSync(artifactDir, { recursive: true });
-      copyFileSync(join(copy, "package-lock.json"), join(artifactDir, "package-lock.json"));
-      writeFileSync(join(artifactDir, "versions.txt"), `pi=${piVersion}\ntypebox=${latestPi.typeboxVersion}\nnode=${process.version}\n`);
-    }
+    writeCompatArtifacts(artifactDir, copy, { piVersion, typeboxVersion: latestPi.typeboxVersion });
     process.stdout.write(`Current synchronized Pi compatibility passed at ${piVersion}.\n`);
   } catch (error) {
     writeCompatDiagnostics(artifactDir, copy, error);

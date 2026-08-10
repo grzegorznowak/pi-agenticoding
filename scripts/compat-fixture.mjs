@@ -48,11 +48,27 @@ export function latestPiDependencies({ piVersion, typeboxVersion }) {
   ]);
 }
 
+function copyCompatPackageLock(artifactDir, sourceDir, required = false) {
+  const packageLock = join(sourceDir, "package-lock.json");
+  if (!existsSync(packageLock)) {
+    if (required) throw new Error(`Expected compatibility package lock at ${packageLock}`);
+    return;
+  }
+  copyFileSync(packageLock, join(artifactDir, "package-lock.json"));
+}
+
+/** Write successful compatibility artifacts if configured. */
+export function writeCompatArtifacts(artifactDir, sourceDir, { piVersion, typeboxVersion }) {
+  if (!artifactDir) return;
+  mkdirSync(artifactDir, { recursive: true });
+  copyCompatPackageLock(artifactDir, sourceDir, true);
+  writeFileSync(join(artifactDir, "versions.txt"), `pi=${piVersion}\ntypebox=${typeboxVersion}\nnode=${process.version}\n`);
+}
+
 /** Write failure diagnostics to artifact directory if configured. */
 export function writeCompatDiagnostics(artifactDir, sourceDir, error) {
   if (!artifactDir) return;
   mkdirSync(artifactDir, { recursive: true });
-  const packageLock = join(sourceDir, "package-lock.json");
-  if (existsSync(packageLock)) copyFileSync(packageLock, join(artifactDir, "package-lock.json"));
+  copyCompatPackageLock(artifactDir, sourceDir);
   writeFileSync(join(artifactDir, "failure.txt"), String(error));
 }
