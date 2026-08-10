@@ -17,6 +17,36 @@ import { createTestHarness, type TestHarness } from "../test-utils.js";
 
 let h: TestHarness;
 
+// ── Test helpers ─────────────────────────────────────────────────────
+// Hoisted so all tests can reference them (used from line ~79 onward).
+function mockSessionFactory(opts: {
+	prompt?: (prompt?: string) => Promise<any>;
+	abort?: () => Promise<any>;
+	dispose?: () => void;
+	result?: any[];
+	thinkingLevel?: string;
+	getSessionStats?: () => any;
+} = {}) {
+	const defaultResult = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
+	const session: any = {
+		messages: [] as any[],
+		get thinkingLevel() { return opts.thinkingLevel; },
+		prompt: async (p?: string) => {
+			if (opts.prompt) await opts.prompt(p);
+			session.messages = opts.result ?? defaultResult;
+		},
+		abort: opts.abort ?? (async () => {}),
+		dispose: opts.dispose ?? (() => {}),
+		getSessionStats: opts.getSessionStats ?? (() => undefined),
+	};
+	return session;
+}
+
+/** Create a session factory for spawn tests — wraps mockSessionFactory with the expected return shape. */
+function mockFactoryWith(opts: Parameters<typeof mockSessionFactory>[0] = {}) {
+	return async () => ({ session: mockSessionFactory(opts), extensionsResult: undefined as any });
+}
+
 function makeChildSpawnTool(state: any) {
 	const pi = createTestPI();
 	registerSpawnTool(pi as any, state);
@@ -780,34 +810,6 @@ test("spawn execute aborts child session when signal fires during execution", as
 	assert.equal(result.details.outcome, "aborted");
 	assert.equal(disposeCalls, 1, "mid-prompt abort disposes exactly once");
 });
-
-function mockSessionFactory(opts: {
-	prompt?: (prompt?: string) => Promise<any>;
-	abort?: () => Promise<any>;
-	dispose?: () => void;
-	result?: any[];
-	thinkingLevel?: string;
-	getSessionStats?: () => any;
-} = {}) {
-	const defaultResult = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
-	const session: any = {
-		messages: [] as any[],
-		get thinkingLevel() { return opts.thinkingLevel; },
-		prompt: async (p?: string) => {
-			if (opts.prompt) await opts.prompt(p);
-			session.messages = opts.result ?? defaultResult;
-		},
-		abort: opts.abort ?? (async () => {}),
-		dispose: opts.dispose ?? (() => {}),
-		getSessionStats: opts.getSessionStats ?? (() => undefined),
-	};
-	return session;
-}
-
-/** Create a session factory for spawn tests — wraps mockSessionFactory with the expected return shape. */
-function mockFactoryWith(opts: Parameters<typeof mockSessionFactory>[0] = {}) {
-	return async () => ({ session: mockSessionFactory(opts), extensionsResult: undefined as any });
-}
 
 test("spawn execute swallows prompt rejection when signal aborts mid-flight", async () => {
 	const pi = createTestPI();
