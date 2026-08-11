@@ -87,6 +87,28 @@ function executeWithFailingCleanup(primaryFailure: unknown, cleanupFailure: unkn
 	};
 }
 
+function executeWithDisposeFailure(toolCallId: string, context: Record<string, unknown> = {}) {
+	const cleanupError = new Error("dispose failed");
+	const pi = createTestPI();
+	const state = createState();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	registerSpawnTool(pi as any, state, mockFactoryWith({
+		prompt: async () => {},
+		dispose: () => { throw cleanupError; },
+	}));
+	return {
+		execution: pi.tools.get("spawn").execute(
+			toolCallId,
+			{ prompt: "Do the task" },
+			undefined,
+			undefined,
+			{ model: { id: "mock-model" }, cwd: "/tmp", ...context } as any,
+		),
+		state,
+		cleanupError,
+	};
+}
+
 function assertChildRegistriesCleared(state: ReturnType<typeof createState>): void {
 	assert.equal(state.childSessions.size, 0);
 	assert.equal(state.liveChildSessions.size, 0);
@@ -1598,4 +1620,81 @@ test("spawn docs document active registered inheritance", async () => {
 	assert.match(v040, /active registered parent tools/);
 	assert.match(v040, /spawn and handoff/);
 	assert.match(v040, /notebook tools/);
+});
+
+// ── PR #23 follow-up: abort cleanup + dispose AggregateError coverage ──────
+
+test("spawn abort cleanup notifies UI when abort rejects", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	const notifications: Array<[string, string]> = [];
+	const ctx = {
+		model: { id: "mock-model" },
+		cwd: "/tmp",
+		hasUI: true,
+		ui: { notify: (m: string, l: string) => { notifications.push([m, l]); } },
+	} as any;
+	const abortError = new Error("abort failed");
+	const session = {
+		messages: [],
+		prompt: async () => {},
+		abort: async () => { throw abortError; },
+		dispose: () => {},
+		getSessionStats: () => undefined,
+	};
+	const controller = new AbortController();
+	controller.abort(new Error("parent aborted"));
+
+	await assert.rejects(
+		() => executeSpawn(
+			"spawn-abort-cleanup",
+			pi as any,
+			ctx,
+			state,
+			{ prompt: "Do the task" },
+			controller.signal,
+			undefined,
+			"medium",
+			async () => ({ session: session as any, extensionsResult: undefined as any }),
+		),
+		(error: unknown) => error === abortError,
+	);
+	assert.deepEqual(notifications, [["Spawn cleanup failed: abort failed", "error"]]);
+});
+
+test("spawn dispose failure without primary error propagates cleanup error", async () => {
+	const headless = executeWithDisposeFailure("spawn-dispose-only", { hasUI: false });
+	await assert.rejects(
+		() => headless.execution,
+		(err: unknown) => { assert.equal(err, headless.cleanupError); return true; },
+	);
+	assertChildRegistriesCleared(headless.state);
+
+	const notifications: Array<[string, string]> = [];
+	const ui = executeWithDisposeFailure("spawn-dispose-only-ui", {
+		hasUI: true,
+		ui: { notify: (m: string, l: string) => { notifications.push([m, l]); } },
+	});
+	await assert.rejects(
+		() => ui.execution,
+		(err: unknown) => { assert.equal(err, ui.cleanupError); return true; },
+	);
+	assert.equal(notifications.length, 0, "dispose-only failure does not notify");
+	assertChildRegistriesCleared(ui.state);
+});
+
+test("spawn headless dispose AggregateError preserves both failures", async () => {
+	const primaryFailure = new Error("prompt failed");
+	const cleanupFailure = new Error("dispose failed");
+	const { execution, state } = executeWithFailingCleanup(primaryFailure, cleanupFailure, { hasUI: false });
+	await assert.rejects(
+		() => execution,
+		(err: unknown) => {
+			assert.ok(err instanceof AggregateError);
+			assert.equal((err as AggregateError).message, "Spawn failed and cleanup failed.");
+			assert.deepEqual((err as AggregateError).errors, [primaryFailure, cleanupFailure]);
+			return true;
+		},
+	);
+	assertChildRegistriesCleared(state);
 });
