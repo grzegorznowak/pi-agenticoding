@@ -11,6 +11,7 @@
  */
 
 import type {
+	AgentSession,
 	ExtensionAPI,
 	ExtensionContext,
 	ToolDefinition,
@@ -141,6 +142,60 @@ function truncateResult(text: string): { text: string; truncated: boolean } {
  *
  * handoff and spawn never carry into children.
  */
+function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAborted: boolean): boolean {
+	if (isStale()) return false;
+	if (!wasAborted) return false;
+	// Pi contracts AbortError via AbortSignal standard
+	return (error as Error)?.name === "AbortError";
+}
+
+function toSpawnStats(sessionStats: any): Record<string, number> {
+	return {
+		inputTokens: sessionStats.tokens?.input ?? 0,
+		outputTokens: sessionStats.tokens?.output ?? 0,
+		cacheReadTokens: sessionStats.tokens?.cacheRead ?? 0,
+		cacheWriteTokens: sessionStats.tokens?.cacheWrite ?? 0,
+		totalTokens: sessionStats.tokens?.total ?? 0,
+		cost: sessionStats.cost ?? 0,
+		turns: sessionStats.assistantMessages ?? 0,
+	};
+}
+
+function collectSpawnStats(session: { getSessionStats?: () => unknown }): { stats?: Record<string, number>; statsUnavailable: boolean } {
+	try {
+		const sessionStats = (session.getSessionStats as (() => any) | undefined)?.();
+		return sessionStats
+			? { stats: toSpawnStats(sessionStats), statsUnavailable: false }
+			: { statsUnavailable: false };
+	} catch {
+		return { statsUnavailable: true };
+	}
+}
+
+function clearSpawnSession(state: AgenticodingState, toolCallId: string, session: AgentSession): void {
+	if (state.childSessions.get(toolCallId) === session) state.childSessions.delete(toolCallId);
+	if (state.liveChildSessions.get(toolCallId) === session) state.liveChildSessions.delete(toolCallId);
+}
+
+function createSpawnAbortContext(state: AgenticodingState, session: AgentSession, ctx: ExtensionContext, toolCallId: string) {
+	const invalidatedError = new Error("Spawn invalidated by reset.");
+	let wasAborted = false;
+	let reported: Promise<void> | undefined;
+	const clearChildSession = () => clearSpawnSession(state, toolCallId, session);
+	const abortChild = () => {
+		wasAborted = true;
+		const p = abortChildSession(state, session);
+		if (p !== reported) { reported = p; void p.catch((e) => notifyCleanupFailure(ctx, e)); }
+		return p;
+	};
+	const abortAndInvalidate = async (): Promise<never> => {
+		clearChildSession();
+		await abortChild();
+		throw invalidatedError;
+	};
+	return { get wasAborted() { return wasAborted; }, invalidatedError, abortChild, clearChildSession, abortAndInvalidate };
+}
+
 function getInheritableParentToolNames(parentToolNames: string[], availableTools: Pick<ToolInfo, "name" | "sourceInfo">[]): string[] {
 	const activeToolNames = new Set(parentToolNames);
 	return availableTools
@@ -371,31 +426,8 @@ export function executeSpawn(
 	// fallback keeps intentionally partial session test doubles compatible.
 	const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
 
-	const invalidatedError = new Error("Spawn invalidated by reset.");
-	let wasAborted = false;
-	let reportedAbortPromise: Promise<void> | undefined;
-	const abortChild = () => {
-		wasAborted = true;
-		const abortPromise = abortChildSession(state, session);
-		if (abortPromise !== reportedAbortPromise) {
-			reportedAbortPromise = abortPromise;
-			void abortPromise.catch((error) => notifyCleanupFailure(ctx, error));
-		}
-		return abortPromise;
-	};
-	const clearChildSession = () => {
-		if (state.childSessions.get(toolCallId) === session) {
-			state.childSessions.delete(toolCallId);
-		}
-		if (state.liveChildSessions.get(toolCallId) === session) {
-			state.liveChildSessions.delete(toolCallId);
-		}
-	};
-	const abortAndInvalidate = async () => {
-		clearChildSession();
-		await abortChild();
-		throw invalidatedError;
-	};
+	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
+	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
 
 	let hasPrimaryError = false;
 	let primaryError: unknown;
@@ -448,13 +480,7 @@ export function executeSpawn(
 		try {
 			await session.prompt(fullPrompt);
 		} catch (error) {
-			// Only a signal-aborted AbortError is expected from prompt when wasAborted is true.
-			// Other errors (real prompt failures) must not be swallowed — they should surface
-			// even if an abort raced with the rejection. Reset invalidation still takes
-			// precedence over abort handling, so isStale() always rethrows.
-			if (isStale()) throw error;
-			if (!wasAborted) throw error;
-			if ((error as Error)?.name !== "AbortError") throw error;
+			if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) throw error;
 		}
 	} catch (error) {
 		clearChildSession();
@@ -473,11 +499,11 @@ export function executeSpawn(
 
 	const resultText = getLastAssistantText(session.messages as AssistantMessageLike[]);
 	// Aborted children legitimately have no text — empty result is allowed (outcome "aborted"), not "no output" error.
-	if (!resultText && !wasAborted) {
+	if (!resultText && !abortContext.wasAborted) {
 		clearChildSession();
 		throw new Error("Child agent produced no output.");
 	}
-	const outcome = wasAborted ? "aborted" : getLastAssistantOutcome(session.messages as AssistantMessageLike[]);
+	const outcome = abortContext.wasAborted ? "aborted" : getLastAssistantOutcome(session.messages as AssistantMessageLike[]);
 	const { text: finalText, truncated } = truncateResult(resultText ?? "");
 
 	// Execution should not retain live children after completion. If the TUI
@@ -486,24 +512,7 @@ export function executeSpawn(
 	// liveChildSessions — the child already completed so there's nothing to abort.
 	clearChildSession();
 
-	let stats: Record<string, number> | undefined;
-	let statsUnavailable = false;
-	try {
-		const sessionStats = session.getSessionStats();
-		if (sessionStats) {
-			stats = {
-				inputTokens: sessionStats.tokens?.input ?? 0,
-				outputTokens: sessionStats.tokens?.output ?? 0,
-				cacheReadTokens: sessionStats.tokens?.cacheRead ?? 0,
-				cacheWriteTokens: sessionStats.tokens?.cacheWrite ?? 0,
-				totalTokens: sessionStats.tokens?.total ?? 0,
-				cost: sessionStats.cost ?? 0,
-				turns: sessionStats.assistantMessages ?? 0,
-			};
-		}
-	} catch (error: unknown) {
-		statsUnavailable = true;
-	}
+	const { stats, statsUnavailable } = collectSpawnStats(session as { getSessionStats?: () => unknown });
 
 	if (isStale()) {
 		throw invalidatedError;
