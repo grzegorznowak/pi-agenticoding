@@ -33,7 +33,7 @@ import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Container, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
 import { escapeDisplayLabel } from "../model-groups/display.js";
-import type { AgenticodingState } from "../state.js";
+import { abortChildSession, type AgenticodingState } from "../state.js";
 import {
 	__setSingletons,
 	getSingletons,
@@ -717,11 +717,11 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.unsubscribe = undefined;
 		getSingletons().frameScheduler.cancelDirty(this);
 		this.clearPendingState();
-		// Snapshot fields before clearing: if session.abort() triggers re-entrant
-		// dispose, the nulled-out fields prevent double-abort.
+		// Snapshot fields before clearing: if abortChildSession() triggers
+		// re-entrant dispose, the nulled-out fields prevent double-abort.
+		const state = this.state;
 		const session = this.session;
 		const ownedToolCallId = this.ownedToolCallId;
-		const liveChildSessions = this.state?.liveChildSessions;
 		this.resetRenderBatching();
 		this.requestRender = () => {};
 		this.clearRenderCache();
@@ -734,9 +734,16 @@ class NestedAgentSessionComponent extends Container implements SpawnFrameTarget 
 		this.ownedToolCallId = undefined;
 		this.state = undefined;
 		this.attachedChildSessionEpoch = undefined;
-		if (session && ownedToolCallId && liveChildSessions?.get(ownedToolCallId) === session) {
-			session.abort().catch(() => {});
-			liveChildSessions.delete(ownedToolCallId);
+		if (session && ownedToolCallId && state?.liveChildSessions.get(ownedToolCallId) === session) {
+			// Share the deduplicated abort promise with the other abort paths (spawn
+			// invalidation, /reset) so one session never receives a second abort.
+			// Renderer has no ExtensionContext, so abort failures are intentionally
+			// not notified here — spawn path notifies via ctx.ui.notify. Silent swallow is correct.
+			try {
+				void abortChildSession(state, session).catch(() => {});
+			} finally {
+				state.liveChildSessions.delete(ownedToolCallId);
+			}
 		}
 	}
 
