@@ -32,6 +32,7 @@ import type { AgenticodingState } from "../state.js";
 import { formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
+import { MODEL_GROUP_MODALITIES, type ModelGroupModality } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import {
 	renderSpawnCall,
@@ -211,6 +212,7 @@ const SPAWN_PROMPT_SNIPPET = "Spawn a focused subtask agent";
 const SPAWN_PROMPT_GUIDELINES = [
 	"Use spawn to delegate isolated work to child agents. They are trusted extensions of you with their own context and the same authority. Only condensed results are returned.",
 	"If the operator requests a known Model Group confidently, pass its exact name as group. If no known/confident group is requested, omit group so the child inherits the parent model/thinking.",
+	"Declare requiredModalities when the delegated task needs text, image, or reasoning capability; do not work around a missing required modality with third-party tools.",
 ];
 
 const SPAWN_PARAMETERS = Type.Object({
@@ -222,6 +224,7 @@ const SPAWN_PARAMETERS = Type.Object({
 	group: Type.Optional(Type.String({
 		description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
 	})),
+	requiredModalities: Type.Optional(Type.Array(StringEnum(MODEL_GROUP_MODALITIES, { description: "Optional modalities the selected child route must support. Routing fails before child creation if the effective Model Group or selected model lacks any requirement." }), { uniqueItems: true } as any)),
 	thinking: Type.Optional(StringEnum(
 		["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
 		{
@@ -264,12 +267,14 @@ export function createChildTools(
  *   - both registries delete(toolCallId) on error and completion paths
  *
  */
+export interface SpawnParameters { prompt: string; group?: string; requiredModalities?: ModelGroupModality[]; thinking?: ThinkingValue }
+
 export function executeSpawn(
 	toolCallId: string,
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	state: AgenticodingState,
-	params: { prompt: string; group?: string; thinking?: ThinkingValue },
+	params: SpawnParameters,
 	signal: AbortSignal | undefined,
 	onUpdate:
 		| ((result: {
@@ -290,6 +295,7 @@ export function executeSpawn(
 		const inheritedChildThinking: ThinkingValue = params.thinking ?? defaultThinking;
 		const route = resolveSpawnModelRoute({
 			requestedGroup: params.group,
+			requiredModalities: params.requiredModalities,
 			groups: state.modelGroups.groups,
 			parentModel,
 			parentThinking: inheritedChildThinking,
@@ -575,7 +581,7 @@ export function registerSpawnTool(
 
 		execute(
 			_toolCallId: string,
-			params: { prompt: string; group?: string; thinking?: ThinkingValue },
+			params: SpawnParameters,
 			signal: AbortSignal | undefined,
 			onUpdate:
 				| ((result: {

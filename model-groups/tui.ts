@@ -11,11 +11,11 @@ import {
 	summarizeBootValidation,
 	updateGroup,
 } from "./store.js";
-import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
+import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
 import { canonicalizeModelGroupName } from "./names.js";
 import { decodeDisplayLabel, escapeDisplayLabel } from "./display.js";
 
-export type ModelGroupsScreen = "LIST" | "EDITOR" | "MODEL_EDIT" | "WIZARD_PROVIDER" | "WIZARD_MODEL" | "WIZARD_THINKING" | "DELETE_CONFIRM";
+export type ModelGroupsScreen = "LIST" | "EDITOR" | "MODALITIES" | "MODEL_EDIT" | "WIZARD_PROVIDER" | "WIZARD_MODEL" | "WIZARD_THINKING" | "DELETE_CONFIRM";
 
 export interface ModelGroupsStoreOps {
 	listResolvedModelGroups: typeof listResolvedModelGroups;
@@ -44,7 +44,7 @@ function isBackspace(data: string): boolean { return matchesKey(data, Key.backsp
 function isDeleteChord(data: string): boolean { return data === "D" || matchesKey(data, Key.delete); }
 
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
-	return { models: def.models.map((model) => ({ ...model })) };
+	return { ...def, models: def.models.map((model) => ({ ...model })), ...(def.modalityOverride === undefined ? {} : { modalityOverride: [...def.modalityOverride] }) };
 }
 
 function groupKey(group: Pick<ResolvedModelGroup, "scope" | "name">): string {
@@ -107,7 +107,8 @@ export function createModelGroupsComponent(
 	let rootFocused = false;
 	let activeSelect: SelectList | null = null;
 	const nameRow = () => access.policy === "global-project" ? 2 : 1;
-	const modelStartRow = () => nameRow() + 1;
+	const modalityRow = () => nameRow() + 1;
+	const modelStartRow = () => modalityRow() + 1;
 	function syncInputFocus(): void {
 		groupNameInput.focused = rootFocused && state.screen === "EDITOR" && state.row === nameRow() && state.activeTextInput === "group-name";
 		modelSearchInput.focused = rootFocused && state.screen === "WIZARD_MODEL";
@@ -235,7 +236,7 @@ export function createModelGroupsComponent(
 		const group = currentEditGroup();
 		if (!group) return;
 		try {
-			store.updateGroup(group.scope, access, group.name, def);
+			store.updateGroup(group.scope, access, group.name, def, modelRegistry);
 			refresh();
 			const updated = state.groups.find((candidate) => candidate.name === group.name && candidate.scope === group.scope);
 			if (updated) openEditor(updated);
@@ -284,6 +285,7 @@ export function createModelGroupsComponent(
 		switch (state.screen) {
 			case "LIST": return state.groups.length;
 			case "EDITOR": return modelStartRow() + (state.editDraft?.models.length ?? 0);
+			case "MODALITIES": return modalityOverrideChoices(currentEditGroup()?.modalities.supported ?? []).length;
 			case "MODEL_EDIT": return thinkingOptionsFor(modelRegistry.find(state.editDraft?.models[state.modelEditIndex]?.provider ?? "", state.editDraft?.models[state.modelEditIndex]?.modelId ?? "") as Model<Api> | undefined).length;
 			case "WIZARD_PROVIDER": return Math.max(0, allProviders().length - 1);
 			case "WIZARD_MODEL": return Math.max(0, filteredModelsForProvider(state.wizardProvider).length - 1);
@@ -303,7 +305,7 @@ export function createModelGroupsComponent(
 					const name = uniqueNewGroupName();
 					try {
 						const scope = access.policy === "global-project" ? "project" : "global";
-						store.createGroup(scope, access, name, { models: [] });
+						store.createGroup(scope, access, name, { models: [] }, modelRegistry);
 						refresh();
 						const created = state.groups.find((group) => group.name === name && group.scope === scope);
 						if (created) openEditor(created);
@@ -318,6 +320,7 @@ export function createModelGroupsComponent(
 				if (access.policy === "global-project" && state.row === 0) { switchScope("project"); return; }
 				if ((access.policy === "global-project" && state.row === 1) || (access.policy === "global-only" && state.row === 0)) { switchScope("global"); return; }
 				if (state.row === nameRow()) { state.activeTextInput = "group-name"; syncInputFocus(); return; }
+				if (state.row === modalityRow()) { state.screen = "MODALITIES"; state.row = 0; return; }
 				if (!commitName()) return;
 				const modelIndex = state.row - modelStartRow();
 				if (state.editDraft && modelIndex < state.editDraft.models.length) {
@@ -330,6 +333,17 @@ export function createModelGroupsComponent(
 					state.row = 0;
 				}
 				return;
+			}
+			case "MODALITIES": {
+				if (!state.editDraft) return;
+				const current = currentEditGroup();
+				const supported = current?.modalities.supported ?? [];
+				const choices = modalityOverrideChoices(supported);
+				const selected = choices[state.row - 1] ?? [];
+				const next = cloneDef(state.editDraft);
+				if (state.row === 0) delete next.modalityOverride;
+				else next.modalityOverride = [...selected];
+				updateDraft(next, () => { state.screen = "EDITOR"; state.row = modalityRow(); }); return;
 			}
 			case "MODEL_EDIT": {
 				const model = state.editDraft?.models[state.modelEditIndex];
@@ -390,6 +404,7 @@ export function createModelGroupsComponent(
 		switch (state.screen) {
 			case "LIST": state.finished = true; done(); return;
 			case "EDITOR": commitName(); state.screen = "LIST"; state.row = 0; return;
+			case "MODALITIES": state.screen = "EDITOR"; state.row = modalityRow(); return;
 			case "MODEL_EDIT": state.screen = "EDITOR"; state.row = 0; return;
 			case "WIZARD_PROVIDER": resetModelSearch(); state.screen = "EDITOR"; state.row = 0; return;
 			case "WIZARD_MODEL": resetModelSearch(); state.screen = "WIZARD_PROVIDER"; state.row = 0; return;
@@ -493,10 +508,13 @@ export function createModelGroupsComponent(
 			if (group.validation.unavailableRefs.length > 0) tags.push("✗ unavailable");
 			if (group.validation.shadowedByProject) tags.push("project override");
 			const models = group.models.map((model) => thinkingLabel(model.thinkingLevel)).join(", ") || "empty";
+			if (group.validation.emptyCommonModalities) tags.push("⚠ no common modalities");
+			if (group.validation.unsupportedOverrideModalities.length > 0) tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);
 			return { value: String(index), label: escapeDisplayLabel(group.name), description: `[${group.scope}] ${group.models.length} models ${models}${tags.length ? ` — ${tags.join(" · ")}` : ""}` };
 		});
 		items.push({ value: String(state.groups.length), label: "+ Add group" });
 		container.addChild(buildSelect(items));
+		for (const group of state.groups) container.addChild(textLine(theme.fg("dim", `${escapeDisplayLabel(group.name)}: modalities ${group.modalities?.effective.join(", ") || "none"}`)));
 		container.addChild(textLine(theme.fg("dim", "↑↓ navigate • Enter open/add • D delete • Esc close")));
 		return container;
 	}
@@ -509,12 +527,35 @@ export function createModelGroupsComponent(
 		if (access.policy === "global-project") container.addChild(textLine(selectableLine(state.row === 0, "Location: project", state.editScope === "project" ? " ✓" : "")));
 		container.addChild(textLine(selectableLine(state.row === (access.policy === "global-project" ? 1 : 0), "Location: global", state.editScope === "global" ? " ✓" : "")));
 		container.addChild(groupNameLineComponent());
+		const modalities = current?.modalities;
+		container.addChild(textLine(theme.fg("dim", `Common: ${modalities?.common.join(", ") || "none"}`)));
+		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.modalityOverride === undefined ? "automatic" : "override"} (${modalities?.effective.join(", ") || "none"})`)));
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
 			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));
 		});
 		const addRow = modelStartRow() + (state.editDraft?.models.length ?? 0);
 		container.addChild(textLine(selectableLine(state.row === addRow, "+ Add model…")));
+		return container;
+	}
+
+	function modalityOverrideChoices(supported: readonly ModelGroupModality[]): ModelGroupModality[][] {
+		const choices: ModelGroupModality[][] = [];
+		for (let mask = 0; mask < 2 ** supported.length; mask++) {
+			choices.push(supported.filter((_, index) => (mask & (1 << index)) !== 0));
+		}
+		return choices;
+	}
+
+	function renderModalitiesComponent(): Component {
+		activeSelect = null;
+		const container = new Container();
+		const current = currentEditGroup();
+		container.addChild(textLine(theme.fg("accent", "MODALITIES")));
+		container.addChild(textLine(selectableLine(state.row === 0, `Automatic (common: ${current?.modalities.common.join(", ") || "none"})`)));
+		for (const [index, override] of modalityOverrideChoices(current?.modalities.supported ?? []).entries()) {
+			container.addChild(textLine(selectableLine(state.row === index + 1, `Override: ${override.join(", ") || "none"}`)));
+		}
 		return container;
 	}
 
@@ -577,6 +618,7 @@ export function createModelGroupsComponent(
 	function activeComponent(): Component {
 		if (state.screen === "LIST") return renderListComponent();
 		if (state.screen === "EDITOR") return renderEditorComponent();
+		if (state.screen === "MODALITIES") return renderModalitiesComponent();
 		if (state.screen === "MODEL_EDIT") return renderModelEditComponent();
 		if (state.screen === "DELETE_CONFIRM") return renderDeleteComponent();
 		return renderWizardComponent();

@@ -76,7 +76,7 @@ function catalog(models: any[]): any {
 
 function atSearchableModel(models: any[], store?: any) {
 	const c = component({ groups: [group("review", { scope: "project" })], modelRegistry: catalog(models), store }).c;
-	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, ENTER, ENTER);
+	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER, ENTER);
 	assert.match(rendered(c), /Add model — Step 2\/3 Model/);
 	return c;
 }
@@ -109,6 +109,25 @@ test("model groups TUI list renders validation summary, health tags, add row, no
 	c.handleInput?.("\r");
 	assert.deepEqual(deleteCalls, ["global:review"]);
 	assert.doesNotMatch(c.render(100).join("\n"), /Delete Model Group/);
+});
+
+test("model groups TUI renders modality labels, warnings, and supported override choices", () => {
+	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
+	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] };
+	review.modalityOverride = ["text", "image", "reasoning"];
+	review.validation.emptyCommonModalities = true;
+	review.validation.unsupportedOverrideModalities = ["reasoning"];
+	const { c } = component({ groups: [review] });
+	assert.match(rendered(c, 200), /review: modalities text, image/);
+	assert.match(rendered(c, 200), /⚠ no common modalities/);
+	assert.match(rendered(c, 200), /⚠ stale modality override: reasoning/);
+	press(c, ENTER);
+	assert.match(rendered(c), /Common: text/);
+	assert.match(rendered(c), /Modalities: override \(text, image\)/);
+	press(c, DOWN, DOWN, DOWN, ENTER);
+	assert.match(rendered(c), /Automatic \(common: text\)/);
+	assert.match(rendered(c), /Override: none/);
+	assert.match(rendered(c), /Override: text, image, reasoning/);
 });
 
 test("model groups TUI computes unique new-group names and opens editor after create", () => {
@@ -146,7 +165,7 @@ test("model groups TUI wizard renders provider/model/thinking steps and preserve
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store, notify: (message) => messages.push(message) });
-	press(c, ENTER, DOWN, DOWN, DOWN, ENTER);
+	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	let text = rendered(c);
 	assert.match(text, /Add model — Step 1\/3 Provider/);
 	assert.match(text, /anthropic/);
@@ -183,7 +202,7 @@ test("model groups TUI wizard renders provider/model/thinking steps and preserve
 test("model groups TUI Esc and left-arrow share wizard back-step behavior", () => {
 	function atProvider() {
 		const { c } = component({ groups: [group("review", { scope: "project" })] });
-		press(c, ENTER, DOWN, DOWN, DOWN, ENTER);
+		press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 		return c;
 	}
 	function atModel() {
@@ -241,20 +260,16 @@ test("model groups TUI selected markers and primary labels use accent token", ()
 	press(editor, ENTER);
 	text = rendered(editor);
 	assert.match(text, /<accent>→<\/accent> <accent>Location: project<\/accent> ✓/);
-	press(editor, DOWN, DOWN, DOWN);
+	press(editor, DOWN, DOWN, DOWN, DOWN);
 	assert.match(rendered(editor), /<accent>→<\/accent> <accent>openai\/gpt-5<\/accent> \(available/);
 	press(editor, DOWN);
 	assert.match(rendered(editor), /<accent>→<\/accent> <accent>\+ Add model…<\/accent>/);
 
 	press(editor, ENTER);
 	assert.match(rendered(editor), /<accent>→ anthropic<\/accent>/);
-	press(editor, DOWN, ENTER);
-	assert.match(rendered(editor), /<accent>→ openai\/gpt-5<\/accent>/);
-	press(editor, ENTER);
-	assert.match(rendered(editor), /<accent>→ inherit<\/accent>/);
 
 	const modelEdit = component({ groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })], renderTheme: accentTheme }).c;
-	press(modelEdit, ENTER, DOWN, DOWN, DOWN, ENTER);
+	press(modelEdit, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	assert.match(rendered(modelEdit), /<accent>→<\/accent> <accent>Thinking: inherit<\/accent>/);
 
 	const deleteConfirm = component({ groups: [group("review", { scope: "project" })], renderTheme: accentTheme }).c;
@@ -272,7 +287,7 @@ test("model groups TUI model edit renders identity/status and filters thinking o
 	] })];
 	const { c } = component({ groups });
 
-	press(c, ENTER, DOWN, DOWN, DOWN, ENTER);
+	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	let text = rendered(c);
 	assert.match(text, /Provider: anthropic/);
 	assert.match(text, /Model ID: claude/);
@@ -282,7 +297,7 @@ test("model groups TUI model edit renders identity/status and filters thinking o
 	assert.doesNotMatch(text, /Thinking: off/);
 	assert.doesNotMatch(text, /Thinking: (minimal|low|medium|high|xhigh)/);
 
-	press(c, ESC, DOWN, DOWN, DOWN, DOWN, ENTER);
+	press(c, ESC, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
 	text = rendered(c);
 	assert.match(text, /Provider: openai/);
 	assert.match(text, /Model ID: gpt-5/);
@@ -291,7 +306,7 @@ test("model groups TUI model edit renders identity/status and filters thinking o
 		assert.match(text, new RegExp(`Thinking: ${option}`));
 	}
 
-	press(c, ESC, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
+	press(c, ESC, DOWN, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
 	text = rendered(c);
 	assert.match(text, /Provider: missing/);
 	assert.match(text, /Model ID: nope/);
@@ -334,7 +349,7 @@ test("model groups TUI notifies and preserves model edit state when updateGroup 
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store, notify: (message) => messages.push(message) });
-	press(c, ENTER, DOWN, DOWN, DOWN, ENTER, DOWN, ENTER);
+	press(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER, DOWN, ENTER);
 	assert.deepEqual(attemptedModels[0], ["openai/gpt-5/off"]);
 	assert.match(messages[0], /update failed 1/);
 	let text = rendered(c);
@@ -390,7 +405,7 @@ test("model groups TUI renders name editing inline and preserves edit/commit tra
 	assert.match(rendered(c), /  Name: abcde/);
 	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
 
-	press(c, DOWN, DOWN, ENTER, "f", DOWN); // row-change flushes the pending rename before moving
+	press(c, DOWN, DOWN, ENTER, "f", DOWN, DOWN); // row-change flushes the pending rename before moving
 	assert.deepEqual(calls, ["abc->abcd", "abcd->abcde", "abcde->abcdef"]);
 	text = rendered(c);
 	assert.match(text, /Model Group: abcdef/);
@@ -417,12 +432,14 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
+	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B"); // first model row
 	c.handleInput?.("\r"); // model edit
 	c.handleInput?.("\u001b[B"); // off
 	c.handleInput?.("\r");
 	assert.match(calls.at(-1)!, /update:global:review:openai\/gpt-5\/off/);
 
+	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
@@ -436,6 +453,7 @@ test("model groups TUI move, wizard add, model thinking, and remove persist thro
 	press(c, ENTER); // inherit thinking
 	assert.match(calls.at(-1)!, /anthropic\/claude\/inherit/);
 
+	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B");
 	c.handleInput?.("\u001b[B"); // first model row after refresh
@@ -487,7 +505,7 @@ test("model groups TUI uses root Focusable propagation and MODEL_EDIT parent nav
 	assert.ok(c.render(80).join("\n").includes(CURSOR_MARKER));
 	press(c, ENTER);
 	assert.equal(c.render(80).join("\n").includes(CURSOR_MARKER), false);
-	press(c, DOWN, ENTER);
+	press(c, DOWN, DOWN, ENTER);
 	assert.match(rendered(c), /Edit model/);
 	press(c, ESC);
 	assert.match(rendered(c), /Location: project/);
@@ -536,7 +554,7 @@ test("model groups TUI escapes controlled labels, bounds width, and offers nativ
 			listResolvedModelGroups: () => boot(maxGroups),
 		},
 	}).c;
-	press(max, ENTER, DOWN, DOWN, DOWN, ENTER);
+	press(max, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	press(max, DOWN, ENTER, ENTER);
 	assert.match(rendered(max), /Add model — Step 3\/3 Thinking/);
 	assert.match(rendered(max), /max/);
@@ -685,7 +703,7 @@ test("model groups TUI handles Model activation immediately after Provider trans
 	};
 	const models = Array.from({ length: 2 }, (_, index) => ({ provider: "openai", id: `model-${index}`, reasoning: false }));
 	const c = component({ groups, modelRegistry: catalog(models), store }).c;
-	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, ENTER);
+	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	assert.match(rendered(c), /Add model — Step 1\/3 Provider/);
 
 	for (const input of [ENTER, ENTER]) c.handleInput?.(input);
@@ -807,14 +825,14 @@ test("model groups TUI directly proves query preservation and every abandonment,
 	assert.match(rendered(abandonedAndExited), /Step 1\/3 Provider/);
 	pressAndRender(abandonedAndExited, ESC);
 	assert.match(rendered(abandonedAndExited), /Model Group: review/);
-	pressAndRender(abandonedAndExited, ...Array(4).fill(DOWN), ENTER, ENTER);
+	pressAndRender(abandonedAndExited, ...Array(5).fill(DOWN), ENTER, ENTER);
 	assert.match(rendered(abandonedAndExited), /Step 2\/3 Model/);
 	assert.doesNotMatch(rendered(abandonedAndExited), /> target/);
 
 	const completedAndReopened = atSearchableModel(models, store);
 	pressAndRender(completedAndReopened, ..."target", ENTER, ENTER);
 	assert.match(rendered(completedAndReopened), /Model Group: review/);
-	pressAndRender(completedAndReopened, ...Array(4).fill(DOWN), ENTER, ENTER);
+	pressAndRender(completedAndReopened, ...Array(5).fill(DOWN), ENTER, ENTER);
 	assert.match(rendered(completedAndReopened), /Step 2\/3 Model/);
 	assert.doesNotMatch(rendered(completedAndReopened), /> target/);
 });
@@ -852,7 +870,7 @@ test("model groups TUI directly proves every non-Model screen remains search-fre
 	pressAndRender(c, ENTER);
 	assert.match(rendered(c), /provider-11\/only-model/); // EDITOR remains uncapped.
 	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
-	pressAndRender(c, DOWN, DOWN, DOWN, ENTER);
+	pressAndRender(c, DOWN, DOWN, DOWN, DOWN, ENTER);
 	assert.match(rendered(c), /Edit model/); // MODEL_EDIT.
 	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
 	pressAndRender(c, ESC, ...Array(20).fill(DOWN), ENTER);

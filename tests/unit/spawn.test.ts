@@ -749,6 +749,23 @@ test("executeSpawn propagates unusable-group errors before creating child work",
 	assert.equal(state.liveChildSessions.size, 0, "no live child session registered");
 });
 
+test("executeSpawn propagates missing modalities before creating child work", async () => {
+	const pi = createTestPI();
+	const state = createState();
+	state.modelGroups.groups = [{
+		name: "text-only", scope: "project", sourcePath: "<test>", models: [{ provider: "openai", modelId: "text" }],
+		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
+		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+	}];
+	let factoryCalls = 0;
+	await assert.rejects(() => executeSpawn("missing-modality", pi as any, {
+		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
+		modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
+	} as any, state, { prompt: "Do the task", group: "text-only", requiredModalities: ["image"] }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality");
+	assert.equal(factoryCalls, 0);
+	assert.equal(state.childSessions.size, 0);
+	assert.equal(state.liveChildSessions.size, 0);
+});
 
 test("spawn renderResult transfers session ownership out of shared state", () => {
 	const state = createState();
@@ -1494,6 +1511,10 @@ test("registerSpawnTool registers a tool with correct name and metadata", () => 
 	assert.equal(typeof tool.renderResult, "function");
 	assert.equal(tool.renderShell, "self");
 	assert.ok(tool.parameters, "should have parameters");
+	const requiredModalities = (tool.parameters as any).properties.requiredModalities;
+	assert.equal(requiredModalities.type, "array");
+	assert.equal(requiredModalities.uniqueItems, true);
+	assert.deepEqual(requiredModalities.items.enum, ["text", "image", "reasoning"]);
 	assert.equal(tool.executionMode, undefined, "spawn should not be sequential");
 });
 
