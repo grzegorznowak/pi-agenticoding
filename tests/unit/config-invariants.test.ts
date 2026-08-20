@@ -42,6 +42,9 @@ const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
 // Update when Pi devDependencies are bumped.
 const EXPECTED_PI_VERSION = "0.84.1";
 const EXPECTED_TYPEBOX_VERSION = "1.3.7";
+// Approved peer floors — must track the pinned devDependency versions above.
+const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
+const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
 const EXPECTED_MATRIX = new Set([
 	"ubuntu-latest@22.19.0",
 	"ubuntu-latest@24",
@@ -126,9 +129,10 @@ test("pinned Pi compatibility metadata and source boundaries stay exact", () => 
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
 	assert.equal(packageJson.engines.node, ">=22.19.0");
-	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
-		assert.equal(packageJson.peerDependencies[name], "*", `${name} peer must remain host-provided`);
+	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
+		assert.equal(packageJson.peerDependencies[name], EXPECTED_PI_PEER, `${name} peer must require ${EXPECTED_PI_PEER}`);
 	}
+	assert.equal(packageJson.peerDependencies.typebox, EXPECTED_TYPEBOX_PEER, `typebox peer must require ${EXPECTED_TYPEBOX_PEER}`);
 	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
 		assert.equal(packageJson.devDependencies[name], EXPECTED_PI_VERSION);
 		assert.equal(lock.packages[`node_modules/${name}`]?.version, EXPECTED_PI_VERSION);
