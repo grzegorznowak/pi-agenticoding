@@ -12,7 +12,7 @@ import {
 } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
-import { createTestPI, createRenderContext, createSession, theme } from "./helpers.js";
+import { createTestPI, createRenderContext, createSession, theme, createDeferred } from "./helpers.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 
 let h: TestHarness;
@@ -945,7 +945,7 @@ test("spawn invalidation wins the abort and prompt-rejection race", async () => 
 	assert.equal(state.liveChildSessions.size, 0);
 });
 
-test("executeSpawn throws invalidatedError even when abort rejects during reset", async () => {
+test("executeSpawn surfaces AggregateError when abort rejects during active-prompt reset", async () => {
 	const pi = createTestPI();
 	pi.setActiveTools(["read", "bash", "spawn"]);
 	const state = createState();
@@ -954,6 +954,7 @@ test("executeSpawn throws invalidatedError even when abort rejects during reset"
 	let rejectPrompt!: (error: Error) => void;
 	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
 	const abortError = new Error("abort failed");
+	const invalidatedError = "Spawn invalidated by reset.";
 	const mockFactory = async () => ({ session: mockSessionFactory({
 		prompt: async () => {
 			promptStarted();
@@ -972,10 +973,172 @@ test("executeSpawn throws invalidatedError even when abort rejects during reset"
 	resetState(state);
 	rejectPrompt(new Error("prompt rejected"));
 
-	await assert.rejects(execution, /invalidated by reset/i);
+	await assert.rejects(
+		execution,
+		(error: unknown) => {
+			assert.ok(error instanceof AggregateError, `expected AggregateError, got: ${String(error)}`);
+			assert.ok(error.message.includes("Spawn invalidated by reset"), `message should mention invalidation: ${error.message}`);
+			// Errors[0] is the invalidatedError, errors[1] is the abortFailure
+			assert.ok(error.errors[0] instanceof Error, "first error should be the invalidatedError");
+			assert.equal((error.errors[0] as Error).message, invalidatedError);
+			assert.equal(error.errors[1], abortError, "second error should be the abort failure");
+			return true;
+		},
+	);
 	assert.equal(disposeCalls, 1, "the aborted child disposes exactly once");
-	assert.equal(state.childSessions.size, 0);
-	assert.equal(state.liveChildSessions.size, 0);
+	assertChildRegistriesCleared(state);
+});
+
+test("reset before registration reports AggregateError when shared abort rejects", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	let abortCalls = 0;
+	let disposeCalls = 0;
+	let factoryCalled = false;
+	const abortError = new Error("abort failed");
+	const factoryReady = createDeferred();
+	const mockFactory = async () => {
+		factoryCalled = true;
+		await factoryReady.promise;
+		return {
+			extensionsResult: undefined as any,
+			session: {
+				messages: [] as any[],
+				prompt: async () => {},
+				abort: async () => { abortCalls++; throw abortError; },
+				dispose: () => { disposeCalls++; },
+				getSessionStats: () => undefined,
+			} as any,
+		};
+	};
+
+	registerSpawnTool(pi as any, state, mockFactory as any);
+
+	const execution = pi.tools.get("spawn").execute(
+		"spawn-pre-reg-abort-reject", { prompt: "Do the task" }, undefined,
+		undefined, { model: { id: "mock-model" }, cwd: "/tmp" },
+	);
+
+	// Reset while the factory is still producing the session
+	resetState(state);
+	// Allow the factory to resolve — session is immediately stale
+	factoryReady.resolve();
+
+	await assert.rejects(
+		execution,
+		(error: unknown) => {
+			assert.ok(error instanceof AggregateError, `expected AggregateError, got: ${String(error)}`);
+			assert.ok(error.errors[0] instanceof Error, "first error should be the invalidatedError");
+			assert.equal((error.errors[0] as Error).message, "Spawn invalidated by reset.");
+			assert.equal(error.errors[1], abortError, "second error should be the abort failure");
+			return true;
+		},
+	);
+	assert.equal(factoryCalled, true, "factory was called");
+	assert.equal(abortCalls, 1, "abort was called exactly once");
+	assert.equal(disposeCalls, 1, "child disposed exactly once");
+	assertChildRegistriesCleared(state);
+});
+
+test("reset during prompt reports AggregateError when shared abort rejects (UI reports once)", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	let abortCalls = 0;
+	let disposeCalls = 0;
+	const abortError = new Error("abort failed");
+	const notifications: Array<[string, string]> = [];
+	const mockFactory = async () => ({ session: mockSessionFactory({
+		prompt: async () => {
+			promptStarted();
+			await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+		},
+		abort: async () => { abortCalls++; throw abortError; },
+		dispose: () => { disposeCalls++; },
+	}), extensionsResult: undefined as any });
+	let promptStarted!: () => void;
+	let rejectPrompt!: (error: Error) => void;
+	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
+	registerSpawnTool(pi as any, state, mockFactory as any);
+
+	const execution = pi.tools.get("spawn").execute(
+		"spawn-reset-prompt-abort-reject-ui",
+		{ prompt: "Do the task" },
+		undefined,
+		undefined,
+		{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true, ui: { notify: (m: string, l: string) => { notifications.push([m, l]); } } } as any,
+	);
+	await started;
+	resetState(state);
+	rejectPrompt(new Error("prompt rejected"));
+
+	await assert.rejects(
+		execution,
+		(error: unknown) => {
+			assert.ok(error instanceof AggregateError, `expected AggregateError, got: ${String(error)}`);
+			assert.equal(error.errors[0] instanceof Error ? (error.errors[0] as Error).message : null, "Spawn invalidated by reset.");
+			assert.equal(error.errors[1], abortError);
+			return true;
+		},
+	);
+	assert.equal(notifications.length, 1, "abort failure reported exactly once via UI");
+	assert.deepEqual(notifications, [["Spawn cleanup failed: abort failed", "error"]]);
+	assert.equal(abortCalls, 1);
+	assert.equal(disposeCalls, 1);
+	assertChildRegistriesCleared(state);
+});
+
+test("throwing notify during abort-fail reporting does not emit unhandledRejection", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	let promptStarted!: () => void;
+	let rejectPrompt!: (error: Error) => void;
+	const started = new Promise<void>((resolve) => { promptStarted = resolve; });
+	const abortError = new Error("abort failed");
+	const notifyError = new Error("notify exploded");
+	const unhandled: unknown[] = [];
+	const onUnhandled = (reason: unknown) => unhandled.push(reason);
+	process.on("unhandledRejection", onUnhandled);
+	try {
+		const mockFactory = async () => ({ session: mockSessionFactory({
+			prompt: async () => {
+				promptStarted();
+				await new Promise<void>((_resolve, reject) => { rejectPrompt = reject; });
+			},
+			abort: async () => { throw abortError; },
+			dispose: () => {},
+		}), extensionsResult: undefined as any });
+		registerSpawnTool(pi as any, state, mockFactory as any);
+
+		const execution = pi.tools.get("spawn").execute(
+			"spawn-throwing-notify",
+			{ prompt: "Do the task" },
+			undefined,
+			undefined,
+			{ model: { id: "mock-model" }, cwd: "/tmp", hasUI: true, ui: { notify: () => { throw notifyError; } } } as any,
+		);
+		await started;
+		resetState(state);
+		rejectPrompt(new Error("prompt rejected"));
+
+		await assert.rejects(
+			execution,
+			(error: unknown) => {
+				assert.ok(error instanceof AggregateError, `expected AggregateError, got: ${String(error)}`);
+				assert.equal(error.errors[1], abortError);
+				return true;
+			},
+		);
+		// Give any detached microtasks a chance to flush
+		await new Promise((resolve) => setImmediate(resolve));
+
+		assert.equal(unhandled.length, 0, `no unhandled rejections from notify throwing: ${unhandled.map((e) => String(e)).join(", ")}`);
+		assertChildRegistriesCleared(state);
+	} finally {
+		process.removeListener("unhandledRejection", onUnhandled);
+	}
 });
 
 test("spawn renderCall shows prompt preview and optional routing controls", () => {

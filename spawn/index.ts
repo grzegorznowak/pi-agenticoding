@@ -185,12 +185,35 @@ function createSpawnAbortContext(state: AgenticodingState, session: AgentSession
 	const abortChild = () => {
 		wasAborted = true;
 		const p = abortChildSession(state, session);
-		if (p !== reported) { reported = p; void p.catch((e) => notifyCleanupFailure(ctx, e)); }
+		if (p !== reported) {
+			reported = p;
+			// Report abort failures via UI. Guard against notify itself throwing
+			// so the detached promise never emits unhandledRejection.
+			// Detached path — the finally(dispose) branch aggregates notify failures
+			// differently; here we intentionally swallow to avoid unhandledRejection.
+			void p.catch((e) => {
+				try { notifyCleanupFailure(ctx, e); } catch { /* reporting must never reject */ }
+			});
+		}
 		return p;
 	};
-	const abortAndInvalidate = async (): Promise<never> => {
+	const abortAndInvalidate = async (cause?: unknown): Promise<never> => {
 		clearChildSession();
-		await abortChild();
+		let abortFailure: unknown;
+		try {
+			await abortChild();
+		} catch (e) {
+			abortFailure = e;
+		}
+		if (abortFailure !== undefined) {
+			const aggregate = new AggregateError(
+				[invalidatedError, abortFailure],
+				"Spawn invalidated by reset; child abort failed.",
+			);
+			if (cause !== undefined) (aggregate as unknown as { cause: unknown }).cause = cause;
+			throw aggregate;
+		}
+		if (cause !== undefined) (invalidatedError as unknown as { cause: unknown }).cause = cause;
 		throw invalidatedError;
 	};
 	return { get wasAborted() { return wasAborted; }, invalidatedError, abortChild, clearChildSession, abortAndInvalidate };
@@ -485,7 +508,7 @@ export function executeSpawn(
 	} catch (error) {
 		clearChildSession();
 		if (isStale()) {
-			throw invalidatedError;
+			await abortAndInvalidate(error);
 		}
 		throw error;
 	} finally {
@@ -493,8 +516,7 @@ export function executeSpawn(
 	}
 
 	if (isStale()) {
-		clearChildSession();
-		throw invalidatedError;
+		await abortAndInvalidate();
 	}
 
 	const resultText = getLastAssistantText(session.messages as AssistantMessageLike[]);
@@ -515,6 +537,9 @@ export function executeSpawn(
 	const { stats, statsUnavailable } = collectSpawnStats(session as { getSessionStats?: () => unknown });
 
 	if (isStale()) {
+		// INVARIANT: live ownership was synchronously cleared before stats collection,
+		// so this reset could not have initiated a child abort to aggregate — plain
+		// invalidatedError is correct. Early stale paths above aggregate via abortAndInvalidate(cause).
 		throw invalidatedError;
 	}
 
