@@ -76,6 +76,14 @@ function stepIndex(workflow: string, step: string): number {
 	return index;
 }
 
+function stepBlock(workflow: string, step: string): string {
+	const start = stepIndex(workflow, step);
+	const afterName = workflow.indexOf("\n", start) + 1;
+	const nextStep = workflow.indexOf("\n      - name:", afterName);
+	const end = nextStep === -1 ? workflow.length : nextStep;
+	return workflow.slice(afterName, end);
+}
+
 function allowlistEntries(config: AuditConfig): Array<[string, AuditRecord]> {
 	return config.allowlist.map((entry) => {
 		const [key, value] = Object.entries(entry)[0] ?? [];
@@ -168,6 +176,12 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 	assert.ok(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(packageJson.engines.node)}`));
 });
 
+
+test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
+	const workflow = readText(WORKFLOW_PATH);
+	const block = stepBlock(workflow, "Synchronized current Pi compatibility on Windows");
+	assert.match(block, /if:\s*matrix\.os == 'windows-latest' && !cancelled\(\)/);
+});
 
 test("audit-ci config matches the CI audit command", () => {
 	runAuditCi();

@@ -90,8 +90,11 @@ jobs:
           overwrite: true
           retention-days: 30
 
+      # Runs even when the packed-host contract step fails on Windows, so compat
+      # diagnostics are captured for both the packed and current-Pi paths. !cancelled()
+      # (not always()) avoids running on explicit workflow cancellation.
       - name: Synchronized current Pi compatibility on Windows
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && !cancelled()
         working-directory: ${{ runner.temp }}
         env:
           COMPAT_ARTIFACT_DIR: ${{ runner.temp }}/current-pi-diagnostics-windows-node-24
