@@ -85,9 +85,8 @@ test("index session_start stores model group validation and notifies load and va
 
 test("index session_start notifies empty-common and stale-override boot counts", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("global", cwd)), { recursive: true });
-	// claude is NOT in the registry, so it is an unavailable ref. claude-only supports text; the registry
-	// has only gpt-5 (text+image). An override of image on the claude-only group is stale; an empty group
-	// and a group whose members share nothing produce empty common modalities.
+	// claude is NOT in the registry, so claude-only is unavailable with empty common modalities; its override is stale.
+	// The registry has only gpt-5 (text+image); an empty group also has empty common modalities.
 	fs.writeFileSync(modelGroupsPath("global", cwd), JSON.stringify({ version: 2, groups: {
 		empty: { models: [] },
 		"claude-only": { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["text", "image"] },

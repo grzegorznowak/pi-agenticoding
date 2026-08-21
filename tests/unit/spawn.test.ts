@@ -650,6 +650,7 @@ test("spawn execute clears childSessions after successful completion when unrend
 
 	assert.equal(result.content[0].text, "child result");
 	assert.equal(state.childSessions.size, 0);
+	assert.equal(state.liveChildSessions.size, 0);
 });
 
 test("spawn execute fails explicitly without a configured model", async () => {
@@ -724,6 +725,35 @@ test("executeSpawn propagates missing modalities before creating child work", as
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 	} as any, state, { prompt: "Do the task", group: "text-only", requiredModalities: ["image"] }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality");
+	assert.equal(factoryCalls, 0);
+	assert.equal(state.childSessions.size, 0);
+	assert.equal(state.liveChildSessions.size, 0);
+});
+
+test("registered spawn tool rejects missing modalities before creating child work", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	state.modelGroups.groups = [{
+		name: "text-only", scope: "project", sourcePath: "<test>", models: [{ provider: "openai", modelId: "text" }],
+		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
+		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+	}];
+	let factoryCalls = 0;
+	registerSpawnTool(pi as any, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any);
+
+	await assert.rejects(
+		() => pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", requiredModalities: ["image"] }, undefined, undefined, {
+			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
+			modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
+		} as any),
+		(error: unknown) => {
+			assert.ok(error instanceof SpawnRouteError);
+			assert.equal(error.kind, "unusable-group");
+			assert.equal(error.reason, "missing-modality");
+			return true;
+		},
+	);
 	assert.equal(factoryCalls, 0);
 	assert.equal(state.childSessions.size, 0);
 	assert.equal(state.liveChildSessions.size, 0);

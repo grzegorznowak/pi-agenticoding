@@ -57,6 +57,15 @@ function rendered(c: { render: (width: number) => string[] }, width = 100): stri
 	return c.render(width).join("\n");
 }
 
+function selectRenderedLabel(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, label: string): void {
+	for (let i = 0; i < 32; i++) {
+		const selected = stripAnsi(rendered(c)).split("\n").find((line) => line.includes("→"));
+		if (selected?.includes(label)) return;
+		press(c, DOWN);
+	}
+	assert.fail(`did not select rendered label: ${label}`);
+}
+
 function pressAndRender(c: { handleInput?: (data: string) => void; render: (width: number) => string[] }, ...inputs: string[]): void {
 	for (const input of inputs) {
 		c.render(100);
@@ -143,15 +152,18 @@ test("model groups TUI modality editor commits override and Automatic through up
 		listResolvedModelGroups: () => boot(groups),
 	};
 	const { c } = component({ groups, store });
-	press(c, ENTER, DOWN, DOWN, DOWN, ENTER); // editor → modalities row (row 3) → MODALITIES screen
+	press(c, ENTER);
+	selectRenderedLabel(c, "Modalities:");
+	press(c, ENTER);
 	assert.match(rendered(c), /MODALITIES/);
-	// Select the full supported subset (row 8 of Automatic + 8 subsets).
-	press(c, DOWN, DOWN, DOWN, DOWN, DOWN, DOWN, DOWN, DOWN, ENTER);
+	selectRenderedLabel(c, "Override: text, image, reasoning");
+	press(c, ENTER);
 	assert.equal(calls.length, 1);
 	assert.deepEqual(calls[0].def.modalityOverride, ["text", "image", "reasoning"]);
 	assert.match(rendered(c), /Modalities: override/);
-	// Reopen and pick Automatic (row 0) → deletes the override.
-	press(c, ENTER, ENTER); // editor → modalities screen, row 0 = Automatic
+	press(c, ENTER);
+	selectRenderedLabel(c, "Automatic");
+	press(c, ENTER);
 	assert.equal(calls.length, 2);
 	assert.equal(calls[1].def.modalityOverride, undefined);
 	assert.match(rendered(c), /Modalities: automatic/);
