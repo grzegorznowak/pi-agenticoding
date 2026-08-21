@@ -24,21 +24,6 @@ function formatVersion(version) {
   return version ?? "missing version";
 }
 
-export function assertExactPackageVersions(graph, expectedVersions) {
-  const entries = Object.entries(expectedVersions);
-  const occurrences = collectPackageOccurrences(graph, entries.map(([name]) => name));
-
-  for (const [name, expectedVersion] of entries) {
-    const packages = occurrences.get(name);
-    if (packages.length === 0) throw new Error(`Expected ${name}@${expectedVersion}, found no occurrences`);
-    const mismatches = packages.filter(({ version }) => version !== expectedVersion);
-    if (mismatches.length > 0) {
-      const found = mismatches.map(({ path, version }) => `${formatVersion(version)} at ${path}`).join(", ");
-      throw new Error(`Expected every ${name}@${expectedVersion} occurrence, found ${found}`);
-    }
-  }
-}
-
 export function assertSynchronizedPackageVersions(graph, packageNames) {
   if (packageNames.length === 0) throw new Error("Pass at least one package name to synchronize");
   const occurrences = collectPackageOccurrences(graph, packageNames);

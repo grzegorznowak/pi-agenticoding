@@ -7,6 +7,9 @@
 
 import { spawnSync } from "node:child_process";
 import { strict as assert } from "node:assert";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
@@ -14,11 +17,17 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const loader = new URL("../../register-loader.mjs", import.meta.url).href;
 
 function evaluate(code: string): void {
-	const result = spawnSync(process.execPath, ["--import", loader, "--input-type=module", "--eval", code], {
-		cwd: root,
-		encoding: "utf8",
-	});
-	assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+	const agentDir = mkdtempSync(join(tmpdir(), "pi-agenticoding-module-order-"));
+	try {
+		const result = spawnSync(process.execPath, ["--import", loader, "--input-type=module", "--eval", code], {
+			cwd: root,
+			encoding: "utf8",
+			env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+		});
+		assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+	} finally {
+		rmSync(agentDir, { recursive: true, force: true });
+	}
 }
 
 describe("module evaluation order", () => {
@@ -92,7 +101,7 @@ describe("module evaluation order", () => {
 			const model = modelRuntime.getModel('module-order-test', 'deterministic');
 			if (!model) throw new Error('deterministic model missing');
 			const { session } = await sdk.createAgentSession({
-				model, modelRuntime, cwd: process.cwd(),
+				model, modelRuntime, cwd: process.cwd(), agentDir: process.env.PI_CODING_AGENT_DIR,
 				sessionManager: sdk.SessionManager.inMemory(),
 				settingsManager: sdk.SettingsManager.inMemory(),
 			});

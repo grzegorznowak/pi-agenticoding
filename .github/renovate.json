@@ -1,0 +1,16 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "@earendil-works/pi-ai",
+        "@earendil-works/pi-coding-agent",
+        "@earendil-works/pi-tui",
+        "typebox"
+      ],
+      "groupName": "Pi compatibility dependencies",
+      "rangeStrategy": "pin"
+    }
+  ]
+}
