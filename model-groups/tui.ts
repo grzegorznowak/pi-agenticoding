@@ -44,7 +44,7 @@ function isBackspace(data: string): boolean { return matchesKey(data, Key.backsp
 function isDeleteChord(data: string): boolean { return data === "D" || matchesKey(data, Key.delete); }
 
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
-	return { ...def, models: def.models.map((model) => ({ ...model })), ...(def.modalityOverride === undefined ? {} : { modalityOverride: [...def.modalityOverride] }) };
+	return { models: def.models.map((model) => ({ ...model })), ...(def.modalityOverride === undefined ? {} : { modalityOverride: [...def.modalityOverride] }) };
 }
 
 function groupKey(group: Pick<ResolvedModelGroup, "scope" | "name">): string {
@@ -285,7 +285,7 @@ export function createModelGroupsComponent(
 		switch (state.screen) {
 			case "LIST": return state.groups.length;
 			case "EDITOR": return modelStartRow() + (state.editDraft?.models.length ?? 0);
-			case "MODALITIES": return modalityOverrideChoices(currentEditGroup()?.modalities.supported ?? []).length;
+			case "MODALITIES": return modalityOverrideChoices(modalityEditorSupported()).length;
 			case "MODEL_EDIT": return thinkingOptionsFor(modelRegistry.find(state.editDraft?.models[state.modelEditIndex]?.provider ?? "", state.editDraft?.models[state.modelEditIndex]?.modelId ?? "") as Model<Api> | undefined).length;
 			case "WIZARD_PROVIDER": return Math.max(0, allProviders().length - 1);
 			case "WIZARD_MODEL": return Math.max(0, filteredModelsForProvider(state.wizardProvider).length - 1);
@@ -336,9 +336,7 @@ export function createModelGroupsComponent(
 			}
 			case "MODALITIES": {
 				if (!state.editDraft) return;
-				const current = currentEditGroup();
-				const supported = current?.modalities.supported ?? [];
-				const choices = modalityOverrideChoices(supported);
+				const choices = modalityOverrideChoices(modalityEditorSupported());
 				const selected = choices[state.row - 1] ?? [];
 				const next = cloneDef(state.editDraft);
 				if (state.row === 0) delete next.modalityOverride;
@@ -539,6 +537,10 @@ export function createModelGroupsComponent(
 		return container;
 	}
 
+	function modalityEditorSupported(): ModelGroupModality[] {
+		return [...new Set([...(currentEditGroup()?.modalities.supported ?? []), ...(state.editDraft?.modalityOverride ?? [])])];
+	}
+
 	function modalityOverrideChoices(supported: readonly ModelGroupModality[]): ModelGroupModality[][] {
 		const choices: ModelGroupModality[][] = [];
 		for (let mask = 0; mask < 2 ** supported.length; mask++) {
@@ -553,7 +555,7 @@ export function createModelGroupsComponent(
 		const current = currentEditGroup();
 		container.addChild(textLine(theme.fg("accent", "MODALITIES")));
 		container.addChild(textLine(selectableLine(state.row === 0, `Automatic (common: ${current?.modalities.common.join(", ") || "none"})`)));
-		for (const [index, override] of modalityOverrideChoices(current?.modalities.supported ?? []).entries()) {
+		for (const [index, override] of modalityOverrideChoices(modalityEditorSupported()).entries()) {
 			container.addChild(textLine(selectableLine(state.row === index + 1, `Override: ${override.join(", ") || "none"}`)));
 		}
 		return container;

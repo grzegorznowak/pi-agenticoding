@@ -373,6 +373,16 @@ test("v1 migration is in-memory until the first successful mutation writes v2 wi
 	assert.equal(Object.hasOwn(persisted.groups.legacy, "modalityOverride"), false);
 }));
 
+test("v1 valid modalityOverride remains active through pass-through normalization", () => withTemp(({ cwd }) => {
+	const sourcePath = modelGroupsPath("project", cwd);
+	const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["image"] } } }, null, 2) + "\n";
+	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+	fs.writeFileSync(sourcePath, v1Bytes, "utf8");
+	const loaded = loadModelGroups(access(cwd));
+	assert.deepEqual(loaded.configs.project.groups.legacy.modalityOverride, ["image"]);
+	assert.equal(fs.readFileSync(sourcePath, "utf8"), v1Bytes);
+}));
+
 test("v2 normalization preserves opaque root group and model keys through load save and update", () => withTemp(({ cwd }) => {
 	const sourcePath = modelGroupsPath("project", cwd);
 	const raw = {
@@ -397,6 +407,24 @@ test("v2 normalization preserves opaque root group and model keys through load s
 	assert.equal(persisted.groups.review.groupSentinel, "keep");
 	assert.equal(persisted.groups.review.models[0].modelSentinel, "keep");
 	assert.equal(persisted.groups.review.models[0].thinkingLevel, "high");
+}));
+
+test("store normalization strips runtime-derived group keys while preserving opaque keys and modalityOverride", () => withTemp(({ cwd }) => {
+	const a = access(cwd);
+	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }] }, registry());
+	updateGroup("project", a, "review", {
+		models: [{ provider: "openai", modelId: "gpt-5" }],
+		modalityOverride: ["text", "image"],
+		opaqueSentinel: { keep: true },
+		name: "review", scope: "project", sourcePath: "/runtime/model-groups.json",
+		modalities: { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] },
+		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
+	} as any, registry());
+	const persisted = read("project", cwd).groups.review;
+	assert.deepEqual(Object.keys(persisted).sort(), ["modalityOverride", "models", "opaqueSentinel"]);
+	assert.deepEqual(persisted.modalityOverride, ["text", "image"]);
+	assert.deepEqual(persisted.opaqueSentinel, { keep: true });
+	for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) assert.equal(Object.hasOwn(persisted, key), false);
 }));
 
 test("version-3 mutations refuse before temp write including loadScopeConfig-backed CRUD", () => withTemp(({ cwd }) => {

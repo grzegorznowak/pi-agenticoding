@@ -191,6 +191,18 @@ test("before_agent_start injects fresh names-and-effective-modalities guidance",
 	assert.doesNotMatch(result.systemPrompt, /model-groups\.json/);
 }));
 
+test("before_agent_start labels empty effective modalities unambiguously", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { foo: { models: [] }, "foo (none)": { models: [] } } }), "utf8");
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
+	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
+	assert.match(result.systemPrompt, /foo \(no common modalities\)/);
+	assert.match(result.systemPrompt, /foo \(none\) \(no common modalities\)/);
+	assert.doesNotMatch(result.systemPrompt, /foo \(none\),/);
+}));
+
 test("before_agent_start reinjects updated effective modalities after registry changes", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { review: { models: [{ provider: "openai", modelId: "gpt-5" }] } } }), "utf8");

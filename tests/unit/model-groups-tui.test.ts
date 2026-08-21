@@ -120,9 +120,9 @@ test("model groups TUI list renders validation summary, health tags, add row, no
 	assert.doesNotMatch(c.render(100).join("\n"), /Delete Model Group/);
 });
 
-test("model groups TUI renders modality labels, warnings, and supported override choices", () => {
+test("model groups TUI renders modality labels, warnings, and stale override choices", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
-	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] };
+	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	review.modalityOverride = ["text", "image", "reasoning"];
 	review.validation.emptyCommonModalities = true;
 	review.validation.unsupportedOverrideModalities = ["reasoning"];

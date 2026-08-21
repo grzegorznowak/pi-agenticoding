@@ -48,6 +48,7 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────
 
+const MODEL_GROUP_MODALITY_PROSE = MODEL_GROUP_MODALITIES.join(", ").replace(/, ([^,]+)$/, ", or $1");
 const CHILD_MAX_LINES = 2000;
 const CHILD_MAX_BYTES = 50 * 1024;
 
@@ -290,7 +291,7 @@ const SPAWN_PROMPT_SNIPPET = "Spawn a focused subtask agent";
 const SPAWN_PROMPT_GUIDELINES = [
 	"Use spawn to delegate isolated work to child agents. They are trusted extensions of you with their own context and the same authority. Only condensed results are returned.",
 	"If the operator requests a known Model Group confidently, pass its exact name as group. If no known/confident group is requested, omit group so the child inherits the parent model/thinking.",
-	"Declare requiredModalities when the delegated task needs text, image, or reasoning capability; do not work around a missing required modality with third-party tools.",
+	`Declare requiredModalities when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
 ];
 
 const SPAWN_PARAMETERS = Type.Object({

@@ -72,10 +72,9 @@ import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
 import { getEffectiveModelGroups, getEffectiveModelGroupNames } from "./model-groups/router.js";
-import type { ResolvedModelGroup } from "./model-groups/types.js";
+import { MODEL_GROUP_MODALITIES, type ResolvedModelGroup, type ModelGroupsAccess } from "./model-groups/types.js";
 import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
 import { escapeDisplayLabel } from "./model-groups/display.js";
-import type { ModelGroupsAccess } from "./model-groups/types.js";
 import {
 	cacheLookupCommand,
 	cacheLookupCommandExplicitModel,
@@ -101,6 +100,9 @@ import {
 	updateIndicators,
 } from "./tui.js";
 import { applyReadonlyBashGuard } from "./readonly-bash.js";
+
+const MODEL_GROUP_MODALITY_PROSE = MODEL_GROUP_MODALITIES.join(", ").replace(/, ([^,]+)$/, ", or $1");
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 /**
@@ -464,10 +466,10 @@ function refreshModelGroupsState(state: AgenticodingState, ctx: ExtensionContext
 
 function modelGroupsPromptSection(groups: ResolvedModelGroup[]): string | undefined {
 	if (groups.length === 0) return undefined;
-	const labels = groups.map((group) => `${escapeDisplayLabel(group.name)} (${group.modalities?.effective.join(", ") || "none"})`);
+	const labels = groups.map((group) => `${escapeDisplayLabel(group.name)} (${group.modalities?.effective.join(", ") || "no common modalities"})`);
 	return `\n## Model Groups for spawn\n` +
 		`Available Model Groups: ${labels.join(", ")}\n` +
-		`When the operator asks to spawn with one of these groups, or mentions #group-name, call spawn with group set to the exact group name only when the mapping is known and confident. If a delegated task requires text, image, or reasoning capability, pass those requirements as requiredModalities. If no known/confident group is requested, omit group and inherit the parent model/thinking. ` +
+		`When the operator asks to spawn with one of these groups, or mentions #group-name, call spawn with group set to the exact group name only when the mapping is known and confident. If a delegated task requires ${MODEL_GROUP_MODALITY_PROSE} capability, pass those requirements as requiredModalities. If no known/confident group is requested, omit group and inherit the parent model/thinking. ` +
 		`The group list exposes only names and effective modalities; do not assume provider/model membership, thinking levels, auth status, validation details, or storage paths from it.`;
 }
 

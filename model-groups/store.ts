@@ -43,8 +43,9 @@ function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: numb
 		const models: ModelGroupModel[] = []; for (let i = 0; i < rawDef.models.length; i++) { const result = validateModelEntry(rawDef.models[i], `group ${rawName}.models[${i}]`); if (!result.ok) return result; models.push(result.model); }
 		const override = validateOverride(rawDef.modalityOverride, `group ${rawName}.modalityOverride`);
 		if (!override.ok) return override;
-		// Locked v1 pass-through: hand-added valid modalityOverride remains active; no v1 migration (automatic-common modalities stay valid in v2).
-		defineGroup(groups, name, { ...rawDef, models, ...(sourceVersion >= 2 && override.value !== undefined ? { modalityOverride: override.value } : {}) });
+		// Strip runtime-derived fields while retaining opaque config keys and locked v1 override pass-through.
+		const { name: _name, scope: _scope, sourcePath: _sourcePath, modalities: _modalities, validation: _validation, models: _rawModels, ...configDef } = rawDef;
+		defineGroup(groups, name, { ...configDef, models, ...(sourceVersion >= 2 && override.value !== undefined ? { modalityOverride: override.value } : {}) });
 	}
 	return { ok: true, groups };
 }

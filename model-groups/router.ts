@@ -17,6 +17,7 @@ function parentProvider(model: Model<Api>): string { return typeof model.provide
 function effectiveGroupMap(groups: ResolvedModelGroup[]): Map<string, ResolvedModelGroup> { const map = new Map<string, ResolvedModelGroup>(); for (const group of groups) { if (group.validation?.shadowedByProject) continue; const current = map.get(group.name); if (!current || group.scope === "project") map.set(group.name, group); } return map; }
 export function getEffectiveModelGroups(groups: ResolvedModelGroup[]): ResolvedModelGroup[] { return [...effectiveGroupMap(groups).values()].sort((a, b) => a.name.localeCompare(b.name)); }
 export function getEffectiveModelGroupNames(groups: ResolvedModelGroup[]): string[] { return getEffectiveModelGroups(groups).map((group) => group.name); }
+/** Absence and an empty list are equivalent: neither constrains routing. */
 function required(values: readonly ModelGroupModality[] | undefined): ModelGroupModality[] { const set = new Set(values); return MODEL_GROUP_MODALITIES.filter((m) => set.has(m)); }
 export function resolveSpawnModelRoute(options: { requestedGroup?: string; requiredModalities?: readonly ModelGroupModality[]; groups: ResolvedModelGroup[]; parentModel: Model<Api>; parentThinking: ModelThinkingLevel; modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">; rng?: () => number }): SpawnModelRoute {
 	const requestedGroup = options.requestedGroup?.trim(); const req = required(options.requiredModalities);
