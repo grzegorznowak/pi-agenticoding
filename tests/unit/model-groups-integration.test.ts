@@ -89,7 +89,7 @@ test("index session_start notifies empty-common and stale-override boot counts",
 	// The registry has only gpt-5 (text+image); an empty group also has empty common modalities.
 	fs.writeFileSync(modelGroupsPath("global", cwd), JSON.stringify({ version: 2, groups: {
 		empty: { models: [] },
-		"claude-only": { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["text", "image"] },
+		"claude-only": { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } },
 	} }), "utf8");
 	const pi = createTestPI();
 	registerAgenticoding(pi as any);
@@ -183,7 +183,7 @@ test("before_agent_start injects fresh names-and-effective-modalities guidance",
 	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: registry(), getContextUsage: () => null });
 	assert.match(result.systemPrompt, /## Model Groups for spawn/);
 	assert.match(result.systemPrompt, /Available Model Groups: review \(text, image, reasoning\)/);
-	assert.match(result.systemPrompt, /requiredModalities/);
+	assert.match(result.systemPrompt, /constraints/);
 	assert.match(result.systemPrompt, /exact group name/);
 	assert.match(result.systemPrompt, /known and confident/);
 	assert.match(result.systemPrompt, /omit group and inherit/);

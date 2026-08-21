@@ -16,8 +16,6 @@ export interface ModelGroupDef {
 	models: ModelGroupModel[];
 	/** Canonical v2 keyed override envelope. Unknown keys are retained opaquely. */
 	constraints?: Record<string, unknown>;
-	/** @deprecated v2 compatibility alias for constraints.modalities */
-	modalityOverride?: ModelGroupModality[];
 }
 export interface ModelGroupsConfig { version: 2; groups: Record<string, ModelGroupDef> }
 export interface ModelGroupValidation {

@@ -471,7 +471,7 @@ function modelGroupsPromptSection(groups: ResolvedModelGroup[]): string | undefi
 	const labels = groups.map((group) => `${escapeDisplayLabel(group.name)} (${(group.evaluations ? presentConstraintPrompt(group.evaluations, productionConstraintRegistry).filter(Boolean).join(", ") : group.modalities?.effective.join(", ")) || "no common modalities"})`);
 	return `\n## Model Groups for spawn\n` +
 		`Available Model Groups: ${labels.join(", ")}\n` +
-		`When the operator asks to spawn with one of these groups, or mentions #group-name, call spawn with group set to the exact group name only when the mapping is known and confident. If a delegated task requires ${MODEL_GROUP_MODALITY_PROSE} capability, pass those requirements as requiredModalities. If no known/confident group is requested, omit group and inherit the parent model/thinking. ` +
+		`When the operator asks to spawn with one of these groups, or mentions #group-name, call spawn with group set to the exact group name only when the mapping is known and confident. If a delegated task requires ${MODEL_GROUP_MODALITY_PROSE} capability, pass those requirements as constraints. If no known/confident group is requested, omit group and inherit the parent model/thinking. ` +
 		`The group list exposes only names and effective modalities; do not assume provider/model membership, thinking levels, auth status, validation details, or storage paths from it.`;
 }
 

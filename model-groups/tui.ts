@@ -48,7 +48,7 @@ function isDeleteChord(data: string): boolean { return data === "D" || matchesKe
 
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
 	const constraints = def.constraints === undefined ? undefined : { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) };
-	return { models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }), ...(def.modalityOverride === undefined ? {} : { modalityOverride: [...def.modalityOverride] }) };
+	return { models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }) };
 }
 
 function groupKey(group: Pick<ResolvedModelGroup, "scope" | "name">): string {
@@ -293,13 +293,13 @@ export function createModelGroupsComponent(
 		// Test/store adapters that predate generic evaluations retain the production descriptor's compatibility projection.
 		const compatibilityDescriptor = productionConstraintRegistry.descriptors.find((candidate) => candidate.editor.kind === "multi-select");
 		if (!group || !compatibilityDescriptor) return undefined;
-		const reconciled = compatibilityDescriptor.reconcile({ aggregate: group.modalities, override: state.editDraft?.modalityOverride });
+		const reconciled = compatibilityDescriptor.reconcile({ aggregate: group.modalities, override: state.editDraft?.constraints?.modalities });
 		return { descriptor: compatibilityDescriptor, evaluation: { key: compatibilityDescriptor.key, aggregate: group.modalities, effective: reconciled.effective, diagnostics: reconciled.diagnostics } };
 	}
 
 	function modalityEditorRows(): readonly ConstraintEditorRow[] {
 		const editor = activeConstraintEditor();
-		return editor ? constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key] ?? state.editDraft?.modalityOverride) : [];
+		return editor ? constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key]) : [];
 	}
 
 	function maxRow(): number {
@@ -362,11 +362,9 @@ export function createModelGroupsComponent(
 				if (!editor || !selected) return;
 				const next = cloneDef(state.editDraft);
 				if (selected.kind === "automatic") {
-					delete next.modalityOverride;
 					if (next.constraints) delete next.constraints[editor.descriptor.key];
 				} else if (selected.kind === "choice") {
-					next.modalityOverride = [...selected.value] as ModelGroupModality[];
-					(next.constraints ??= {})[editor.descriptor.key] = [...selected.value];
+					(next.constraints ??= {})[editor.descriptor.key] = [...selected.value] as ModelGroupModality[];
 				} else return;
 				updateDraft(next, () => { state.screen = "EDITOR"; state.row = modalityRow(); }); return;
 			}
@@ -557,7 +555,7 @@ export function createModelGroupsComponent(
 		container.addChild(groupNameLineComponent());
 		const modalities = current?.modalities;
 		container.addChild(textLine(theme.fg("dim", `Common: ${modalities?.common.join(", ") || "none"}`)));
-		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.modalityOverride === undefined ? "automatic" : "override"} (${modalities?.effective.join(", ") || "none"})`)));
+		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.constraints?.modalities === undefined ? "automatic" : "override"} (${modalities?.effective.join(", ") || "none"})`)));
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
 			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));

@@ -18,7 +18,7 @@ test("derives ordered common, supported, and override-effective modalities from 
 	assert.deepEqual(deriveModelGroupModalities(group, registry(models)), {
 		common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text"],
 	});
-	assert.deepEqual(deriveModelGroupModalities({ ...group, modalityOverride: ["reasoning", "image"] }, registry(models)).effective, ["image", "reasoning"]);
+	assert.deepEqual(deriveModelGroupModalities({ ...group, constraints: { modalities: ["reasoning", "image"] } }, registry(models)).effective, ["image", "reasoning"]);
 	assert.deepEqual(deriveModelGroupModalities({ models: [...group.models, { provider: "p", modelId: "gone" }] }, registry(models)).common, []);
 	models[1].input = ["text", "image"];
 	assert.deepEqual(deriveModelGroupModalities(group, registry(models)).common, ["text", "image"], "each call reads the live registry");
@@ -32,13 +32,13 @@ test("compatibility façade and descriptor remain parity-equivalent across modal
 	const fixtures: ModelGroupDef[] = [
 		{ models: [] },
 		{ models: [{ provider: "p", modelId: "gone" }] },
-		{ models: [{ provider: "p", modelId: "rich" }], modalityOverride: [] },
-		{ models: [{ provider: "p", modelId: "text" }], modalityOverride: ["image"] },
+		{ models: [{ provider: "p", modelId: "rich" }], constraints: { modalities: [] } },
+		{ models: [{ provider: "p", modelId: "text" }], constraints: { modalities: ["image"] } },
 		{ models: [{ provider: "p", modelId: "rich" }, { provider: "p", modelId: "text" }] },
 	];
 	for (const group of fixtures) {
 		const resolved = resolveConstraintMembers(group.models, registry(models));
-		const evaluation = deriveModalitiesEvaluation(resolved.members, group.modalityOverride);
+		const evaluation = deriveModalitiesEvaluation(resolved.members, group.constraints?.modalities as any);
 		assert.deepEqual(deriveModelGroupModalities(group, registry(models)), {
 			common: evaluation.aggregate.common,
 			supported: evaluation.aggregate.supported,
@@ -48,11 +48,11 @@ test("compatibility façade and descriptor remain parity-equivalent across modal
 });
 
 test("caps stale overrides without mutation and restores them when catalog support returns", () => {
-	const def: ModelGroupDef = { models: [{ provider: "p", modelId: "m" }], modalityOverride: ["text", "image"] };
+	const def: ModelGroupDef = { models: [{ provider: "p", modelId: "m" }], constraints: { modalities: ["text", "image"] } };
 	const models: any[] = [{ provider: "p", id: "m", input: ["text"], reasoning: false }];
 	const first = deriveModelGroupModalities(def, registry(models));
 	assert.deepEqual(first.effective, ["text"]);
-	assert.deepEqual(def.modalityOverride, ["text", "image"]);
+	assert.deepEqual(def.constraints?.modalities, ["text", "image"]);
 	models[0].input.push("image");
 	assert.deepEqual(deriveModelGroupModalities(def, registry(models)).effective, ["text", "image"]);
 	assert.throws(() => assertModalityOverrideSupported(def, registry([{ provider: "p", id: "m", input: ["text"], reasoning: false }])), /unsupported modalities: image/);

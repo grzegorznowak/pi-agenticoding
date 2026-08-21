@@ -727,7 +727,7 @@ test("executeSpawn propagates missing modalities before creating child work", as
 	await assert.rejects(() => executeSpawn("missing-modality", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
-	} as any, state, { prompt: "Do the task", group: "text-only", requiredModalities: ["image"] }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality");
+	} as any, state, { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality");
 	assert.equal(factoryCalls, 0);
 	assert.equal(state.childSessions.size, 0);
 	assert.equal(state.liveChildSessions.size, 0);
@@ -755,7 +755,7 @@ test("registered spawn tool rejects missing modalities before creating child wor
 	registerSpawnTool(pi as any, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any);
 
 	await assert.rejects(
-		() => pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", requiredModalities: ["image"] }, undefined, undefined, {
+		() => pi.tools.get("spawn").execute("registered-missing-modality", { prompt: "Do the task", group: "text-only", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, {
 			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
 			modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false }), hasConfiguredAuth: () => true },
 		} as any),
@@ -788,16 +788,14 @@ test("registered spawn tool rejects injected scalar group and model requirements
 	assert.equal(factoryCalls, 0); assert.equal(state.childSessions.size, 0); assert.equal(state.liveChildSessions.size, 0);
 });
 
-test("spawn requirements normalize generic and legacy aliases conflict-safely", () => {
+test("spawn requirements normalize the canonical envelope", () => {
 	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image", "text"] } } }), { modalities: ["text", "image"] });
-	assert.deepEqual(normalizeSpawnRequirements({ requiredModalities: ["image"] }), { modalities: ["image"] });
-	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } }, requiredModalities: ["image"] }), { modalities: ["image"] });
-	assert.throws(() => normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } }, requiredModalities: ["text"] }), /conflicts/);
+	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } } }), { modalities: ["image"] });
 	assert.throws(() => normalizeSpawnRequirements({ constraints: { unknown: {} } }), /Unknown spawn constraint/);
 	assert.deepEqual(normalizeSpawnRequirements({}), normalizeSpawnRequirements({ constraints: {}}));
 });
 
-test("spawn tool schema validates requiredModalities via Value.Check", () => {
+test("spawn tool schema validates constraints via Value.Check", () => {
 	const pi = createTestPI();
 	const state = createState();
 	registerSpawnTool(pi as any, state);
@@ -805,15 +803,14 @@ test("spawn tool schema validates requiredModalities via Value.Check", () => {
 	const schema = (tool as any).parameters;
 	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }), true, "valid generic envelope accepted");
 	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { unknown: {} } }), false, "unknown generic requirement rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: ["text", "image"] }), true, "valid unique vocab accepted");
-	assert.equal(Value.Check(schema, { prompt: "Do the task" }), true, "omitted requiredModalities allowed");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: [] }), true, "empty array allowed");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: ["text", "text"] }), false, "duplicates rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: ["audio"] }), false, "out-of-vocabulary rejected");
-	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: "text" }), false, "non-array rejected");
+	assert.equal(Value.Check(schema, { prompt: "Do the task" }), true, "omitted constraints allowed");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: [] } } }), true, "empty array allowed");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "text"] } } }), false, "duplicates rejected");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["audio"] } } }), false, "out-of-vocabulary rejected");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: "text" } }), false, "non-object requirement rejected");
 });
 
-test("executeSpawn forwards plain inherited requiredModalities to routing and succeeds when satisfied", async () => {
+test("executeSpawn forwards inherited constraints to routing and succeeds when satisfied", async () => {
 	const pi = createTestPI();
 	pi.setActiveTools(["read", "spawn"]);
 	const state = createState();
@@ -830,7 +827,7 @@ test("executeSpawn forwards plain inherited requiredModalities to routing and su
 	const result = await executeSpawn("spawn-inherited-rm", pi as any, {
 		model: { provider: "openai", id: "parent", input: ["text", "image"], reasoning: false }, cwd: "/tmp",
 		modelRegistry: { find: (_p: string, id: string) => ({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
-	} as any, state, { prompt: "Do the task", requiredModalities: ["text", "image"] }, undefined, undefined, "medium", async () => { factoryCalls++; return { session: session as any, extensionsResult: undefined as any }; });
+	} as any, state, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }, undefined, undefined, "medium", async () => { factoryCalls++; return { session: session as any, extensionsResult: undefined as any }; });
 	assert.equal(result.details.outcome, "success");
 	assert.deepEqual(result.details.route, { status: "inherited" });
 	assert.equal(factoryCalls, 1, "inherited route with satisfied requirements creates one child");
@@ -1876,10 +1873,9 @@ test("registerSpawnTool registers a tool with correct name and metadata", () => 
 	assert.equal(typeof tool.renderResult, "function");
 	assert.equal(tool.renderShell, "self");
 	assert.ok(tool.parameters, "should have parameters");
-	const requiredModalities = (tool.parameters as any).properties.requiredModalities;
-	assert.equal(requiredModalities.type, "array");
-	assert.equal(requiredModalities.uniqueItems, true);
-	assert.deepEqual(requiredModalities.items.enum, ["text", "image", "reasoning"]);
+	const constraints = (tool.parameters as any).properties.constraints;
+	assert.equal(constraints.type, "object");
+	assert.ok(constraints.properties.modalities);
 	assert.equal(tool.executionMode, undefined, "spawn should not be sequential");
 });
 

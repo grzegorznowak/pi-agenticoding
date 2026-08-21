@@ -21,7 +21,7 @@ export function modelGroupsPath(scope: ModelGroupScope, cwd: string, projectConf
 function ownGroups(): Record<string, ModelGroupDef> { return Object.create(null) as Record<string, ModelGroupDef>; }
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
 	const constraints = def.constraints === undefined ? undefined : { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) };
-	return { ...def, models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }), ...(def.modalityOverride === undefined ? {} : { modalityOverride: [...def.modalityOverride] }) };
+	return { ...def, models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }) };
 }
 function defineGroup(groups: Record<string, ModelGroupDef>, name: string, def: ModelGroupDef): void { Object.defineProperty(groups, name, { value: cloneDef(def), enumerable: true, writable: true, configurable: true }); }
 function hasOwnGroup(groups: Record<string, ModelGroupDef>, name: string): boolean { return Object.hasOwn(groups, name); }
@@ -38,31 +38,24 @@ function validateModelEntry(value: unknown, at: string): { ok: true; model: Mode
 	if (value.thinkingLevel === undefined) delete (model as any).thinkingLevel;
 	return { ok: true, model };
 }
-function validateOverride(value: unknown, at: string): { ok: true; value?: ModelGroupDef["modalityOverride"] } | { ok: false; message: string } {
+function validateOverride(value: unknown, at: string): { ok: true; value?: ModelGroupModality[] } | { ok: false; message: string } {
 	if (value === undefined) return { ok: true };
 	const decoded = modalitiesConstraint.persistence.override.decode(value, at);
 	return decoded.ok ? { ok: true, value: decoded.value } : decoded;
 }
-function normalizeOverrideEnvelope(rawDef: Record<string, unknown>, sourceVersion: number, rawName: string): { ok: true; constraints?: Record<string, unknown>; modalityOverride?: ModelGroupDef["modalityOverride"] } | { ok: false; message: string } {
+function normalizeOverrideEnvelope(rawDef: Record<string, unknown>, sourceVersion: number, rawName: string): { ok: true; constraints?: Record<string, unknown> } | { ok: false; message: string } {
 	if (sourceVersion < 2) {
 		if (Object.hasOwn(rawDef, "constraints")) return { ok: false, message: `group ${rawName}.constraints is unsupported in legacy config` };
-		const alias = validateOverride(rawDef.modalityOverride, `group ${rawName}.modalityOverride`);
-		return alias.ok ? { ok: true, ...(alias.value === undefined ? {} : { modalityOverride: alias.value }) } : alias;
+		return { ok: true };
 	}
 	if (rawDef.constraints !== undefined && !isPlainRecord(rawDef.constraints)) return { ok: false, message: `group ${rawName}.constraints must be an object` };
-	const rawConstraints = rawDef.constraints as Record<string, unknown> | undefined;
-	const alias = validateOverride(rawDef.modalityOverride, `group ${rawName}.modalityOverride`);
-	if (!alias.ok) return alias;
-	const generic = rawConstraints && Object.hasOwn(rawConstraints, "modalities")
-		? validateOverride(rawConstraints.modalities, `group ${rawName}.constraints.modalities`)
-		: { ok: true as const };
-	if (!generic.ok) return generic;
-	if (alias.value !== undefined && generic.value !== undefined && !modalitiesConstraint.persistence.override.equals(alias.value, generic.value)) return { ok: false, message: `group ${rawName} modalityOverride conflicts with constraints.modalities` };
-	const modalityOverride = generic.value ?? alias.value;
-	let constraints = rawConstraints === undefined ? undefined : { ...rawConstraints };
-	if (modalityOverride !== undefined) (constraints ??= {}).modalities = modalitiesConstraint.persistence.override.encode(modalityOverride);
-	else if (constraints) delete constraints.modalities;
-	return { ok: true, ...(constraints && Object.keys(constraints).length ? { constraints } : {}), ...(modalityOverride === undefined ? {} : { modalityOverride }) };
+	const constraints = rawDef.constraints === undefined ? undefined : { ...rawDef.constraints as Record<string, unknown> };
+	if (constraints && Object.hasOwn(constraints, "modalities")) {
+		const override = validateOverride(constraints.modalities, `group ${rawName}.constraints.modalities`);
+		if (!override.ok) return override;
+		constraints.modalities = modalitiesConstraint.persistence.override.encode(override.value!);
+	}
+	return { ok: true, ...(constraints && Object.keys(constraints).length ? { constraints } : {}) };
 }
 function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: number): { ok: true; groups: Record<string, ModelGroupDef> } | { ok: false; message: string } {
 	const groups = ownGroups();
@@ -75,7 +68,7 @@ function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: numb
 		// Strip runtime-derived fields while retaining opaque config keys and the v2 envelope.
 		const { name: _name, scope: _scope, sourcePath: _sourcePath, modalities: _modalities, validation: _validation, models: _rawModels, constraints: _constraints, modalityOverride: _modalityOverride, ...configDef } = rawDef;
 		const { ok: _ok, ...normalizedEnvelope } = envelope;
-		defineGroup(groups, name, { ...configDef, models, ...normalizedEnvelope });
+		defineGroup(groups, name, { ...configDef, models, ...normalizedEnvelope, ...(sourceVersion < 2 && Object.hasOwn(rawDef, "modalityOverride") ? { modalityOverride: rawDef.modalityOverride } : {}) });
 	}
 	return { ok: true, groups };
 }

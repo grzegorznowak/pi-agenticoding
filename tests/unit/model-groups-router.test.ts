@@ -32,25 +32,25 @@ test("omitted and unknown groups inherit parent route with fallback metadata", (
 
 test("known empty and all-unusable groups fail clearly", () => {
 	const parent = model("openai", "parent");
-	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "empty", requiredModalities: ["image"], groups: [group("empty", { scope: "project" })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "empty");
-	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "bad", requiredModalities: ["image"], groups: [group("bad", { scope: "project", models: [{ provider: "openai", modelId: "missing" }] })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "no-usable-models");
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "empty", constraints: { modalities: { required: ["image"] } }, groups: [group("empty", { scope: "project" })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "empty");
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "bad", constraints: { modalities: { required: ["image"] } }, groups: [group("bad", { scope: "project", models: [{ provider: "openai", modelId: "missing" }] })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "no-usable-models");
 });
 
 test("required modalities check the effective group and actual RNG-selected model", () => {
 	const parent = model("p", "parent");
 	const text = model("p", "text");
 	const image = model("p", "image", { input: ["text", "image"] });
-	const routed = group("mixed", { models: [{ provider: "p", modelId: "text" }, { provider: "p", modelId: "image" }], modalityOverride: ["text", "image"] });
+	const routed = group("mixed", { models: [{ provider: "p", modelId: "text" }, { provider: "p", modelId: "image" }], constraints: { modalities: ["text", "image"] } });
 	routed.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	const reg = registry([parent, text, image]);
-	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "mixed", requiredModalities: ["image"], groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => 0 }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup.length === 0 && error.missingFromModel[0] === "image" && /Routed model/.test(error.message));
-	assert.equal(resolveSpawnModelRoute({ requestedGroup: "mixed", requiredModalities: ["image"], groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => .99 }).status, "routed");
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => 0 }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup.length === 0 && error.missingFromModel[0] === "image" && /Routed model/.test(error.message));
+	assert.equal(resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => .99 }).status, "routed");
 });
 
 test("known group missing effective modality and inherited fallback reject requirements", () => {
 	const parent = model("p", "parent"); const text = model("p", "text"); const g = group("text", { models: [{ provider: "p", modelId: "text" }] });
-	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "text", requiredModalities: ["image"], groups: [g], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, text]) }), (error: unknown) => error instanceof SpawnRouteError && error.missingFromGroup[0] === "image");
-	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "unknown", requiredModalities: ["image"], groups: [], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) }), (error: unknown) => error instanceof SpawnRouteError && error.group === "unknown" && /Spawn model/.test(error.message));
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "text", constraints: { modalities: { required: ["image"] } }, groups: [g], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, text]) }), (error: unknown) => error instanceof SpawnRouteError && error.missingFromGroup[0] === "image");
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "unknown", constraints: { modalities: { required: ["image"] } }, groups: [], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) }), (error: unknown) => error instanceof SpawnRouteError && error.group === "unknown" && /Spawn model/.test(error.message));
 });
 
 test("injected scalar requirements use generic violations, not modality arrays", () => {
@@ -62,9 +62,9 @@ test("plain inherited route honors requiredModalities with empty-array no-op", (
 	const rich = model("p", "rich-parent", { input: ["text", "image"] });
 	const text = model("p", "text-parent", { input: ["text"] });
 	// Empty array is a no-op: route returns unchanged, no requirement check.
-	assert.deepEqual(resolveSpawnModelRoute({ requiredModalities: [], groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) }).status, "inherited");
+	assert.deepEqual(resolveSpawnModelRoute({ constraints: { modalities: { required: [] } }, groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) }).status, "inherited");
 	// Parent satisfies all requirements → inherited route succeeds.
-	assert.deepEqual(resolveSpawnModelRoute({ requiredModalities: ["text", "image"], groups: [], parentModel: rich, parentThinking: "medium", modelRegistry: registry([rich]) }).status, "inherited");
+	assert.deepEqual(resolveSpawnModelRoute({ constraints: { modalities: { required: ["text", "image"] } }, groups: [], parentModel: rich, parentThinking: "medium", modelRegistry: registry([rich]) }).status, "inherited");
 	// Parent lacks a required modality → missing-modality with the parent model details.
-	assert.throws(() => resolveSpawnModelRoute({ requiredModalities: ["image"], groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.group === "<inherited>" && error.missingFromModel[0] === "image" && error.missingFromGroup.length === 0 && /Spawn model/.test(error.message));
+	assert.throws(() => resolveSpawnModelRoute({ constraints: { modalities: { required: ["image"] } }, groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.group === "<inherited>" && error.missingFromModel[0] === "image" && error.missingFromGroup.length === 0 && /Spawn model/.test(error.message));
 });

@@ -123,7 +123,7 @@ test("model groups TUI list renders validation summary, health tags, add row, no
 test("model groups TUI renders modality labels, warnings, and stale override choices", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
 	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
-	review.modalityOverride = ["text", "image", "reasoning"];
+	review.constraints = { modalities: ["text", "image", "reasoning"] };
 	review.validation.emptyCommonModalities = true;
 	review.validation.unsupportedOverrideModalities = ["reasoning"];
 	const { c } = component({ groups: [review] });
@@ -146,8 +146,9 @@ test("model groups TUI modality editor commits override and Automatic through up
 	let groups = [review];
 	const store = {
 		updateGroup: (scope: string, _cwd: string, name: string, def: any) => {
-			calls.push({ scope, name, def: { ...def, modalityOverride: def.modalityOverride ? [...def.modalityOverride] : undefined } });
-			groups = [group(name, { scope: scope as "project", models: def.models, modalityOverride: def.modalityOverride })];
+			calls.push({ scope, name, def: { ...def, constraints: def.constraints ? { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined } });
+			groups = [group(name, { scope: scope as "project", models: def.models, constraints: def.constraints })];
+			groups[0].modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
 		},
 		listResolvedModelGroups: () => boot(groups),
 	};
@@ -159,13 +160,14 @@ test("model groups TUI modality editor commits override and Automatic through up
 	selectRenderedLabel(c, "Override: text, image, reasoning");
 	press(c, ENTER);
 	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0].def.modalityOverride, ["text", "image", "reasoning"]);
+	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image", "reasoning"]);
 	assert.match(rendered(c), /Modalities: override/);
 	press(c, ENTER);
+	assert.match(rendered(c), /MODALITIES/);
 	selectRenderedLabel(c, "Automatic");
 	press(c, ENTER);
 	assert.equal(calls.length, 2);
-	assert.equal(calls[1].def.modalityOverride, undefined);
+	assert.equal(calls[1].def.constraints?.modalities, undefined);
 	assert.match(rendered(c), /Modalities: automatic/);
 });
 
@@ -177,7 +179,7 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 	const store = {
 		updateGroup: (_scope: string, _cwd: string, _name: string, def: any) => {
 			if (failing) throw new ModelGroupsPersistenceError({ operation: "save", scope: "project", sourcePath: "/tmp/.pi/pi-agenticoding/model-groups.json", phase: "rename", message: "modality write denied" });
-			review.modalityOverride = def.modalityOverride ? [...def.modalityOverride] : undefined;
+			review.constraints = def.constraints ? { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined;
 		},
 		listResolvedModelGroups: () => boot([review]),
 	};

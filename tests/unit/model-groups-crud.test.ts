@@ -274,25 +274,17 @@ test("model groups strictly partitions schema and legacy version domains", () =>
 	}
 }));
 
-test("legacy malformed modalityOverride recovers as schema-invalid instead of crashing load", () => withTemp(({ cwd }) => {
+test("legacy constraints recover as schema-invalid instead of crashing load", () => withTemp(({ cwd }) => {
 	const projectPath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-	// Missing version, explicit version 0, and explicit version 1 all normalize to the legacy
-	// domain. A hand-added malformed override (non-array value) must surface as a clean
-	// schema-invalid issue with backup and empty recovery, never as a raw TypeError.
-	const cases: Array<[string, unknown]> = [
-		["missing", { groups: { legacy: { models: [], modalityOverride: 123 } } }],
-		["version 0", { version: 0, groups: { legacy: { models: [], modalityOverride: [123] } } }],
-		["version 1", { version: 1, groups: { legacy: { models: [], modalityOverride: "text" } } }],
-	];
-	for (const [label, raw] of cases) {
+	for (const raw of [{ groups: { legacy: { models: [], constraints: {} } } }, { version: 0, groups: { legacy: { models: [], constraints: {} } } }, { version: 1, groups: { legacy: { models: [], constraints: {} } } }]) {
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
 		const loaded = loadModelGroups(access(cwd));
 		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
-		assert.equal(issue.kind, "schema-invalid", label);
-		assert.match(issue.message, /modalityOverride/, label);
-		assert.ok(fs.existsSync(`${projectPath}.bak`), label);
-		assert.equal(Object.keys(loaded.configs.project.groups).length, 0, label);
+		assert.equal(issue.kind, "schema-invalid");
+		assert.match(issue.message, /constraints/);
+		assert.ok(fs.existsSync(`${projectPath}.bak`));
+		assert.equal(Object.keys(loaded.configs.project.groups).length, 0);
 	}
 }));
 
@@ -302,7 +294,7 @@ test("store-level validation derives empty-common and stale-override flags and c
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: {
 		empty: { models: [] },
 		unresolved: { models: [{ provider: "openai", modelId: "gone" }, { provider: "openai", modelId: "gpt-5" }] },
-		stale: { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["text", "image"] },
+		stale: { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } },
 	} }), "utf8");
 	const resolved = validateModelGroups(loadModelGroups(a), registry());
 	// claude supports text only, so image is a stale unsupported override entry.
@@ -322,29 +314,29 @@ test("create and update reject unsupported modality override before writing", ()
 	// claude supports only text, so an override of image must be rejected by the CRUD gate.
 	let writes = 0;
 	__setModelGroupsFsForTests({ writeFileSync: (_p?: unknown, _d?: unknown, ..._r: unknown[]) => { writes++; fs.writeFileSync(_p as any, _d as any, ...(_r as any)); } });
-	assert.throws(() => createGroup("project", a, "claude-only", { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["image"] }, registry()), /unsupported modalities: image/);
+	assert.throws(() => createGroup("project", a, "claude-only", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } }, registry()), /unsupported modalities: image/);
 	assert.equal(writes, 0);
 	__setModelGroupsFsForTests(null);
 
-	createGroup("project", a, "rich", { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["text", "image"] }, registry());
+	createGroup("project", a, "rich", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, registry());
 	const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
 	let writes2 = 0;
 	__setModelGroupsFsForTests({ writeFileSync: (_p: unknown, _d: unknown, _r: unknown) => { writes2++; fs.writeFileSync(_p as any, _d as any, _r as any); } });
 	// Combined member change: replacing gpt-5 (text+image+reasoning) with claude (text only)
 	// makes the retained override's image unsupported → the gate must reject before any write.
-	assert.throws(() => updateGroup("project", a, "rich", { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["text", "image"] }, registry()), /unsupported modalities: image/);
+	assert.throws(() => updateGroup("project", a, "rich", { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["text", "image"] } }, registry()), /unsupported modalities: image/);
 	assert.equal(writes2, 0, "rejected update must not write");
 	assert.equal(fs.readFileSync(modelGroupsPath("project", cwd), "utf8"), before);
 	__setModelGroupsFsForTests(null);
 }));
 
-test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modality override", () => withTemp(({ cwd }) => {
+test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modality constraints", () => withTemp(({ cwd }) => {
 	const projectPath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
 	const cases: Array<[string, unknown, RegExp]> = [
-		["non-array", { version: 2, groups: { g: { models: [], modalityOverride: { text: true } } } }, /modalityOverride/],
-		["duplicate", { version: 2, groups: { g: { models: [], modalityOverride: ["text", "text"] } } }, /unique/],
-		["out-of-language", { version: 2, groups: { g: { models: [], modalityOverride: ["audio"] } } }, /vocabulary/],
+		["non-array", { version: 2, groups: { g: { models: [], constraints: { modalities: { text: true } } } } }, /modalities/],
+		["duplicate", { version: 2, groups: { g: { models: [], constraints: { modalities: ["text", "text"] } } } }, /unique/],
+		["out-of-language", { version: 2, groups: { g: { models: [], constraints: { modalities: ["audio"] } } } }, /vocabulary/],
 	];
 	for (const [label, raw, message] of cases) {
 		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
@@ -364,7 +356,7 @@ test("v1 migration is in-memory until the first successful mutation writes v2 wi
 
 	const loaded = loadModelGroups(access(cwd));
 	assert.equal(loaded.configs.project.version, 2);
-	assert.equal(loaded.configs.project.groups.legacy.modalityOverride, undefined);
+	assert.equal(loaded.configs.project.groups.legacy.constraints, undefined);
 	assert.equal(fs.readFileSync(sourcePath, "utf8"), v1Bytes);
 
 	updateGroup("project", access(cwd), "legacy", { models: [{ provider: "anthropic", modelId: "claude" }] }, registry());
@@ -373,40 +365,39 @@ test("v1 migration is in-memory until the first successful mutation writes v2 wi
 	assert.equal(Object.hasOwn(persisted.groups.legacy, "modalityOverride"), false);
 }));
 
-test("v1 valid modalityOverride remains active through pass-through normalization", () => withTemp(({ cwd }) => {
+test("legacy modalityOverride is opaque and not interpreted", () => withTemp(({ cwd }) => {
 	const sourcePath = modelGroupsPath("project", cwd);
 	const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["image"] } } }, null, 2) + "\n";
 	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
 	fs.writeFileSync(sourcePath, v1Bytes, "utf8");
 	const loaded = loadModelGroups(access(cwd));
-	assert.deepEqual(loaded.configs.project.groups.legacy.modalityOverride, ["image"]);
+	assert.equal(loaded.configs.project.groups.legacy.constraints, undefined);
+	assert.equal(Object.hasOwn(loaded.configs.project.groups.legacy, "modalityOverride"), true);
 	assert.equal(fs.readFileSync(sourcePath, "utf8"), v1Bytes);
+	saveModelGroups("project", access(cwd), loaded.configs.project);
+	assert.equal(Object.hasOwn(read("project", cwd).groups.legacy, "modalityOverride"), false);
 }));
 
-test("v2 constraint envelope coalesces aliases, preserves explicit empty and opaque slots, and serializes the canonical mirror", () => withTemp(({ cwd }) => {
+test("v2 constraint envelope preserves explicit empty and opaque slots canonically", () => withTemp(({ cwd }) => {
 	const sourcePath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
 	const fixtures: Array<[string, any, string[] | undefined]> = [
 		["generic", { constraints: { modalities: ["reasoning", "text"] } }, ["text", "reasoning"]],
-		["alias", { modalityOverride: ["image"] }, ["image"]],
-		["equal", { constraints: { modalities: ["text", "image"] }, modalityOverride: ["image", "text"] }, ["text", "image"]],
 		["empty", { constraints: { modalities: [] } }, []],
 		["automatic", {}, undefined],
 	];
 	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: Object.fromEntries(fixtures.map(([name, envelope]) => [name, { models: [{ provider: "openai", modelId: "gpt-5" }], ...envelope }])) }), "utf8");
 	const loaded = loadModelGroups(access(cwd));
 	assert.equal(loaded.issues.length, 0);
-	for (const [name, _envelope, expected] of fixtures) assert.deepEqual(loaded.configs.project.groups[name].modalityOverride, expected, name);
+	for (const [name, _envelope, expected] of fixtures) assert.deepEqual(loaded.configs.project.groups[name].constraints?.modalities, expected, name);
 	saveModelGroups("project", access(cwd), loaded.configs.project);
 	const persisted = read("project", cwd);
 	for (const [name, _envelope, expected] of fixtures) {
 		const group = persisted.groups[name];
 		if (expected === undefined) {
 			assert.equal(Object.hasOwn(group, "constraints"), false, name);
-			assert.equal(Object.hasOwn(group, "modalityOverride"), false, name);
 		} else {
 			assert.deepEqual(group.constraints.modalities, expected, name);
-			assert.deepEqual(group.modalityOverride, expected, name);
 		}
 	}
 
@@ -415,28 +406,19 @@ test("v2 constraint envelope coalesces aliases, preserves explicit empty and opa
 	updateGroup("project", access(cwd), "opaque", { ...opaque.configs.project.groups.opaque, models: [{ provider: "openai", modelId: "gpt-5", modelSentinel: true, thinkingLevel: "high" } as any] }, registry());
 	const opaquePersisted = read("project", cwd).groups.opaque;
 	assert.deepEqual(opaquePersisted.constraints, { modalities: ["image"], cost: { future: true } });
-	assert.deepEqual(opaquePersisted.modalityOverride, ["image"]);
 	assert.equal(opaquePersisted.groupSentinel, true);
 	assert.equal(opaquePersisted.models[0].modelSentinel, true);
 }));
 
-test("v2 conflicting constraint aliases and legacy constraint envelopes reject without reinterpretation", () => withTemp(({ cwd }) => {
+test("v2 drops stale modalityOverride rather than reinterpreting it", () => withTemp(({ cwd }) => {
 	const sourcePath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
-	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { bad: { models: [], constraints: { modalities: ["text"] }, modalityOverride: ["image"] } } }), "utf8");
-	let loaded = loadModelGroups(access(cwd));
-	assert.equal(loaded.issues[0].kind, "schema-invalid");
-	assert.match(loaded.issues[0].message, /conflicts/);
-	for (const raw of [{ groups: { legacy: { models: [], constraints: {} } } }, { version: 0, groups: { legacy: { models: [], constraints: {} } } }, { version: 1, groups: { legacy: { models: [], constraints: {} } } }]) {
-		fs.writeFileSync(sourcePath, JSON.stringify(raw), "utf8");
-		loaded = loadModelGroups(access(cwd));
-		assert.equal(loaded.issues[0].kind, "schema-invalid");
-		assert.match(loaded.issues[0].message, /constraints/);
-	}
-	fs.writeFileSync(sourcePath, JSON.stringify({ version: 1, groups: { legacy: { models: [], modalityOverride: ["text"] } } }), "utf8");
-	loaded = loadModelGroups(access(cwd));
-	assert.deepEqual(loaded.configs.project.groups.legacy.modalityOverride, ["text"]);
-	assert.throws(() => createGroup("project", access(cwd), "conflict", { models: [], constraints: { modalities: ["text"] }, modalityOverride: ["image"] }, registry()), (error) => error instanceof ModelGroupsPersistenceError && error.phase === "config-validation");
+	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { stale: { models: [], modalityOverride: ["image"] } } }), "utf8");
+	const loaded = loadModelGroups(access(cwd));
+	assert.equal(loaded.issues.length, 0);
+	assert.equal(loaded.configs.project.groups.stale.constraints, undefined);
+	saveModelGroups("project", access(cwd), loaded.configs.project);
+	assert.equal(Object.hasOwn(read("project", cwd).groups.stale, "modalityOverride"), false);
 }));
 
 test("v2 normalization preserves opaque root group and model keys through load save and update", () => withTemp(({ cwd }) => {
@@ -465,21 +447,20 @@ test("v2 normalization preserves opaque root group and model keys through load s
 	assert.equal(persisted.groups.review.models[0].thinkingLevel, "high");
 }));
 
-test("store normalization strips runtime-derived group keys while preserving opaque keys and modalityOverride", () => withTemp(({ cwd }) => {
+test("store normalization strips runtime-derived group keys while preserving opaque keys", () => withTemp(({ cwd }) => {
 	const a = access(cwd);
 	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }] }, registry());
 	updateGroup("project", a, "review", {
 		models: [{ provider: "openai", modelId: "gpt-5" }],
-		modalityOverride: ["text", "image"],
+		constraints: { modalities: ["text", "image"] },
 		opaqueSentinel: { keep: true },
 		name: "review", scope: "project", sourcePath: "/runtime/model-groups.json",
 		modalities: { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image"] },
 		validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] },
 	} as any, registry());
 	const persisted = read("project", cwd).groups.review;
-	assert.deepEqual(Object.keys(persisted).sort(), ["constraints", "modalityOverride", "models", "opaqueSentinel"]);
+	assert.deepEqual(Object.keys(persisted).sort(), ["constraints", "models", "opaqueSentinel"]);
 	assert.deepEqual(persisted.constraints.modalities, ["text", "image"]);
-	assert.deepEqual(persisted.modalityOverride, ["text", "image"]);
 	assert.deepEqual(persisted.opaqueSentinel, { keep: true });
 	for (const key of ["name", "scope", "sourcePath", "modalities", "validation"]) assert.equal(Object.hasOwn(persisted, key), false);
 }));
@@ -506,17 +487,17 @@ test("version-3 mutations refuse before temp write including loadScopeConfig-bac
 
 test("modality overrides survive CRUD rename and move lifecycle in both scopes", () => withTemp(({ cwd }) => {
 	const a = access(cwd);
-	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["image"] }, registry());
-	updateGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["text", "image"] }, registry());
+	createGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["image"] } }, registry());
+	updateGroup("project", a, "review", { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { modalities: ["text", "image"] } }, registry());
 	renameGroup("project", a, "review", "reviewers");
 	moveGroup(a, "reviewers", "global");
 	saveModelGroups("global", a, loadModelGroups(a).configs.global);
-	assert.deepEqual(read("global", cwd).groups.reviewers.modalityOverride, ["text", "image"]);
+	assert.deepEqual(read("global", cwd).groups.reviewers.constraints.modalities, ["text", "image"]);
 
 	renameGroup("global", a, "reviewers", "global-reviewers");
 	moveGroup(a, "global-reviewers", "project");
 	assert.equal(read("global", cwd).groups["global-reviewers"], undefined);
-	assert.deepEqual(read("project", cwd).groups["global-reviewers"].modalityOverride, ["text", "image"]);
+	assert.deepEqual(read("project", cwd).groups["global-reviewers"].constraints.modalities, ["text", "image"]);
 }));
 
 test("model groups use branded paths, global-only access, canonical own keys, and native max", () => withTemp(({ cwd }) => {

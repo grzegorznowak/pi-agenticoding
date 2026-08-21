@@ -10,19 +10,21 @@ export function getModelModalities(model: Model<Api>): ModelGroupModality[] {
 }
 
 export function deriveModelGroupModalities(
-	group: Pick<ModelGroupDef, "models" | "modalityOverride">,
+	group: Pick<ModelGroupDef, "models" | "constraints">,
 	modelRegistry: Pick<ModelRegistry, "find">,
 ): ModelGroupModalities {
-	const evaluation = deriveModalitiesEvaluation(resolveConstraintMembers(group.models, modelRegistry).members, group.modalityOverride);
+	const override = group.constraints?.modalities as ModelGroupModality[] | undefined;
+	const evaluation = deriveModalitiesEvaluation(resolveConstraintMembers(group.models, modelRegistry).members, override);
 	return { common: evaluation.aggregate.common, supported: evaluation.aggregate.supported, effective: evaluation.effective };
 }
 
 export function assertModalityOverrideSupported(
-	group: Pick<ModelGroupDef, "models" | "modalityOverride">,
+	group: Pick<ModelGroupDef, "models" | "constraints">,
 	modelRegistry: Pick<ModelRegistry, "find">,
 ): void {
-	const evaluation = deriveModalitiesEvaluation(resolveConstraintMembers(group.models, modelRegistry).members, group.modalityOverride);
-	assertModalitiesOverrideSupported(evaluation, group.modalityOverride);
+	const override = group.constraints?.modalities as ModelGroupModality[] | undefined;
+	const evaluation = deriveModalitiesEvaluation(resolveConstraintMembers(group.models, modelRegistry).members, override);
+	assertModalitiesOverrideSupported(evaluation, override);
 }
 
 export function getMissingModelModalities(model: Model<Api>, required: readonly ModelGroupModality[]): ModelGroupModality[] {

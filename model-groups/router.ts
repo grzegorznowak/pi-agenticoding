@@ -23,19 +23,22 @@ export function getEffectiveModelGroups(groups: ResolvedModelGroup[]): ResolvedM
 export function getEffectiveModelGroupNames(groups: ResolvedModelGroup[]): string[] { return getEffectiveModelGroups(groups).map((group) => group.name); }
 
 /** Route selection remains auth-aware; constraint evaluation receives its explicit member snapshot. */
-export function resolveSpawnModelRoute(options: { requestedGroup?: string; constraints?: Readonly<Record<string, unknown>>; /** @deprecated direct-router compatibility alias; spawn normalizes at its boundary. */ requiredModalities?: readonly ModelGroupModality[]; groups: ResolvedModelGroup[]; parentModel: Model<Api>; parentThinking: ModelThinkingLevel; modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">; constraintRegistry?: ConstraintRegistry; rng?: () => number }): SpawnModelRoute {
-	const requestedGroup = options.requestedGroup?.trim(); const requirements = options.constraints ?? (options.requiredModalities === undefined ? {} : { modalities: options.requiredModalities }); const registry = options.constraintRegistry ?? productionConstraintRegistry;
+export function resolveSpawnModelRoute(options: { requestedGroup?: string; constraints?: Readonly<Record<string, unknown>>; groups: ResolvedModelGroup[]; parentModel: Model<Api>; parentThinking: ModelThinkingLevel; modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">; constraintRegistry?: ConstraintRegistry; rng?: () => number }): SpawnModelRoute {
+	const requestedGroup = options.requestedGroup?.trim(); const requirements = options.constraints ?? {}; const registry = options.constraintRegistry ?? productionConstraintRegistry;
 	const inherited = (status: "inherited" | "unknown-fallback"): SpawnModelRoute => ({ status, ...(status === "unknown-fallback" && requestedGroup ? { requestedGroup } : {}), model: options.parentModel, provider: parentProvider(options.parentModel), modelId: options.parentModel.id, thinking: options.parentThinking });
 	let route: SpawnModelRoute; let group: ResolvedModelGroup | undefined;
 	if (!requestedGroup) route = inherited("inherited"); else { group = effectiveGroupMap(options.groups).get(requestedGroup); if (!group) route = inherited("unknown-fallback"); else { if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty"); const usable = group.models.map((entry) => { const model = options.modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined; return model && options.modelRegistry.hasConfiguredAuth(model) ? { entry, model } : undefined; }).filter((entry): entry is { entry: ResolvedModelGroup["models"][number]; model: Model<Api> } => Boolean(entry)); if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models"); const selected = usable[Math.min(usable.length - 1, Math.max(0, Math.floor((options.rng ?? Math.random)() * usable.length)))]; route = { status: "routed", requestedGroup, groupName: group.name, model: selected.model, provider: selected.entry.provider, modelId: selected.entry.modelId, thinking: clampThinkingLevel(selected.model, selected.entry.thinkingLevel ?? options.parentThinking) }; } }
 	if (!Object.keys(requirements).length) return route;
 	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };
 	const violations: ConstraintViolation[] = [];
-	for (const [key, requirement] of Object.entries(requirements)) {
+	for (const [key, rawRequirement] of Object.entries(requirements)) {
 		const descriptor = registry.get(key);
 		if (!descriptor) throw new Error(`Unknown spawn constraint requirement '${key}'.`);
+		const decoded = Array.isArray(rawRequirement) ? { ok: true as const, value: rawRequirement } : descriptor.requirement.decode(rawRequirement, `constraints.${key}`);
+		if (!decoded.ok) throw new Error(decoded.message);
+		const requirement = decoded.value;
 		if (group) {
-			const override = group.constraints?.[key] ?? (key === "modalities" ? group.modalityOverride : undefined);
+			const override = group.constraints?.[key];
 			const evaluation = evaluateConstraint(descriptor, resolution, override);
 			const violation = evaluateGroupRequirement(descriptor, evaluation, requirement);
 			if (violation) violations.push(violation);
