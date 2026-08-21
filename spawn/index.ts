@@ -33,6 +33,7 @@ import { abortChildSession, type AgenticodingState } from "../state.js";
 import { formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
+import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
 import { MODEL_GROUP_MODALITIES, type ModelGroupModality } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import {
@@ -294,6 +295,8 @@ const SPAWN_PROMPT_GUIDELINES = [
 	`Declare requiredModalities when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
 ];
 
+const SPAWN_CONSTRAINT_REQUIREMENTS = Type.Object(Object.fromEntries(productionConstraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any);
+
 const SPAWN_PARAMETERS = Type.Object({
 	prompt: Type.String({
 		description:
@@ -303,6 +306,7 @@ const SPAWN_PARAMETERS = Type.Object({
 	group: Type.Optional(Type.String({
 		description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
 	})),
+	constraints: Type.Optional(SPAWN_CONSTRAINT_REQUIREMENTS),
 	requiredModalities: Type.Optional(Type.Array(StringEnum(MODEL_GROUP_MODALITIES, { description: "Optional modalities the selected child route must support. Routing fails before child creation if the effective Model Group or selected model lacks any requirement." }), { uniqueItems: true } as any)),
 	thinking: Type.Optional(StringEnum(
 		["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
@@ -346,7 +350,32 @@ export function createChildTools(
  *   - both registries delete(toolCallId) on error and completion paths
  *
  */
-export interface SpawnParameters { prompt: string; group?: string; requiredModalities?: ModelGroupModality[]; thinking?: ThinkingValue }
+export type SpawnConstraintRequirements = Record<string, unknown>;
+export interface SpawnParameters { prompt: string; group?: string; constraints?: SpawnConstraintRequirements; /** @deprecated compatibility alias */ requiredModalities?: ModelGroupModality[]; thinking?: ThinkingValue }
+
+/** Decode the public envelope once, rejecting unknown keys and conflicting aliases before routing. */
+export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constraints" | "requiredModalities">, registry: ConstraintRegistry = productionConstraintRegistry): SpawnConstraintRequirements {
+	const raw = params.constraints;
+	if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) throw new Error("Spawn constraints must be an object.");
+	const normalized: SpawnConstraintRequirements = {};
+	for (const [key, value] of Object.entries(raw ?? {})) {
+		const descriptor = registry.get(key);
+		if (!descriptor) throw new Error(`Unknown spawn constraint requirement '${key}'.`);
+		const decoded = descriptor.requirement.decode(value, `constraints.${key}`);
+		if (!decoded.ok) throw new Error(decoded.message);
+		normalized[key] = decoded.value;
+	}
+	if (params.requiredModalities !== undefined) {
+		const descriptor = registry.get("modalities");
+		if (!descriptor) throw new Error("Spawn modality requirements are unavailable.");
+		const alias = descriptor.requirement.decode({ required: params.requiredModalities }, "requiredModalities");
+		if (!alias.ok) throw new Error(alias.message);
+		const current = normalized.modalities;
+		if (current !== undefined && !descriptor.requirement.equals(current, alias.value)) throw new Error("Spawn constraints.modalities conflicts with requiredModalities.");
+		normalized.modalities = current ?? alias.value;
+	}
+	return normalized;
+}
 
 export function executeSpawn(
 	toolCallId: string,
@@ -363,6 +392,7 @@ export function executeSpawn(
 		| undefined,
 	defaultThinking: ThinkingValue,
 	sessionFactory: typeof createAgentSession = createAgentSession,
+	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): Promise<{ content: TextContent[]; details: SpawnResultDetails }> {
 	let execution!: Promise<{ content: TextContent[]; details: SpawnResultDetails }>;
 	execution = (async () => {
@@ -372,13 +402,15 @@ export function executeSpawn(
 		}
 
 		const inheritedChildThinking: ThinkingValue = params.thinking ?? defaultThinking;
+		const constraints = normalizeSpawnRequirements(params, constraintRegistry);
 		const route = resolveSpawnModelRoute({
 			requestedGroup: params.group,
-			requiredModalities: params.requiredModalities,
+			constraints,
 			groups: state.modelGroups.groups,
 			parentModel,
 			parentThinking: inheritedChildThinking,
 			modelRegistry: ctx.modelRegistry,
+			constraintRegistry,
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ThinkingValue = route.thinking;
@@ -615,6 +647,7 @@ export function registerSpawnTool(
 	pi: ExtensionAPI,
 	state: AgenticodingState,
 	sessionFactory: typeof createAgentSession = createAgentSession,
+	constraintRegistry: ConstraintRegistry = productionConstraintRegistry,
 ): void {
 	pi.registerTool({
 		name: "spawn",
@@ -648,6 +681,7 @@ export function registerSpawnTool(
 				onUpdate,
 				parentThinking,
 				sessionFactory,
+				constraintRegistry,
 			);
 		},
 

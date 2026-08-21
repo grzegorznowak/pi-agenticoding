@@ -7,12 +7,15 @@ import {
 	buildChildToolNames,
 	createChildTools,
 	executeSpawn,
+	normalizeSpawnRequirements,
 	registerSpawnTool,
 	truncateText,
 } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
+import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import { Value } from "typebox/value";
+import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { createTestPI, createRenderContext, createSession, theme, createDeferred } from "./helpers.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 
@@ -730,6 +733,15 @@ test("executeSpawn propagates missing modalities before creating child work", as
 	assert.equal(state.liveChildSessions.size, 0);
 });
 
+test("executeSpawn rejects unknown requirements before factory or session publication", async () => {
+	const pi = createTestPI(); const state = createState(); let factoryCalls = 0;
+	await assert.rejects(() => executeSpawn("unknown-constraint", pi as any, {
+		model: { provider: "openai", id: "parent", input: ["text"], reasoning: false }, cwd: "/tmp",
+		modelRegistry: { find: () => undefined, hasConfiguredAuth: () => false },
+	} as any, state, { prompt: "Do the task", constraints: { unknown: {} } }, undefined, undefined, "medium", async () => { factoryCalls++; throw new Error("must not create child"); }), /Unknown spawn constraint/);
+	assert.equal(factoryCalls, 0); assert.equal(state.childSessions.size, 0); assert.equal(state.liveChildSessions.size, 0);
+});
+
 test("registered spawn tool rejects missing modalities before creating child work", async () => {
 	const pi = createTestPI();
 	pi.setActiveTools(["read", "bash", "spawn"]);
@@ -759,12 +771,40 @@ test("registered spawn tool rejects missing modalities before creating child wor
 	assert.equal(state.liveChildSessions.size, 0);
 });
 
+test("registered spawn tool rejects injected scalar group and model requirements before publication", async () => {
+	const pi = createTestPI(); pi.setActiveTools(["spawn"]);
+	const state = createState(); let factoryCalls = 0;
+	state.modelGroups.groups = [
+		{ name: "small", scope: "project", sourcePath: "<test>", models: [{ provider: "openai", modelId: "small" }], modalities: { common: ["text"], supported: ["text"], effective: ["text"] }, validation: { unavailableRefs: [], shadowedByProject: false, degraded: false, emptyCommonModalities: false, unsupportedOverrideModalities: [] } },
+	];
+	registerSpawnTool(pi as any, state, (async () => { factoryCalls++; throw new Error("sessionFactory must not be called"); }) as any, createConstraintRegistry([testMinContext]));
+	await assert.rejects(
+		() => pi.tools.get("spawn").execute("registered-scalar", { prompt: "Do the task", group: "small", constraints: { testMinContext: 20 } }, undefined, undefined, {
+			model: { provider: "openai", id: "parent", input: ["text"], reasoning: false, contextWindow: 100 }, cwd: "/tmp",
+			modelRegistry: { find: (_provider: string, id: string) => ({ provider: "openai", id, input: ["text"], reasoning: false, contextWindow: id === "small" ? 10 : 100 }), hasConfiguredAuth: () => true },
+		} as any),
+		(error: unknown) => error instanceof SpawnRouteError && error.reason === "constraint-unsatisfied" && error.constraintUnsatisfied?.length === 2 && error.missingModalities.length === 0 && error.missingFromGroup.length === 0 && error.missingFromModel.length === 0,
+	);
+	assert.equal(factoryCalls, 0); assert.equal(state.childSessions.size, 0); assert.equal(state.liveChildSessions.size, 0);
+});
+
+test("spawn requirements normalize generic and legacy aliases conflict-safely", () => {
+	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image", "text"] } } }), { modalities: ["text", "image"] });
+	assert.deepEqual(normalizeSpawnRequirements({ requiredModalities: ["image"] }), { modalities: ["image"] });
+	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } }, requiredModalities: ["image"] }), { modalities: ["image"] });
+	assert.throws(() => normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } }, requiredModalities: ["text"] }), /conflicts/);
+	assert.throws(() => normalizeSpawnRequirements({ constraints: { unknown: {} } }), /Unknown spawn constraint/);
+	assert.deepEqual(normalizeSpawnRequirements({}), normalizeSpawnRequirements({ constraints: {}}));
+});
+
 test("spawn tool schema validates requiredModalities via Value.Check", () => {
 	const pi = createTestPI();
 	const state = createState();
 	registerSpawnTool(pi as any, state);
 	const tool = pi.tools.get("spawn");
 	const schema = (tool as any).parameters;
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "image"] } } }), true, "valid generic envelope accepted");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { unknown: {} } }), false, "unknown generic requirement rejected");
 	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: ["text", "image"] }), true, "valid unique vocab accepted");
 	assert.equal(Value.Check(schema, { prompt: "Do the task" }), true, "omitted requiredModalities allowed");
 	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: [] }), true, "empty array allowed");

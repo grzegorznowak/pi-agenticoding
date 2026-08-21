@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { assertModalityOverrideSupported, deriveModelGroupModalities, getMissingModelModalities } from "../../model-groups/modalities.js";
+import { deriveModalitiesEvaluation } from "../../model-groups/constraints/modalities.js";
+import { resolveConstraintMembers } from "../../model-groups/constraints/resolution.js";
 import type { ModelGroupDef } from "../../model-groups/types.js";
 
 function registry(models: any[]): { find(provider: string, id: string): any } {
@@ -20,6 +22,29 @@ test("derives ordered common, supported, and override-effective modalities from 
 	assert.deepEqual(deriveModelGroupModalities({ models: [...group.models, { provider: "p", modelId: "gone" }] }, registry(models)).common, []);
 	models[1].input = ["text", "image"];
 	assert.deepEqual(deriveModelGroupModalities(group, registry(models)).common, ["text", "image"], "each call reads the live registry");
+});
+
+test("compatibility façade and descriptor remain parity-equivalent across modality fixtures", () => {
+	const models: any[] = [
+		{ provider: "p", id: "rich", input: ["image", "text"], reasoning: true },
+		{ provider: "p", id: "text", input: ["text"], reasoning: false },
+	];
+	const fixtures: ModelGroupDef[] = [
+		{ models: [] },
+		{ models: [{ provider: "p", modelId: "gone" }] },
+		{ models: [{ provider: "p", modelId: "rich" }], modalityOverride: [] },
+		{ models: [{ provider: "p", modelId: "text" }], modalityOverride: ["image"] },
+		{ models: [{ provider: "p", modelId: "rich" }, { provider: "p", modelId: "text" }] },
+	];
+	for (const group of fixtures) {
+		const resolved = resolveConstraintMembers(group.models, registry(models));
+		const evaluation = deriveModalitiesEvaluation(resolved.members, group.modalityOverride);
+		assert.deepEqual(deriveModelGroupModalities(group, registry(models)), {
+			common: evaluation.aggregate.common,
+			supported: evaluation.aggregate.supported,
+			effective: evaluation.effective,
+		});
+	}
 });
 
 test("caps stale overrides without mutation and restores them when catalog support returns", () => {

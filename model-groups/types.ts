@@ -1,4 +1,5 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { ErasedConstraintEvaluation } from "./constraints/types.js";
 
 export const MODEL_GROUP_MODALITIES = ["text", "image", "reasoning"] as const;
 export type ModelGroupModality = typeof MODEL_GROUP_MODALITIES[number];
@@ -11,7 +12,13 @@ export type ModelGroupScope = "project" | "global";
 export type ModelGroupsAccessPolicy = "global-project" | "global-only";
 export interface ModelGroupsAccess { cwd: string; policy: ModelGroupsAccessPolicy }
 export interface ModelGroupModel { provider: string; modelId: string; thinkingLevel?: ModelThinkingLevel }
-export interface ModelGroupDef { models: ModelGroupModel[]; modalityOverride?: ModelGroupModality[] }
+export interface ModelGroupDef {
+	models: ModelGroupModel[];
+	/** Canonical v2 keyed override envelope. Unknown keys are retained opaquely. */
+	constraints?: Record<string, unknown>;
+	/** @deprecated v2 compatibility alias for constraints.modalities */
+	modalityOverride?: ModelGroupModality[];
+}
 export interface ModelGroupsConfig { version: 2; groups: Record<string, ModelGroupDef> }
 export interface ModelGroupValidation {
 	unavailableRefs: Array<{ provider: string; modelId: string }>;
@@ -21,7 +28,7 @@ export interface ModelGroupValidation {
 	unsupportedOverrideModalities: ModelGroupModality[];
 }
 export interface ModelGroupsLoadedGroup extends ModelGroupDef { name: string; scope: ModelGroupScope; sourcePath: string }
-export interface ResolvedModelGroup extends ModelGroupsLoadedGroup { modalities: ModelGroupModalities; validation: ModelGroupValidation }
+export interface ResolvedModelGroup extends ModelGroupsLoadedGroup { modalities: ModelGroupModalities; validation: ModelGroupValidation; /** Ordered descriptor evaluations; presentation consumers must iterate these. */ evaluations?: readonly ErasedConstraintEvaluation[] }
 export type ModelGroupsLoadIssueKind = "corrupt-json" | "schema-invalid" | "unsupported-version";
 export interface ModelGroupsLoadIssue { scope: ModelGroupScope; sourcePath: string; kind: ModelGroupsLoadIssueKind; message: string; backupPath?: string; backupFailed?: boolean; version?: number }
 export type ModelGroupsPersistenceOperation = "save" | "delete" | "move";

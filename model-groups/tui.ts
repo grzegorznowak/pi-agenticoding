@@ -14,6 +14,9 @@ import {
 import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
 import { canonicalizeModelGroupName } from "./names.js";
 import { decodeDisplayLabel, escapeDisplayLabel } from "./display.js";
+import { constraintEditorRows, presentConstraintDiagnosticRecords, type ConstraintEditorRow } from "./constraints/presentation.js";
+import { productionConstraintRegistry } from "./constraints/registry.js";
+import type { AnyConstraintDescriptor, ErasedConstraintEvaluation } from "./constraints/types.js";
 
 export type ModelGroupsScreen = "LIST" | "EDITOR" | "MODALITIES" | "MODEL_EDIT" | "WIZARD_PROVIDER" | "WIZARD_MODEL" | "WIZARD_THINKING" | "DELETE_CONFIRM";
 
@@ -44,7 +47,8 @@ function isBackspace(data: string): boolean { return matchesKey(data, Key.backsp
 function isDeleteChord(data: string): boolean { return data === "D" || matchesKey(data, Key.delete); }
 
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
-	return { models: def.models.map((model) => ({ ...model })), ...(def.modalityOverride === undefined ? {} : { modalityOverride: [...def.modalityOverride] }) };
+	const constraints = def.constraints === undefined ? undefined : { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) };
+	return { models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }), ...(def.modalityOverride === undefined ? {} : { modalityOverride: [...def.modalityOverride] }) };
 }
 
 function groupKey(group: Pick<ResolvedModelGroup, "scope" | "name">): string {
@@ -281,11 +285,28 @@ export function createModelGroupsComponent(
 		return [undefined, ...supported];
 	}
 
+	function activeConstraintEditor(): { descriptor: AnyConstraintDescriptor; evaluation: ErasedConstraintEvaluation } | undefined {
+		const group = currentEditGroup();
+		const evaluation = group?.evaluations?.find((candidate) => productionConstraintRegistry.get(candidate.key)?.editor.kind === "multi-select");
+		const descriptor = evaluation && productionConstraintRegistry.get(evaluation.key);
+		if (descriptor && evaluation) return { descriptor, evaluation };
+		// Test/store adapters that predate generic evaluations retain the production descriptor's compatibility projection.
+		const compatibilityDescriptor = productionConstraintRegistry.descriptors.find((candidate) => candidate.editor.kind === "multi-select");
+		if (!group || !compatibilityDescriptor) return undefined;
+		const reconciled = compatibilityDescriptor.reconcile({ aggregate: group.modalities, override: state.editDraft?.modalityOverride });
+		return { descriptor: compatibilityDescriptor, evaluation: { key: compatibilityDescriptor.key, aggregate: group.modalities, effective: reconciled.effective, diagnostics: reconciled.diagnostics } };
+	}
+
+	function modalityEditorRows(): readonly ConstraintEditorRow[] {
+		const editor = activeConstraintEditor();
+		return editor ? constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key] ?? state.editDraft?.modalityOverride) : [];
+	}
+
 	function maxRow(): number {
 		switch (state.screen) {
 			case "LIST": return state.groups.length;
 			case "EDITOR": return modelStartRow() + (state.editDraft?.models.length ?? 0);
-			case "MODALITIES": return modalityOverrideChoices(modalityEditorSupported()).length;
+			case "MODALITIES": return Math.max(0, modalityEditorRows().length - 1);
 			case "MODEL_EDIT": return thinkingOptionsFor(modelRegistry.find(state.editDraft?.models[state.modelEditIndex]?.provider ?? "", state.editDraft?.models[state.modelEditIndex]?.modelId ?? "") as Model<Api> | undefined).length;
 			case "WIZARD_PROVIDER": return Math.max(0, allProviders().length - 1);
 			case "WIZARD_MODEL": return Math.max(0, filteredModelsForProvider(state.wizardProvider).length - 1);
@@ -336,11 +357,17 @@ export function createModelGroupsComponent(
 			}
 			case "MODALITIES": {
 				if (!state.editDraft) return;
-				const choices = modalityOverrideChoices(modalityEditorSupported());
-				const selected = choices[state.row - 1] ?? [];
+				const editor = activeConstraintEditor();
+				const selected = modalityEditorRows()[state.row];
+				if (!editor || !selected) return;
 				const next = cloneDef(state.editDraft);
-				if (state.row === 0) delete next.modalityOverride;
-				else next.modalityOverride = [...selected];
+				if (selected.kind === "automatic") {
+					delete next.modalityOverride;
+					if (next.constraints) delete next.constraints[editor.descriptor.key];
+				} else if (selected.kind === "choice") {
+					next.modalityOverride = [...selected.value] as ModelGroupModality[];
+					(next.constraints ??= {})[editor.descriptor.key] = [...selected.value];
+				} else return;
 				updateDraft(next, () => { state.screen = "EDITOR"; state.row = modalityRow(); }); return;
 			}
 			case "MODEL_EDIT": {
@@ -506,8 +533,11 @@ export function createModelGroupsComponent(
 			if (group.validation.unavailableRefs.length > 0) tags.push("✗ unavailable");
 			if (group.validation.shadowedByProject) tags.push("project override");
 			const models = group.models.map((model) => thinkingLabel(model.thinkingLevel)).join(", ") || "empty";
-			if (group.validation.emptyCommonModalities) tags.push("⚠ no common modalities");
-			if (group.validation.unsupportedOverrideModalities.length > 0) tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);
+			if (group.evaluations) tags.push(...presentConstraintDiagnosticRecords(group.evaluations, productionConstraintRegistry).map((diagnostic) => diagnostic.text));
+			else {
+				if (group.validation.emptyCommonModalities) tags.push("⚠ no common modalities");
+				if (group.validation.unsupportedOverrideModalities.length > 0) tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);
+			}
 			return { value: String(index), label: escapeDisplayLabel(group.name), description: `[${group.scope}] ${group.models.length} models ${models}${tags.length ? ` — ${tags.join(" · ")}` : ""}` };
 		});
 		items.push({ value: String(state.groups.length), label: "+ Add group" });
@@ -537,26 +567,14 @@ export function createModelGroupsComponent(
 		return container;
 	}
 
-	function modalityEditorSupported(): ModelGroupModality[] {
-		return [...new Set([...(currentEditGroup()?.modalities.supported ?? []), ...(state.editDraft?.modalityOverride ?? [])])];
-	}
-
-	function modalityOverrideChoices(supported: readonly ModelGroupModality[]): ModelGroupModality[][] {
-		const choices: ModelGroupModality[][] = [];
-		for (let mask = 0; mask < 2 ** supported.length; mask++) {
-			choices.push(supported.filter((_, index) => (mask & (1 << index)) !== 0));
-		}
-		return choices;
-	}
-
 	function renderModalitiesComponent(): Component {
 		activeSelect = null;
 		const container = new Container();
-		const current = currentEditGroup();
-		container.addChild(textLine(theme.fg("accent", "MODALITIES")));
-		container.addChild(textLine(selectableLine(state.row === 0, `Automatic (common: ${current?.modalities.common.join(", ") || "none"})`)));
-		for (const [index, override] of modalityOverrideChoices(modalityEditorSupported()).entries()) {
-			container.addChild(textLine(selectableLine(state.row === index + 1, `Override: ${override.join(", ") || "none"}`)));
+		const editor = activeConstraintEditor();
+		container.addChild(textLine(theme.fg("accent", editor?.descriptor.editor.label.toUpperCase() ?? "MODALITIES")));
+		for (const [index, row] of modalityEditorRows().entries()) {
+			const label = row.kind === "number" ? `${row.label}: ${row.value ?? "none"} ${row.unit}` : row.label;
+			container.addChild(textLine(selectableLine(state.row === index, label)));
 		}
 		return container;
 	}

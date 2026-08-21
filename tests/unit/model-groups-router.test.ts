@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { getEffectiveModelGroupNames, resolveSpawnModelRoute, SpawnRouteError } from "../../model-groups/router.js";
+import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import type { ResolvedModelGroup } from "../../model-groups/types.js";
 import { group } from "./model-groups-helpers.js";
+import { testMinContext } from "./model-groups-constraints-fixture.js";
 
 function model(provider: string, id: string, overrides: Record<string, unknown> = {}): any {
 	return { provider, id, reasoning: true, input: ["text"], ...overrides };
@@ -49,6 +51,11 @@ test("known group missing effective modality and inherited fallback reject requi
 	const parent = model("p", "parent"); const text = model("p", "text"); const g = group("text", { models: [{ provider: "p", modelId: "text" }] });
 	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "text", requiredModalities: ["image"], groups: [g], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, text]) }), (error: unknown) => error instanceof SpawnRouteError && error.missingFromGroup[0] === "image");
 	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "unknown", requiredModalities: ["image"], groups: [], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) }), (error: unknown) => error instanceof SpawnRouteError && error.group === "unknown" && /Spawn model/.test(error.message));
+});
+
+test("injected scalar requirements use generic violations, not modality arrays", () => {
+	const parent = model("p", "parent", { contextWindow: 100 }); const small = model("p", "small", { contextWindow: 10 });
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "small", constraints: { testMinContext: 20 }, groups: [group("small", { models: [{ provider: "p", modelId: "small" }] })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, small]), constraintRegistry: createConstraintRegistry([testMinContext]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "constraint-unsatisfied" && error.constraintUnsatisfied?.length === 2 && error.missingModalities.length === 0 && error.missingFromGroup.length === 0 && error.missingFromModel.length === 0);
 });
 
 test("plain inherited route honors requiredModalities with empty-array no-op", () => {
