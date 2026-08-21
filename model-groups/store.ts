@@ -41,7 +41,7 @@ function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: numb
 		const name = canonicalizeModelGroupName(rawName); if (!name) return { ok: false, message: "group name must not be empty after trimming" }; if (hasOwnGroup(groups, name)) return { ok: false, message: `group keys collide after trimming at '${name}'` };
 		const rawDef = rawGroups[rawName]; if (!isPlainRecord(rawDef) || !Array.isArray(rawDef.models)) return { ok: false, message: `group ${rawName}${isPlainRecord(rawDef) ? ".models must be an array" : " must be an object"}` };
 		const models: ModelGroupModel[] = []; for (let i = 0; i < rawDef.models.length; i++) { const result = validateModelEntry(rawDef.models[i], `group ${rawName}.models[${i}]`); if (!result.ok) return result; models.push(result.model); }
-		const override = sourceVersion >= 2 ? validateOverride(rawDef.modalityOverride, `group ${rawName}.modalityOverride`) : { ok: true as const };
+		const override = validateOverride(rawDef.modalityOverride, `group ${rawName}.modalityOverride`);
 		if (!override.ok) return override;
 		defineGroup(groups, name, { ...rawDef, models, ...(sourceVersion >= 2 && override.value !== undefined ? { modalityOverride: override.value } : {}) });
 	}

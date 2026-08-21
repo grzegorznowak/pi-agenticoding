@@ -12,6 +12,7 @@ import {
 	moveGroup,
 	renameGroup,
 	saveModelGroups,
+	summarizeBootValidation,
 	updateGroup,
 	validateModelGroups,
 } from "../../model-groups/store.js";
@@ -270,6 +271,88 @@ test("model groups strictly partitions schema and legacy version domains", () =>
 		assert.equal(loaded.configs.project.version, 2);
 		updateGroup("project", access(cwd), "legacy", { models: [] }, registry());
 		assert.equal(read("project", cwd).version, 2);
+	}
+}));
+
+test("legacy malformed modalityOverride recovers as schema-invalid instead of crashing load", () => withTemp(({ cwd }) => {
+	const projectPath = modelGroupsPath("project", cwd);
+	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+	// Missing version, explicit version 0, and explicit version 1 all normalize to the legacy
+	// domain. A hand-added malformed override (non-array value) must surface as a clean
+	// schema-invalid issue with backup and empty recovery, never as a raw TypeError.
+	const cases: Array<[string, unknown]> = [
+		["missing", { groups: { legacy: { models: [], modalityOverride: 123 } } }],
+		["version 0", { version: 0, groups: { legacy: { models: [], modalityOverride: [123] } } }],
+		["version 1", { version: 1, groups: { legacy: { models: [], modalityOverride: "text" } } }],
+	];
+	for (const [label, raw] of cases) {
+		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
+		const loaded = loadModelGroups(access(cwd));
+		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
+		assert.equal(issue.kind, "schema-invalid", label);
+		assert.match(issue.message, /modalityOverride/, label);
+		assert.ok(fs.existsSync(`${projectPath}.bak`), label);
+		assert.equal(Object.keys(loaded.configs.project.groups).length, 0, label);
+	}
+}));
+
+test("store-level validation derives empty-common and stale-override flags and counts them", () => withTemp(({ cwd }) => {
+	const a = access(cwd);
+	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: {
+		empty: { models: [] },
+		unresolved: { models: [{ provider: "openai", modelId: "gone" }, { provider: "openai", modelId: "gpt-5" }] },
+		stale: { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["text", "image"] },
+	} }), "utf8");
+	const resolved = validateModelGroups(loadModelGroups(a), registry());
+	// claude supports text only, so image is a stale unsupported override entry.
+	const empty = resolved.find((g) => g.name === "empty");
+	assert.equal(empty?.validation.emptyCommonModalities, true, "empty group has no common modalities");
+	const unresolved = resolved.find((g) => g.name === "unresolved");
+	assert.equal(unresolved?.validation.emptyCommonModalities, true, "unresolved member fails closed");
+	const stale = resolved.find((g) => g.name === "stale");
+	assert.deepEqual(stale?.validation.unsupportedOverrideModalities, ["image"]);
+	const summary = summarizeBootValidation(resolved);
+	assert.equal(summary.emptyModalityCount, 2);
+	assert.equal(summary.staleModalityOverrideCount, 1);
+}));
+
+test("create and update reject unsupported modality override before writing", () => withTemp(({ cwd }) => {
+	const a = access(cwd);
+	// claude supports only text, so an override of image must be rejected by the CRUD gate.
+	let writes = 0;
+	__setModelGroupsFsForTests({ writeFileSync: (_p?: unknown, _d?: unknown, ..._r: unknown[]) => { writes++; fs.writeFileSync(_p as any, _d as any, ...(_r as any)); } });
+	assert.throws(() => createGroup("project", a, "claude-only", { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["image"] }, registry()), /unsupported modalities: image/);
+	assert.equal(writes, 0);
+	__setModelGroupsFsForTests(null);
+
+	createGroup("project", a, "rich", { models: [{ provider: "openai", modelId: "gpt-5" }], modalityOverride: ["text", "image"] }, registry());
+	const before = fs.readFileSync(modelGroupsPath("project", cwd), "utf8");
+	let writes2 = 0;
+	__setModelGroupsFsForTests({ writeFileSync: (_p: unknown, _d: unknown, _r: unknown) => { writes2++; fs.writeFileSync(_p as any, _d as any, _r as any); } });
+	// Combined member change: replacing gpt-5 (text+image+reasoning) with claude (text only)
+	// makes the retained override's image unsupported → the gate must reject before any write.
+	assert.throws(() => updateGroup("project", a, "rich", { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["text", "image"] }, registry()), /unsupported modalities: image/);
+	assert.equal(writes2, 0, "rejected update must not write");
+	assert.equal(fs.readFileSync(modelGroupsPath("project", cwd), "utf8"), before);
+	__setModelGroupsFsForTests(null);
+}));
+
+test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modality override", () => withTemp(({ cwd }) => {
+	const projectPath = modelGroupsPath("project", cwd);
+	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+	const cases: Array<[string, unknown, RegExp]> = [
+		["non-array", { version: 2, groups: { g: { models: [], modalityOverride: { text: true } } } }, /modalityOverride/],
+		["duplicate", { version: 2, groups: { g: { models: [], modalityOverride: ["text", "text"] } } }, /unique/],
+		["out-of-language", { version: 2, groups: { g: { models: [], modalityOverride: ["audio"] } } }, /vocabulary/],
+	];
+	for (const [label, raw, message] of cases) {
+		fs.writeFileSync(projectPath, JSON.stringify(raw), "utf8");
+		const loaded = loadModelGroups(access(cwd));
+		const issue = loaded.issues.find((candidate) => candidate.scope === "project")!;
+		assert.equal(issue.kind, "schema-invalid", label);
+		assert.match(issue.message, message, label);
+		assert.ok(fs.existsSync(`${projectPath}.bak`), label);
 	}
 }));
 

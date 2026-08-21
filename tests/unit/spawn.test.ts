@@ -12,6 +12,7 @@ import {
 } from "../../spawn/index.js";
 import { renderSpawnResult } from "../../spawn/renderer.js";
 import { SpawnRouteError } from "../../model-groups/router.js";
+import { Value } from "typebox/value";
 import { createTestPI, createRenderContext, createSession, theme } from "./helpers.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 
@@ -765,6 +766,43 @@ test("executeSpawn propagates missing modalities before creating child work", as
 	assert.equal(factoryCalls, 0);
 	assert.equal(state.childSessions.size, 0);
 	assert.equal(state.liveChildSessions.size, 0);
+});
+
+test("spawn tool schema validates requiredModalities via Value.Check", () => {
+	const pi = createTestPI();
+	const state = createState();
+	registerSpawnTool(pi as any, state);
+	const tool = pi.tools.get("spawn");
+	const schema = (tool as any).parameters;
+	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: ["text", "image"] }), true, "valid unique vocab accepted");
+	assert.equal(Value.Check(schema, { prompt: "Do the task" }), true, "omitted requiredModalities allowed");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: [] }), true, "empty array allowed");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: ["text", "text"] }), false, "duplicates rejected");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: ["audio"] }), false, "out-of-vocabulary rejected");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", requiredModalities: "text" }), false, "non-array rejected");
+});
+
+test("executeSpawn forwards plain inherited requiredModalities to routing and succeeds when satisfied", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "spawn"]);
+	const state = createState();
+	let factoryCalls = 0;
+	const session = {
+		messages: [] as any[],
+		prompt: async () => {
+			session.messages = [{ role: "assistant", content: [{ type: "text", text: "child result" }] }];
+		},
+		abort: async () => {},
+		getSessionStats: () => undefined,
+	};
+	registerSpawnTool(pi as any, state, (async () => { factoryCalls++; return { session: session as any }; }) as any);
+	const result = await executeSpawn("spawn-inherited-rm", pi as any, {
+		model: { provider: "openai", id: "parent", input: ["text", "image"], reasoning: false }, cwd: "/tmp",
+		modelRegistry: { find: (_p: string, id: string) => ({ provider: "openai", id, input: ["text", "image"], reasoning: false }), hasConfiguredAuth: () => true },
+	} as any, state, { prompt: "Do the task", requiredModalities: ["text", "image"] }, undefined, undefined, "medium", async () => { factoryCalls++; return { session: session as any, extensionsResult: undefined as any }; });
+	assert.equal(result.details.outcome, "success");
+	assert.deepEqual(result.details.route, { status: "inherited" });
+	assert.equal(factoryCalls, 1, "inherited route with satisfied requirements creates one child");
 });
 
 test("spawn renderResult transfers session ownership out of shared state", () => {

@@ -83,6 +83,32 @@ test("index session_start stores model group validation and notifies load and va
 	assert.ok(notifications.some((m) => /1 unavailable model references · 1 project overrides/.test(m)));
 }));
 
+test("index session_start notifies empty-common and stale-override boot counts", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(path.dirname(modelGroupsPath("global", cwd)), { recursive: true });
+	// claude is NOT in the registry, so it is an unavailable ref. claude-only supports text; the registry
+	// has only gpt-5 (text+image). An override of image on the claude-only group is stale; an empty group
+	// and a group whose members share nothing produce empty common modalities.
+	fs.writeFileSync(modelGroupsPath("global", cwd), JSON.stringify({ version: 2, groups: {
+		empty: { models: [] },
+		"claude-only": { models: [{ provider: "anthropic", modelId: "claude" }], modalityOverride: ["text", "image"] },
+	} }), "utf8");
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const notifications: string[] = [];
+	const ctx = {
+		hasUI: true,
+		mode: "tui",
+		isProjectTrusted: () => true,
+		cwd,
+		modelRegistry: registry(),
+		getContextUsage: () => ({ percent: 10 }),
+		ui: { theme, notify: (message: string) => notifications.push(message), setStatus: () => {}, setWidget: () => {} },
+	};
+	const handler = pi.handlers.get("session_start")!.at(-1)!;
+	await handler({ reason: "load" }, ctx);
+	assert.ok(notifications.some((m) => /1 unavailable model references · 0 project overrides · 2 groups with no common modalities · 1 stale modality overrides/.test(m)), JSON.stringify(notifications, null, 2));
+}));
+
 test("index session_start notifies corrupt/schema/unsupported load issues", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("global", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("global", cwd), "{bad", "utf8");
