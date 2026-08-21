@@ -1,6 +1,6 @@
 import test, { afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { createState, resetState } from "../../state.js";
+import { createState, resetState, abortChildSession } from "../../state.js";
 import { createSession, createSubscribableSession, createTestPI, createRenderContext, theme } from "./helpers.js";
 import { createTestHarness, type TestHarness } from "../test-utils.js";
 import { registerSpawnTool } from "../../spawn/index.js";
@@ -68,6 +68,128 @@ test("resetState aborts a claimed child session after render ownership transfer"
 	assert.equal(abortCalls, 1);
 	assert.equal(state.childSessions.size, 0);
 	assert.equal(state.liveChildSessions.size, 0);
+});
+
+test("nested spawn dispose shares the deduplicated abort promise with other abort paths", async () => {
+	const state = createState();
+	const childSpawnTool = makeChildSpawnTool(state);
+	let abortCalls = 0;
+	const session = {
+		...createSession([]),
+		abort: async () => {
+			abortCalls++;
+		},
+	} as any;
+	state.childSessions.set("tool-call-1", session);
+	state.liveChildSessions.set("tool-call-1", session);
+
+	const component = childSpawnTool.renderResult(
+		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
+		{ expanded: false },
+		theme,
+		createRenderContext(),
+	) as any;
+
+	// Another abort path (spawn invalidation, /reset) already started the shared abort.
+	const sharedAbort = abortChildSession(state, session);
+
+	component.dispose();
+
+	assert.equal(abortCalls, 1, "dispose reuses the shared abort instead of aborting again");
+	assert.equal(state.liveChildSessions.has("tool-call-1"), false, "dispose clears the live registry entry");
+	const lateAbort = abortChildSession(state, session);
+	assert.strictEqual(lateAbort, sharedAbort, "dispose and later abort share dedup promise identity");
+
+	await sharedAbort;
+});
+
+test("nested spawn dispose registers its abort in the shared dedup map", async () => {
+	const state = createState();
+	const childSpawnTool = makeChildSpawnTool(state);
+	let abortCalls = 0;
+	const session = {
+		...createSession([]),
+		abort: async () => {
+			abortCalls++;
+		},
+	} as any;
+	state.childSessions.set("tool-call-1", session);
+	state.liveChildSessions.set("tool-call-1", session);
+
+	const component = childSpawnTool.renderResult(
+		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
+		{ expanded: false },
+		theme,
+		createRenderContext(),
+	) as any;
+
+	component.dispose();
+	assert.equal(abortCalls, 1);
+
+	// A later abort path must observe the promise dispose already created.
+	const lateAbort = abortChildSession(state, session);
+	assert.strictEqual(lateAbort, abortChildSession(state, session), "dedup promise is stable across repeated calls");
+	await lateAbort;
+	assert.equal(abortCalls, 1, "a later abortChildSession call does not re-abort");
+});
+
+test("nested spawn dispose is identity-guarded against a replaced live session", () => {
+	const state = createState();
+	const childSpawnTool = makeChildSpawnTool(state);
+	let oldAbortCalls = 0;
+	const session = {
+		...createSession([]),
+		abort: async () => {
+			oldAbortCalls++;
+		},
+	} as any;
+	state.childSessions.set("tool-call-1", session);
+	state.liveChildSessions.set("tool-call-1", session);
+
+	const component = childSpawnTool.renderResult(
+		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
+		{ expanded: false },
+		theme,
+		createRenderContext(),
+	) as any;
+
+	// A newer child claimed the toolCallId slot before disposal.
+	const replacement = createSubscribableSession([]).session;
+	state.liveChildSessions.set("tool-call-1", replacement);
+
+	component.dispose();
+
+	assert.equal(oldAbortCalls, 0, "a superseded session is not aborted by dispose");
+	assert.equal(state.liveChildSessions.get("tool-call-1"), replacement, "dispose must not delete the replacement's registry entry");
+});
+
+test("nested spawn dispose survives re-entrant dispose from abort", () => {
+	const state = createState();
+	const childSpawnTool = makeChildSpawnTool(state);
+	let abortCalls = 0;
+	let component: any;
+	const session = {
+		...createSession([]),
+		abort: async () => {
+			abortCalls++;
+			// Synchronous re-entrant dispose from within abort must be a no-op.
+			component.dispose();
+		},
+	} as any;
+	state.childSessions.set("tool-call-1", session);
+	state.liveChildSessions.set("tool-call-1", session);
+
+	component = childSpawnTool.renderResult(
+		{ content: [], details: { model: "m", thinking: "low", truncated: false } },
+		{ expanded: false },
+		theme,
+		createRenderContext(),
+	) as any;
+
+	component.dispose();
+
+	assert.equal(abortCalls, 1, "re-entrant dispose from abort does not double-abort");
+	assert.equal(state.liveChildSessions.has("tool-call-1"), false, "outer dispose still clears the live registry entry");
 });
 
 // ── nested spawn lifecycle tests ──────────────────────────────────

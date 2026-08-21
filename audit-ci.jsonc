@@ -1,21 +1,5 @@
 {
   "$schema": "https://github.com/IBM/audit-ci/raw/main/docs/schema.json",
   "moderate": true,
-  "allowlist": [
-    // brace-expansion 5.0.7 is pinned by @earendil-works/pi-coding-agent's
-    // published npm-shrinkwrap.json (the host under test); registry fix 5.0.9
-    // exists but cannot be installed without deviating from the host tree —
-    // remove when a pi-coding-agent release ships brace-expansion ≥5.0.9.
-    { "GHSA-mh99-v99m-4gvg": { "active": true, "expiry": "2026-10-01", "notes": "brace-expansion <5.0.8 DoS via unbounded expansion; 5.0.7 pinned by @earendil-works/pi-coding-agent's npm-shrinkwrap (host under test) — remove when pi-coding-agent ships brace-expansion ≥5.0.8" } },
-    { "GHSA-rgw5-rvv9-x895": { "active": true, "expiry": "2026-10-01", "notes": "brace-expansion <5.0.9 DoS bypassing the CVE-2026-14257 mitigation; 5.0.7 pinned by @earendil-works/pi-coding-agent's npm-shrinkwrap — remove when pi-coding-agent ships brace-expansion ≥5.0.9" } },
-    // undici 8.5.0 is pinned exactly by @earendil-works/pi-coding-agent (the host
-    // under test); no released pi-coding-agent ships undici ≥8.9.0 (upstream
-    // issue #7049, PR #7225 closed unmerged) — remove when a pi-coding-agent
-    // release ships undici ≥8.9.0.
-    { "GHSA-4cwx-7wf7-3272|@earendil-works/pi-coding-agent>undici": { "active": true, "expiry": "2026-10-01", "notes": "undici <8.9.0 high: cross-user cache disclosure / parse-time crash; pinned exact 8.5.0 by @earendil-works/pi-coding-agent 0.82.0 (host under test); no upstream fix released — remove when pi-coding-agent ships undici ≥8.9.0" } },
-    { "GHSA-8xcm-r25x-g524|@earendil-works/pi-coding-agent>undici": { "active": true, "expiry": "2026-10-01", "notes": "undici <8.9.0: retry-interceptor response desynchronization; pinned exact 8.5.0 by @earendil-works/pi-coding-agent 0.82.0 — remove when pi-coding-agent ships undici ≥8.9.0" } },
-    { "GHSA-jr45-8vmc-qm54|@earendil-works/pi-coding-agent>undici": { "active": true, "expiry": "2026-10-01", "notes": "undici <8.9.0: Cache-Control whitespace bypass; pinned exact 8.5.0 by @earendil-works/pi-coding-agent 0.82.0 — remove when pi-coding-agent ships undici ≥8.9.0" } },
-    { "GHSA-m8rv-5g2x-5cg5|@earendil-works/pi-coding-agent>undici": { "active": true, "expiry": "2026-10-01", "notes": "undici <8.9.0: CRLF injection via blob-like body type; pinned exact 8.5.0 by @earendil-works/pi-coding-agent 0.82.0 — remove when pi-coding-agent ships undici ≥8.9.0" } },
-    { "GHSA-v3r7-h72x-cjcm|@earendil-works/pi-coding-agent>undici": { "active": true, "expiry": "2026-10-01", "notes": "undici <8.9.0: cookie attribute injection; pinned exact 8.5.0 by @earendil-works/pi-coding-agent 0.82.0 — remove when pi-coding-agent ships undici ≥8.9.0" } }
-  ]
+  "allowlist": []
 }

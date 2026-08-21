@@ -11,6 +11,7 @@
  */
 
 import type {
+	AgentSession,
 	ExtensionAPI,
 	ExtensionContext,
 	ToolDefinition,
@@ -28,7 +29,7 @@ import {
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { AgenticodingState } from "../state.js";
+import { abortChildSession, type AgenticodingState } from "../state.js";
 import { formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
@@ -142,6 +143,83 @@ function truncateResult(text: string): { text: string; truncated: boolean } {
  *
  * handoff and spawn never carry into children.
  */
+function shouldSwallowPromptError(error: unknown, isStale: () => boolean, wasAborted: boolean): boolean {
+	if (isStale()) return false;
+	if (!wasAborted) return false;
+	// Pi contracts AbortError via AbortSignal standard
+	return (error as Error)?.name === "AbortError";
+}
+
+function toSpawnStats(sessionStats: any): Record<string, number> {
+	return {
+		inputTokens: sessionStats.tokens?.input ?? 0,
+		outputTokens: sessionStats.tokens?.output ?? 0,
+		cacheReadTokens: sessionStats.tokens?.cacheRead ?? 0,
+		cacheWriteTokens: sessionStats.tokens?.cacheWrite ?? 0,
+		totalTokens: sessionStats.tokens?.total ?? 0,
+		cost: sessionStats.cost ?? 0,
+		turns: sessionStats.assistantMessages ?? 0,
+	};
+}
+
+function collectSpawnStats(session: { getSessionStats?: () => unknown }): { stats?: Record<string, number>; statsUnavailable: boolean } {
+	try {
+		const sessionStats = (session.getSessionStats as (() => any) | undefined)?.();
+		return sessionStats
+			? { stats: toSpawnStats(sessionStats), statsUnavailable: false }
+			: { statsUnavailable: false };
+	} catch {
+		return { statsUnavailable: true };
+	}
+}
+
+function clearSpawnSession(state: AgenticodingState, toolCallId: string, session: AgentSession): void {
+	if (state.childSessions.get(toolCallId) === session) state.childSessions.delete(toolCallId);
+	if (state.liveChildSessions.get(toolCallId) === session) state.liveChildSessions.delete(toolCallId);
+}
+
+function createSpawnAbortContext(state: AgenticodingState, session: AgentSession, ctx: ExtensionContext, toolCallId: string) {
+	const invalidatedError = new Error("Spawn invalidated by reset.");
+	let wasAborted = false;
+	let reported: Promise<void> | undefined;
+	const clearChildSession = () => clearSpawnSession(state, toolCallId, session);
+	const abortChild = () => {
+		wasAborted = true;
+		const p = abortChildSession(state, session);
+		if (p !== reported) {
+			reported = p;
+			// Report abort failures via UI. Guard against notify itself throwing
+			// so the detached promise never emits unhandledRejection.
+			// Detached path — the finally(dispose) branch aggregates notify failures
+			// differently; here we intentionally swallow to avoid unhandledRejection.
+			void p.catch((e) => {
+				try { notifyCleanupFailure(ctx, e); } catch { /* reporting must never reject */ }
+			});
+		}
+		return p;
+	};
+	const abortAndInvalidate = async (cause?: unknown): Promise<never> => {
+		clearChildSession();
+		let abortFailure: unknown;
+		try {
+			await abortChild();
+		} catch (e) {
+			abortFailure = e;
+		}
+		if (abortFailure !== undefined) {
+			const aggregate = new AggregateError(
+				[invalidatedError, abortFailure],
+				"Spawn invalidated by reset; child abort failed.",
+			);
+			if (cause !== undefined) (aggregate as unknown as { cause: unknown }).cause = cause;
+			throw aggregate;
+		}
+		if (cause !== undefined) (invalidatedError as unknown as { cause: unknown }).cause = cause;
+		throw invalidatedError;
+	};
+	return { get wasAborted() { return wasAborted; }, invalidatedError, abortChild, clearChildSession, abortAndInvalidate };
+}
+
 function getInheritableParentToolNames(parentToolNames: string[], availableTools: Pick<ToolInfo, "name" | "sourceInfo">[]): string[] {
 	const activeToolNames = new Set(parentToolNames);
 	return availableTools
@@ -377,29 +455,8 @@ export function executeSpawn(
 	// fallback keeps intentionally partial session test doubles compatible.
 	const effectiveChildThinking = () => session.thinkingLevel ?? requestedChildThinking;
 
-	const invalidatedError = new Error("Spawn invalidated by reset.");
-	let wasAborted = false;
-	let abortPromise: Promise<void> | undefined;
-	const abortChild = () => {
-		wasAborted = true;
-		if (!abortPromise) {
-			abortPromise = session.abort();
-			abortPromise.catch(() => {});
-		}
-	};
-	const clearChildSession = () => {
-		if (state.childSessions.get(toolCallId) === session) {
-			state.childSessions.delete(toolCallId);
-		}
-		if (state.liveChildSessions.get(toolCallId) === session) {
-			state.liveChildSessions.delete(toolCallId);
-		}
-	};
-	const abortAndInvalidate = async () => {
-		clearChildSession();
-		await session.abort().catch(() => {});
-		throw invalidatedError;
-	};
+	const abortContext = createSpawnAbortContext(state, session, ctx, toolCallId);
+	const { invalidatedError, abortChild, clearChildSession, abortAndInvalidate } = abortContext;
 
 	let hasPrimaryError = false;
 	let primaryError: unknown;
@@ -415,8 +472,7 @@ export function executeSpawn(
 
 	try {
 		if (signal?.aborted) {
-			abortChild();
-			await abortPromise;
+			await abortChild();
 			throw signal.reason instanceof Error
 				? signal.reason
 				: new Error("Spawn aborted before child session started.");
@@ -441,8 +497,7 @@ export function executeSpawn(
 		});
 
 		if (signal?.aborted) {
-			abortChild();
-			await abortPromise;
+			await abortChild();
 			throw signal.reason instanceof Error
 				? signal.reason
 				: new Error("Spawn aborted before child session started.");
@@ -451,11 +506,15 @@ export function executeSpawn(
 			await abortAndInvalidate();
 		}
 
-		await session.prompt(fullPrompt);
+		try {
+			await session.prompt(fullPrompt);
+		} catch (error) {
+			if (!shouldSwallowPromptError(error, isStale, abortContext.wasAborted)) throw error;
+		}
 	} catch (error) {
 		clearChildSession();
 		if (isStale()) {
-			throw invalidatedError;
+			await abortAndInvalidate(error);
 		}
 		throw error;
 	} finally {
@@ -463,17 +522,17 @@ export function executeSpawn(
 	}
 
 	if (isStale()) {
-		clearChildSession();
-		throw invalidatedError;
+		await abortAndInvalidate();
 	}
 
 	const resultText = getLastAssistantText(session.messages as AssistantMessageLike[]);
-	if (!resultText) {
+	// Aborted children legitimately have no text — empty result is allowed (outcome "aborted"), not "no output" error.
+	if (!resultText && !abortContext.wasAborted) {
 		clearChildSession();
 		throw new Error("Child agent produced no output.");
 	}
-	const outcome = wasAborted ? "aborted" : getLastAssistantOutcome(session.messages as AssistantMessageLike[]);
-	const { text: finalText, truncated } = truncateResult(resultText);
+	const outcome = abortContext.wasAborted ? "aborted" : getLastAssistantOutcome(session.messages as AssistantMessageLike[]);
+	const { text: finalText, truncated } = truncateResult(resultText ?? "");
 
 	// Execution should not retain live children after completion. If the TUI
 	// already rendered the child, it still owns the session object itself.
@@ -481,26 +540,12 @@ export function executeSpawn(
 	// liveChildSessions — the child already completed so there's nothing to abort.
 	clearChildSession();
 
-	let stats: Record<string, number> | undefined;
-	let statsUnavailable = false;
-	try {
-		const sessionStats = session.getSessionStats();
-		if (sessionStats) {
-			stats = {
-				inputTokens: sessionStats.tokens?.input ?? 0,
-				outputTokens: sessionStats.tokens?.output ?? 0,
-				cacheReadTokens: sessionStats.tokens?.cacheRead ?? 0,
-				cacheWriteTokens: sessionStats.tokens?.cacheWrite ?? 0,
-				totalTokens: sessionStats.tokens?.total ?? 0,
-				cost: sessionStats.cost ?? 0,
-				turns: sessionStats.assistantMessages ?? 0,
-			};
-		}
-	} catch (error: unknown) {
-		statsUnavailable = true;
-	}
+	const { stats, statsUnavailable } = collectSpawnStats(session as { getSessionStats?: () => unknown });
 
 	if (isStale()) {
+		// INVARIANT: live ownership was synchronously cleared before stats collection,
+		// so this reset could not have initiated a child abort to aggregate — plain
+		// invalidatedError is correct. Early stale paths above aggregate via abortAndInvalidate(cause).
 		throw invalidatedError;
 	}
 

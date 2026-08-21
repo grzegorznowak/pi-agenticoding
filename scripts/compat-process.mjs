@@ -12,6 +12,12 @@ function formatInvocation(command, args) {
   return [command, ...args].map((value) => JSON.stringify(value)).join(" ");
 }
 
+// Keep CI logs bounded; failure.txt receives the same truncated diagnostics.
+function truncateOutput(value, limit = 8192) {
+  if (!value) return "";
+  return value.length > limit ? `${value.slice(0, limit)}\n… [truncated ${value.length - limit} chars]` : value;
+}
+
 /** Run a subprocess and fail with launch/status/signal and captured-output context. */
 export function runChecked(command, args, options = {}) {
   const { cwd, capture = false, env = process.env } = options;
@@ -28,8 +34,8 @@ export function runChecked(command, args, options = {}) {
       `error.stack: ${result.error?.stack ?? "none"}`,
       `status: ${String(result.status)}`,
       `signal: ${String(result.signal)}`,
-      `stdout:\n${result.stdout ?? ""}`,
-      `stderr:\n${result.stderr ?? ""}`,
+      `stdout:\n${truncateOutput(result.stdout ?? "")}`,
+      `stderr:\n${truncateOutput(result.stderr ?? "")}`,
     ].join("\n");
     throw new Error(diagnostics);
   }
@@ -83,4 +89,30 @@ export function npmInvocation(args, options = {}) {
 export function runNpm(cwd, args, options = {}) {
   const invocation = npmInvocation(args, options);
   return runChecked(invocation.command, invocation.args, { cwd, ...options });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry runNpm with exponential backoff for transient registry failures.
+ * Retries on any non-zero status/signal/error (including permanent 404s) —
+ * worst case ~5.6s backoff per call (800+1600+3200), ~22s for 4 calls in
+ * the current compat lane; failure artifacts retain bounded output, so rerun
+ * locally when the truncated subprocess tail is needed.
+ */
+export async function runNpmWithRetry(cwd, args, options = {}, retryOptions = {}) {
+  const { retries = 3, baseMs = 800 } = retryOptions;
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return runNpm(cwd, args, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt === retries) break;
+      await sleep(baseMs * 2 ** attempt);
+    }
+  }
+  throw lastError;
 }

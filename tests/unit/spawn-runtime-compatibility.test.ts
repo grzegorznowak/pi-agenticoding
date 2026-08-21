@@ -8,7 +8,7 @@ import { createState } from "../../state.js";
 import { executeSpawn, registerSpawnTool } from "../../spawn/index.js";
 import { createTestPI, runRealChildInvocation } from "./helpers.js";
 
-test("exact Pi floor real child completes through inherited/default thinking", async () => {
+test("real child completes through inherited/default thinking", async () => {
 	const proof = await runRealChildInvocation({ prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK." });
 	assert.equal(proof.result.content[0].text, proof.expectedText);
 	assert.equal(proof.result.details.model, proof.modelId);
@@ -20,7 +20,7 @@ test("exact Pi floor real child completes through inherited/default thinking", a
 	assert.deepEqual(proof.outboundFetches, [], "offline real-child fixture attempted an outbound fetch");
 });
 
-test("exact Pi floor real child preserves selected identity and reports effective thinking", async () => {
+test("real child preserves selected identity and reports effective thinking", async () => {
 	const proof = await runRealChildInvocation({
 		prompt: "Use the agentic_e2e_probe tool and return AGENTIC_E2E_PROBE_OK.",
 		thinking: "max",

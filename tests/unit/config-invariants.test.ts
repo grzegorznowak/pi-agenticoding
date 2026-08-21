@@ -1,9 +1,8 @@
 /**
  * Invariant tests for the audit-ci security audit configuration.
  *
- * Validates that allowlist entries have unexpired expiry dates, that the
- * CI workflow ordering (audit → unit → e2e) is preserved, and that the
- * allowlist matches the current lockfile's actual vulnerability state.
+ * Validates the audit policy, that any allowlist entries have unexpired expiry
+ * dates, and that CI preserves the audit → unit → e2e order.
  */
 
 import assert from "node:assert/strict";
@@ -39,21 +38,20 @@ const WORKFLOW_PATH = new URL(".github/workflows/test.yml", REPO_ROOT_URL);
 const LOCK_PATH = new URL("package-lock.json", REPO_ROOT_URL);
 const SPAWN_SOURCE_PATH = new URL("spawn/index.ts", REPO_ROOT_URL);
 const RENDERER_SOURCE_PATH = new URL("spawn/renderer.ts", REPO_ROOT_URL);
+// Pinned versions verified against package.json + lockfile.
+// Update when Pi devDependencies are bumped.
+const EXPECTED_PI_VERSION = "0.84.1";
+const EXPECTED_TYPEBOX_VERSION = "1.3.7";
+// Approved peer floors — must track the pinned devDependency versions above.
+const EXPECTED_PI_PEER = `>=${EXPECTED_PI_VERSION}`;
+const EXPECTED_TYPEBOX_PEER = `>=${EXPECTED_TYPEBOX_VERSION}`;
 const EXPECTED_MATRIX = new Set([
 	"ubuntu-latest@22.19.0",
 	"ubuntu-latest@24",
 	"macos-latest@24",
 	"windows-latest@24",
 ]);
-const EXPECTED_ALLOWLIST_KEYS = new Set([
-	"GHSA-mh99-v99m-4gvg",
-	"GHSA-rgw5-rvv9-x895",
-	"GHSA-4cwx-7wf7-3272|@earendil-works/pi-coding-agent>undici",
-	"GHSA-8xcm-r25x-g524|@earendil-works/pi-coding-agent>undici",
-	"GHSA-jr45-8vmc-qm54|@earendil-works/pi-coding-agent>undici",
-	"GHSA-m8rv-5g2x-5cg5|@earendil-works/pi-coding-agent>undici",
-	"GHSA-v3r7-h72x-cjcm|@earendil-works/pi-coding-agent>undici",
-]);
+const EXPECTED_ALLOWLIST_KEYS = new Set<string>();
 
 function readText(url: URL): string {
 	return readFileSync(url, "utf8");
@@ -79,6 +77,14 @@ function stepIndex(workflow: string, step: string): number {
 	const index = workflow.indexOf(`- name: ${step}`);
 	assert.notEqual(index, -1, `missing workflow step: ${step}`);
 	return index;
+}
+
+function stepBlock(workflow: string, step: string): string {
+	const start = stepIndex(workflow, step);
+	const afterName = workflow.indexOf("\n", start) + 1;
+	const nextStep = workflow.indexOf("\n      - name:", afterName);
+	const end = nextStep === -1 ? workflow.length : nextStep;
+	return workflow.slice(afterName, end);
 }
 
 function allowlistEntries(config: AuditConfig): Array<[string, AuditRecord]> {
@@ -119,49 +125,20 @@ function runAuditCi(): void {
 	assert.equal(result.status, 0, diagnostics);
 }
 
-function compareVersions(a: string, b: string): number {
-	const parse = (v: string): [number, number, number] => {
-		const match = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
-		assert.ok(match, `unexpected version format: ${v}`);
-		return [Number(match[1]), Number(match[2]), Number(match[3])];
-	};
-	const [aMajor, aMinor, aPatch] = parse(a);
-	const [bMajor, bMinor, bPatch] = parse(b);
-	if (aMajor !== bMajor) return aMajor - bMajor;
-	if (aMinor !== bMinor) return aMinor - bMinor;
-	return aPatch - bPatch;
-}
-
-function parseLockfileVulnerablePaths(lockfilePath: string, packageName: string, maxVersion: string): string[] {
-	const lock = JSON.parse(readFileSync(lockfilePath, "utf8")) as {
-		packages?: Record<string, { version?: string }>;
-	};
-	const prefix = `node_modules/${packageName}`;
-	const paths: string[] = [];
-	for (const [path, entry] of Object.entries(lock.packages ?? {})) {
-		if (!path.endsWith(prefix)) continue;
-		const version = entry?.version;
-		assert.ok(typeof version === "string", `missing version for lockfile entry: ${path}`);
-		if (compareVersions(version, maxVersion) <= 0) {
-			paths.push(path);
-		}
-	}
-	return paths;
-}
-
-test("Pi 0.82.0 compatibility metadata and source boundaries stay exact", () => {
+test("pinned Pi compatibility metadata and source boundaries stay exact", () => {
 	const packageJson = parsePackageJson();
 	const lock = JSON.parse(readText(LOCK_PATH)) as { packages: Record<string, { version?: string }> };
 	assert.equal(packageJson.engines.node, ">=22.19.0");
-	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui", "typebox"]) {
-		assert.equal(packageJson.peerDependencies[name], "*", `${name} peer must remain host-provided`);
-	}
 	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
-		assert.equal(packageJson.devDependencies[name], "0.82.0");
-		assert.equal(lock.packages[`node_modules/${name}`]?.version, "0.82.0");
+		assert.equal(packageJson.peerDependencies[name], EXPECTED_PI_PEER, `${name} peer must require ${EXPECTED_PI_PEER}`);
 	}
-	assert.equal(packageJson.devDependencies.typebox, "1.1.38");
-	assert.equal(lock.packages["node_modules/typebox"]?.version, "1.1.38");
+	assert.equal(packageJson.peerDependencies.typebox, EXPECTED_TYPEBOX_PEER, `typebox peer must require ${EXPECTED_TYPEBOX_PEER}`);
+	for (const name of ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"]) {
+		assert.equal(packageJson.devDependencies[name], EXPECTED_PI_VERSION);
+		assert.equal(lock.packages[`node_modules/${name}`]?.version, EXPECTED_PI_VERSION);
+	}
+	assert.equal(packageJson.devDependencies.typebox, EXPECTED_TYPEBOX_VERSION);
+	assert.equal(lock.packages["node_modules/typebox"]?.version, EXPECTED_TYPEBOX_VERSION);
 
 	const spawnSource = readText(SPAWN_SOURCE_PATH);
 	assert.doesNotMatch(spawnSource, /\bAuthStorage\b|\bModelRegistry\b/);
@@ -175,7 +152,7 @@ test("Pi 0.82.0 compatibility metadata and source boundaries stay exact", () => 
 	assert.doesNotMatch(rendererSource, /process\.(?:stdout|stderr)\.write\s*\(/);
 });
 
-test("audit-ci config keeps only the active expiry-tracked scoped exceptions", () => {
+test("audit-ci config enforces the empty allowlist policy", () => {
 	const config = parseAuditConfig();
 	assert.equal(config.$schema, AUDIT_SCHEMA);
 	assert.equal(config.moderate, true);
@@ -192,23 +169,6 @@ test("audit-ci config keeps only the active expiry-tracked scoped exceptions", (
 	}
 });
 
-test("the lockfile contains the sole allowlisted vulnerable brace-expansion path", () => {
-	const vulnerablePaths = parseLockfileVulnerablePaths(fileURLToPath(LOCK_PATH), "brace-expansion", "5.0.7");
-	assert.deepEqual(vulnerablePaths, [
-		"node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion",
-	]);
-});
-
-test("the lockfile contains the allowlisted undici path at a vulnerable version", () => {
-	// undici <8.9.0 is allowlisted only while pi-coding-agent pins 8.5.0 exactly;
-	// once a pi-coding-agent release ships undici ≥8.9.0 this fails and forces
-	// the allowlist entries to be removed.
-	const vulnerablePaths = parseLockfileVulnerablePaths(fileURLToPath(LOCK_PATH), "undici", "8.8.0");
-	assert.deepEqual(vulnerablePaths, [
-		"node_modules/@earendil-works/pi-coding-agent/node_modules/undici",
-	]);
-});
-
 test("workflow keeps the expected matrix and audit/test order", () => {
 	const workflow = readText(WORKFLOW_PATH);
 	const packageJson = parsePackageJson();
@@ -220,6 +180,12 @@ test("workflow keeps the expected matrix and audit/test order", () => {
 	assert.ok(EXPECTED_MATRIX.has(`ubuntu-latest@${minimumNodeVersion(packageJson.engines.node)}`));
 });
 
+
+test("Windows current-Pi step runs after packed-host failure but not on cancellation", () => {
+	const workflow = readText(WORKFLOW_PATH);
+	const block = stepBlock(workflow, "Synchronized current Pi compatibility on Windows");
+	assert.match(block, /if:\s*matrix\.os == 'windows-latest' && !cancelled\(\)/);
+});
 
 test("audit-ci config matches the CI audit command", () => {
 	runAuditCi();
