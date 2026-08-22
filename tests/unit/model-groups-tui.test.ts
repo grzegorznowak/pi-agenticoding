@@ -127,7 +127,7 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	review.validation.emptyCommonModalities = true;
 	review.validation.unsupportedOverrideModalities = ["reasoning"];
 	const { c } = component({ groups: [review] });
-	assert.match(rendered(c, 200), /review: modalities text, image/);
+	assert.match(rendered(c, 200), /\breview text image\b/);
 	assert.match(rendered(c, 200), /⚠ no common modalities/);
 	assert.match(rendered(c, 200), /⚠ stale modality override: reasoning/);
 	press(c, ENTER);

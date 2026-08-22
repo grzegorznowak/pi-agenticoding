@@ -1,4 +1,4 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel, type Api } from "@earendil-works/pi-ai";
 import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type TUI } from "@earendil-works/pi-tui";
@@ -11,7 +11,7 @@ import {
 	summarizeBootValidation,
 	updateGroup,
 } from "./store.js";
-import { ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
+import { MODEL_GROUP_MODALITIES, ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
 import { canonicalizeModelGroupName } from "./names.js";
 import { decodeDisplayLabel, escapeDisplayLabel } from "./display.js";
 import { constraintEditorRows, presentConstraintDiagnosticRecords, type ConstraintEditorRow } from "./constraints/presentation.js";
@@ -478,6 +478,19 @@ export function createModelGroupsComponent(
 		};
 	}
 
+	const MODALITY_FG: Record<ModelGroupModality, ThemeColor> = {
+		text: "accent",
+		image: "success",
+		reasoning: "thinkingHigh",
+	};
+	const MODALITY_SEP = " ";
+
+	/** Colored inline chips for a group's effective modalities. Empty effective set -> "". */
+	function modalityChips(effective: readonly ModelGroupModality[] | null | undefined): string {
+		if (!effective || effective.length === 0) return "";
+		return effective.map((modality) => theme.fg(MODALITY_FG[modality], modality)).join(MODALITY_SEP);
+	}
+
 	const selectTheme = {
 		selectedPrefix: (text: string) => theme.fg("accent", text),
 		selectedText: (text: string) => theme.fg("accent", text),
@@ -525,6 +538,7 @@ export function createModelGroupsComponent(
 		const container = new Container();
 		container.addChild(textLine(theme.fg("accent", "Model Groups")));
 		container.addChild(textLine(theme.fg("dim", `Boot validation: ${summary.unavailableCount} unavailable model references · ${summary.overrideCount} project overrides`)));
+		container.addChild(textLine(theme.fg("dim", "modalities: ") + modalityChips(MODEL_GROUP_MODALITIES)));
 		const items: SelectItem[] = state.groups.map((group, index) => {
 			const tags: string[] = [];
 			if (group.validation.degraded) tags.push("⚠ degraded");
@@ -536,11 +550,11 @@ export function createModelGroupsComponent(
 				if (group.validation.emptyCommonModalities) tags.push("⚠ no common modalities");
 				if (group.validation.unsupportedOverrideModalities.length > 0) tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);
 			}
-			return { value: String(index), label: escapeDisplayLabel(group.name), description: `[${group.scope}] ${group.models.length} models ${models}${tags.length ? ` — ${tags.join(" · ")}` : ""}` };
+			const chips = modalityChips(group.modalities?.effective);
+			return { value: String(index), label: `${escapeDisplayLabel(group.name)}${chips ? ` ${chips}` : ""}`, description: `[${group.scope}] ${group.models.length} models ${models}${tags.length ? ` — ${tags.join(" · ")}` : ""}` };
 		});
 		items.push({ value: String(state.groups.length), label: "+ Add group" });
 		container.addChild(buildSelect(items));
-		for (const group of state.groups) container.addChild(textLine(theme.fg("dim", `${escapeDisplayLabel(group.name)}: modalities ${group.modalities?.effective.join(", ") || "none"}`)));
 		container.addChild(textLine(theme.fg("dim", "↑↓ navigate • Enter open/add • D delete • Esc close")));
 		return container;
 	}
