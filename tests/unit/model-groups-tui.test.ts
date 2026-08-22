@@ -139,7 +139,7 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	assert.match(rendered(c), /Modalities: override \(text, image\)/);
 	press(c, DOWN, DOWN, DOWN, ENTER);
 	assert.match(rendered(c), /Automatic \(common: text\)/);
-	assert.match(rendered(c), /T text  \[on\]/);
+	assert.match(rendered(c), /T text \[always\]/);
 	assert.match(rendered(c), /I image  \[on\]/);
 	assert.doesNotMatch(rendered(c), /reasoning/);
 });

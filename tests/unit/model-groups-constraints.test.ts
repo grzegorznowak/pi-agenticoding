@@ -17,9 +17,11 @@ test("constraint registry orders descriptors and rejects duplicate keys", () => 
 	assert.throws(() => createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor, modalitiesConstraint as AnyConstraintDescriptor]), /Duplicate model-group constraint key: modalities/);
 });
 
-test("engine preserves unresolved members as unknown facts", () => {
+	test("engine preserves unresolved members as unknown facts", () => {
 	const result = evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }, { provider: "p", modelId: "gone" }]), {}, createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor]));
-	assert.deepEqual(result[0], { key: "modalities", aggregate: { common: [], supported: ["text", "image", "reasoning"], effective: [] }, effective: [], diagnostics: [{ key: "modalities", code: "empty-common" }] });
+	// An unresolved member leaves common empty, but text is always present via the
+	// resolved member (text is the base invariant), so effective carries text.
+	assert.deepEqual(result[0], { key: "modalities", aggregate: { common: [], supported: ["text", "image", "reasoning"], effective: [] }, effective: ["text"], diagnostics: [{ key: "modalities", code: "empty-common" }] });
 });
 
 test("descriptor codecs report errors and retain vocabulary ordering", () => {
@@ -36,6 +38,14 @@ test("generic multi-select editor enumerates automatic + one toggle per choice",
 		{ kind: "toggle", label: "image", value: "image", active: true },
 		{ kind: "toggle", label: "reasoning", value: "reasoning", active: true },
 	]);
+});
+
+test("text is always present in effective even when the override drops it", () => {
+	const registry = createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor]);
+	const deselected = evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }]), { modalities: [] }, registry)[0];
+	assert.deepEqual(deselected.effective, ["text"]);
+	const onlyImage = evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }]), { modalities: ["image"] }, registry)[0];
+	assert.deepEqual(onlyImage.effective, ["text", "image"]);
 });
 
 test("injected scalar traverses resolution, aggregation, persistence, reconciliation, and production isolation", () => {

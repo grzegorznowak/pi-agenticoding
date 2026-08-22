@@ -41,7 +41,10 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		return { common, supported, effective: common };
 	},
 	reconcile({ aggregate, override }) {
-		const effective = override === undefined ? aggregate.common : ordered(override.filter((modality) => aggregate.supported.includes(modality)));
+		const base = override === undefined ? aggregate.common : ordered(override.filter((modality) => aggregate.supported.includes(modality)));
+		// Text is the always-present base capability (image/reasoning both imply it);
+		// keep it in the effective set whenever the group supports it, regardless of override.
+		const effective = aggregate.supported.includes("text") ? ordered(["text", ...base.filter((modality) => modality !== "text")]) : base;
 		const missing = override === undefined ? [] : ordered(override.filter((modality) => !aggregate.supported.includes(modality)));
 		const diagnostics: ConstraintDiagnostic[] = [
 			...(aggregate.common.length === 0 ? [{ key: "modalities", code: "empty-common" }] : []),

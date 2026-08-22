@@ -308,9 +308,11 @@ export function createModelGroupsComponent(
 	function modalityEditorRows(): readonly ConstraintEditorRow[] {
 		const editor = activeConstraintEditor();
 		if (!editor) return [];
-		// Media-only editor: hide the reasoning capability row (handled via per-member thinkingLevel).
+		// Media editor rows are the additive, toggleable capabilities only:
+		// text is the always-present base, and reasoning is handled per-model (thinkingLevel),
+		// so both are excluded from the toggle list.
 		return constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key]).filter(
-			(row) => row.kind !== "toggle" || row.value !== "reasoning",
+			(row) => row.kind !== "toggle" || (row.value !== "reasoning" && row.value !== "text"),
 		);
 	}
 
@@ -647,6 +649,7 @@ export function createModelGroupsComponent(
 		const editor = activeConstraintEditor();
 		container.addChild(textLine(theme.fg("accent", editor?.descriptor.editor.label.toUpperCase() ?? "MODALITIES")));
 		const isAutomatic = state.editDraft?.constraints?.[editor?.descriptor.key ?? "modalities"] === undefined;
+		container.addChild(textLine(`${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text [always]")}`));
 		for (const [index, row] of modalityEditorRows().entries()) {
 			let label: string;
 			if (row.kind === "toggle") {
