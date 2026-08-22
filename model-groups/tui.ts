@@ -533,6 +533,11 @@ export function createModelGroupsComponent(
 		return theme.fg("dim", s);
 	}
 
+	/** A non-selectable section bar: dim rule, accent label, dim rule. */
+	function sectionBar(label: string): string {
+		return `${dim("── ")}${theme.fg("accent", label)}${dim(" ──")}`;
+	}
+
 	/** Colored single-letter run for a group's effective media modalities + dimmed padding. Empty set -> "". */
 	function modalityLetterRun(effective: readonly ModelGroupModality[] | null | undefined): string {
 		if (!effective || effective.length === 0) return "";
@@ -632,8 +637,10 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(selectableLine(state.row === (access.policy === "global-project" ? 1 : 0), "Location: global", state.editScope === "global" ? " ✓" : "")));
 		container.addChild(groupNameLineComponent());
 		const modalities = current?.modalities;
-		container.addChild(textLine(theme.fg("dim", `Supported by every model: ${modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none"}`)));
-		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.constraints?.modalities === undefined ? "automatic" : "override"} (${modalities?.effective.filter((modality) => modality !== "reasoning").join(", ") || "none"})`)));
+		container.addChild(textLine(sectionBar("Capabilities")));
+		container.addChild(textLine(theme.fg("dim", `  Supported by every model: ${modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none"}`)));
+		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.constraints?.modalities === undefined ? "Automatic" : "Override"} (${modalities?.effective.filter((modality) => modality !== "reasoning").join(", ") || "none"})`)));
+		container.addChild(textLine(sectionBar("Models")));
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
 			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));
