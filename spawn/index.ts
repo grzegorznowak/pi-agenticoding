@@ -402,6 +402,7 @@ export function executeSpawn(
 			parentThinking: inheritedChildThinking,
 			modelRegistry: ctx.modelRegistry,
 			constraintRegistry,
+			routeCursor: state.spawnRouteCursors,
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ThinkingValue = route.thinking;

@@ -244,6 +244,34 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 	assert.deepEqual(result.details.route, { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
 });
 
+test("spawn round-robins across capable members via the session cursor", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	const capA = { provider: "openai", id: "gpt-cap-a", reasoning: true, input: ["text", "image"] };
+	const capB = { provider: "openai", id: "gpt-cap-b", reasoning: true, input: ["text", "image"] };
+	state.modelGroups.groups = [{
+		name: "multi",
+		scope: "project",
+		sourcePath: "<project>",
+		models: [{ provider: "openai", modelId: "gpt-cap-a" }, { provider: "openai", modelId: "gpt-cap-b" }],
+		constraints: { modalities: ["text", "image"] },
+		modalities: { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] },
+	} as any];
+	const seenModels: string[] = [];
+	registerSpawnTool(pi as any, state, async (config: any) => {
+		seenModels.push(config.model.id);
+		return { session: mockSessionFactory({ prompt: async () => {} }), extensionsResult: undefined as any };
+	});
+	const ctx = { model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: {
+		find: (_p: string, id: string) => id === "gpt-cap-a" ? capA : id === "gpt-cap-b" ? capB : undefined,
+		hasConfiguredAuth: (m: any) => m === capA || m === capB,
+	} } as any;
+	await pi.tools.get("spawn").execute("spawn-a", { prompt: "t", group: "multi", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, ctx);
+	await pi.tools.get("spawn").execute("spawn-b", { prompt: "t", group: "multi", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, ctx);
+	assert.deepEqual(seenModels.sort(), ["gpt-cap-a", "gpt-cap-b"].sort(), "two image-required spawns should alternate across the two capable members");
+});
+
 test("spawn injects a capability ceiling notice for a routed group with image disabled", async () => {
 	const pi = createTestPI();
 	pi.setActiveTools(["read", "bash", "spawn"]);

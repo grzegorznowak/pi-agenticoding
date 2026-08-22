@@ -136,6 +136,14 @@ export interface AgenticodingState {
 	 */
 	lastWatchdogBand: number | null;
 
+	/**
+	 * Capability-aware spawn round-robin cursors keyed by model-group name.
+	 * In-memory only (never persisted); reset on /new so alternation is
+	 * per-live-session fairness, not a cross-session schedule. Identity kept so
+	 * references stay valid across resetState — only .clear() and .set() are used.
+	 */
+	spawnRouteCursors: Map<string, number>;
+
 }
 
 /** Create a fresh state instance. Call reset() on /new. */
@@ -172,6 +180,7 @@ export function createState(): AgenticodingState {
 		frontmatterPromptIssues,
 		pendingReadonlyCommands: [],
 		lastWatchdogBand: null,
+		spawnRouteCursors: new Map(),
 	};
 	// Prevent replacement — spawn lifecycle code and renderer ownership checks
 	// depend on stable map identity. Only .clear() and .delete() are valid —
@@ -215,6 +224,7 @@ export function resetState(state: AgenticodingState): void {
 	state.frontmatterSkillIssues.clear();
 	state.frontmatterPromptIssues.clear();
 	state.pendingReadonlyCommands.length = 0;
+	state.spawnRouteCursors.clear();
 	abortAndClearChildSessions(state);
 }
 

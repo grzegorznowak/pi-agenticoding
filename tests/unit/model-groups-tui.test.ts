@@ -146,6 +146,26 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	assert.doesNotMatch(rendered(c), /reasoning/);
 });
 
+test("model groups TUI Add-model picker shows capability chips per model", () => {
+	const review = group("review", { scope: "project" });
+	const models = [
+		{ provider: "openai", id: "gpt-text", reasoning: false, input: ["text"] },
+		{ provider: "openai", id: "gpt-vision", reasoning: false, input: ["text", "image"] },
+		{ provider: "openai", id: "gpt-no-auth", reasoning: false, input: ["text", "image"], configuredAuth: false },
+	];
+	const { c } = component({ groups: [review], modelRegistry: catalog(models) });
+	pressAndRender(c, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
+	assert.match(rendered(c), /Add model — Step 1\/3 Provider/);
+	pressAndRender(c, DOWN, ENTER);
+	const text = rendered(c);
+	assert.match(text, /Add model — Step 2\/3 Model/);
+	// Capable members show colored T/I chips; the unauthenticated model is not selectable.
+	assert.doesNotMatch(text, /gpt-no-auth/);
+	const stripped = stripAnsi(text);
+	assert.match(stripped, /openai\/gpt-text\s+T/);
+	assert.match(stripped, /openai\/gpt-vision\s+T I/);
+});
+
 test("model groups TUI modality editor commits override and Automatic through updateGroup", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
 	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text"] };

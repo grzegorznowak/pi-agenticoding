@@ -36,15 +36,48 @@ test("known empty and all-unusable groups fail clearly", () => {
 	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "bad", constraints: { modalities: { required: ["image"] } }, groups: [group("bad", { scope: "project", models: [{ provider: "openai", modelId: "missing" }] })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "no-usable-models");
 });
 
-test("required modalities check the effective group and actual RNG-selected model", () => {
+test("required modalities prefer a capable member and still reject a wholly-incapable group", () => {
 	const parent = model("p", "parent");
 	const text = model("p", "text");
 	const image = model("p", "image", { input: ["text", "image"] });
 	const routed = group("mixed", { models: [{ provider: "p", modelId: "text" }, { provider: "p", modelId: "image" }], constraints: { modalities: ["text", "image"] } });
 	routed.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	const reg = registry([parent, text, image]);
-	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => 0 }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup.length === 0 && error.missingFromModel[0] === "image" && /Routed model/.test(error.message));
-	assert.equal(resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => .99 }).status, "routed");
+	// Capability pre-selection: even when rng would land on the text-only member (index 0),
+	// the router narrows to members whose individual modality fact satisfies image.
+	const route = resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => 0 });
+	assert.equal(route.status, "routed");
+	assert.equal(route.modelId, "image");
+	// A group whose effective set does not contain image still rejects.
+	const textOnly = group("text-only", { models: [{ provider: "p", modelId: "text" }] });
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "text-only", constraints: { modalities: { required: ["image"] } }, groups: [textOnly], parentModel: parent, parentThinking: "low", modelRegistry: reg }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup[0] === "image");
+});
+
+test("capability pre-selection excludes unauthenticated capable models and round-robins the capable set", () => {
+	const parent = model("p", "parent");
+	const capA = model("p", "cap-a", { input: ["text", "image"] });
+	const capB = model("p", "cap-b", { input: ["text", "image"] });
+	const unavailable = model("p", "cap-unavailable", { input: ["text", "image"] });
+	const text = model("p", "text");
+	const routed = group("mixed", { models: [
+		{ provider: "p", modelId: "text" },
+		{ provider: "p", modelId: "cap-a" },
+		{ provider: "p", modelId: "cap-unavailable" },
+		{ provider: "p", modelId: "cap-b" },
+	], constraints: { modalities: ["text", "image"] } });
+	routed.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
+	// cap-unavailable is not auth-configured, so it must be excluded from the capable pool.
+	const reg = registry([parent, capA, capB, text], new Set(["p:cap-a", "p:cap-b", "p:text"]));
+	const cursor = new Map();
+	const pick = (rng: () => number) => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, routeCursor: cursor, rng }).modelId;
+	const seen = new Set<string>();
+	for (let i = 0; i < 6; i++) {
+		const id = pick(() => 0); // rng is ignored when a capability cursor is present
+		assert.ok(id !== "text", "must never pick the non-capable member");
+		assert.ok(id !== "cap-unavailable", "must never pick the unauthenticated member");
+		seen.add(id);
+	}
+	assert.ok(seen.has("cap-a") && seen.has("cap-b"), `expected both capable members to be reached, got ${[...seen]}`);
 });
 
 test("known group missing effective modality and inherited fallback reject requirements", () => {

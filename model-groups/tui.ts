@@ -15,6 +15,7 @@ import { MODEL_GROUP_MODALITIES, ModelGroupsPersistenceError, type ModelGroupDef
 import { canonicalizeModelGroupName } from "./names.js";
 import { decodeDisplayLabel, escapeDisplayLabel } from "./display.js";
 import { MODALITY_FG, MODALITY_LETTER, modalityLetterRun as buildModalityLetterRun } from "./modality.js";
+import { getModalitiesModelFact } from "./constraints/modalities.js";
 import { constraintEditorRows, presentConstraintDiagnosticRecords, type ConstraintEditorRow } from "./constraints/presentation.js";
 import { productionConstraintRegistry } from "./constraints/registry.js";
 import type { AnyConstraintDescriptor, ErasedConstraintEvaluation } from "./constraints/types.js";
@@ -574,7 +575,11 @@ export function createModelGroupsComponent(
 	}
 
 	function buildModelSelect(models: Model<Api>[]): SelectList {
-		const items = models.map((model, index) => ({ value: String(index), label: modelDisplay(model) }));
+		const items = models.map((model, index) => ({
+			value: String(index),
+			label: modelDisplay(model),
+			description: modalityLetterRun(getModalitiesModelFact(model)),
+		}));
 		const select = new SelectList(items, 10, selectTheme);
 		select.setSelectedIndex(Math.min(state.row, Math.max(0, items.length - 1)));
 		select.onSelectionChange = (item) => { state.row = Number(item.value); syncInputFocus(); };
