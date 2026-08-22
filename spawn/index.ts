@@ -430,6 +430,16 @@ export function executeSpawn(
 	const authorityNote = state.readonlyEnabled
 		? READONLY_CHILD_AUTHORITY_NOTE
 		: "You have the same authority as the parent.";
+	// Level-1 capability orientation: when a model group carries an explicit
+	// modality override, the child is told the group's allowed scope so it can
+	// report a capability mismatch instead of silently working around it (e.g.
+	// reading an image when the group has image disabled).
+	const imageDisabled =
+		route.modalityCeiling !== undefined && !route.modalityCeiling.includes("image");
+	const capabilityNotice =
+		route.status === "routed" && imageDisabled
+			? `\n\n## Model Group capability ceiling\nImage input is disabled for this group. If the task requires reading or inspecting an image, do not work around it with OCR, third-party tools, or an alternate route; report the capability mismatch to the parent instead.\n\n`
+			: "";
 	const fullPrompt =
 		`You are a focused child agent spawned by a parent agent. ` +
 		`${authorityNote} ` +
@@ -438,6 +448,7 @@ export function executeSpawn(
 		`${notebookListing}\n\n` +
 		`If you write notebook pages, store only durable shared memory for the parent and future contexts. ` +
 		`Keep transient task state in your final reply to the parent.\n\n` +
+		`${capabilityNotice}` +
 		`## Task\n\n${params.prompt}${readonlyNotice}\n\n` +
 		`When complete, provide a concise summary of findings. ` +
 		`Keep the result under ${CHILD_MAX_LINES} lines / ${(CHILD_MAX_BYTES / 1024).toFixed(0)}KB.`;

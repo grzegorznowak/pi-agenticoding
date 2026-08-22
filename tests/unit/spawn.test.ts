@@ -244,6 +244,45 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 	assert.deepEqual(result.details.route, { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
 });
 
+test("spawn injects a capability ceiling notice for a routed group with image disabled", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	state.notebookPages.set("entry-a", "preview\nbody");
+	const routedModel = { provider: "openai", id: "gpt-vision", reasoning: true, input: ["text", "image"] };
+	state.modelGroups.groups = [{
+		name: "quick",
+		scope: "project",
+		sourcePath: "<project>",
+		models: [{ provider: "openai", modelId: "gpt-vision" }],
+		constraints: { modalities: ["text", "reasoning"] },
+		modalities: {
+			common: ["text", "reasoning"],
+			supported: ["text", "image", "reasoning"],
+			effective: ["text", "reasoning"],
+		},
+	} as any];
+	const parentRegistry = {
+		find: (_provider: string, modelId: string) => modelId === "gpt-vision" ? routedModel : undefined,
+		hasConfiguredAuth: (model: any) => model === routedModel,
+	};
+	let seenPrompt = "";
+	registerSpawnTool(pi as any, state, async (config: any) => ({
+		session: mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
+		extensionsResult: undefined as any,
+	}));
+	await pi.tools.get("spawn").execute(
+		"spawn-quick",
+		{ prompt: "Read the image in file.png", group: "quick" },
+		undefined,
+		undefined,
+		{ model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: parentRegistry },
+	);
+	assert.match(seenPrompt, /## Model Group capability ceiling/i);
+	assert.match(seenPrompt, /image input is disabled/i);
+	assert.match(seenPrompt, /report the capability mismatch/i);
+});
+
 test("spawn execute builds prompt with notebook pages and task", async () => {
 	const pi = createTestPI();
 	pi.setActiveTools(["read", "bash", "spawn"]);
@@ -268,6 +307,37 @@ test("spawn execute builds prompt with notebook pages and task", async () => {
 	assert.match(seenPrompt, /entry-a: preview line/);
 	assert.match(seenPrompt, /durable shared memory for the parent and future contexts/i);
 	assert.doesNotMatch(seenPrompt, /durable grounding/i);
+});
+
+test("spawn emits no capability notice when the routed group has no explicit override", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	state.modelGroups.groups = [{
+		name: "open",
+		scope: "project",
+		sourcePath: "<project>",
+		models: [{ provider: "openai", modelId: "gpt-vision" }],
+	} as any];
+	const routedModel = { provider: "openai", id: "gpt-vision", reasoning: true, input: ["text", "image"] };
+	const parentRegistry = {
+		find: (_provider: string, modelId: string) => modelId === "gpt-vision" ? routedModel : undefined,
+		hasConfiguredAuth: (model: any) => model === routedModel,
+	};
+	let seenPrompt = "";
+	registerSpawnTool(pi as any, state, async (config: any) => ({
+		session: mockSessionFactory({ prompt: async (p?: string) => { seenPrompt = p ?? ""; } }),
+		extensionsResult: undefined as any,
+	}));
+	await pi.tools.get("spawn").execute(
+		"spawn-open",
+		{ prompt: "Do the task", group: "open" },
+		undefined,
+		undefined,
+		{ model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: parentRegistry },
+	);
+	assert.doesNotMatch(seenPrompt, /capability ceiling/i);
+	assert.doesNotMatch(seenPrompt, /image input is disabled/i);
 });
 
 test("truncateText handles multi-byte boundaries correctly", () => {

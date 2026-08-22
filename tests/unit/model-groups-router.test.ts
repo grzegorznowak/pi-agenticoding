@@ -68,3 +68,26 @@ test("plain inherited route honors requiredModalities with empty-array no-op", (
 	// Parent lacks a required modality → missing-modality with the parent model details.
 	assert.throws(() => resolveSpawnModelRoute({ constraints: { modalities: { required: ["image"] } }, groups: [], parentModel: text, parentThinking: "medium", modelRegistry: registry([text]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.group === "<inherited>" && error.missingFromModel[0] === "image" && error.missingFromGroup.length === 0 && /Spawn model/.test(error.message));
 });
+
+test("explicit group override carries a modality ceiling even when caller declares no requirement", () => {
+	const parent = model("openai", "gpt-parent");
+	const vision = model("openai", "gpt-vision", { input: ["text", "image"], reasoning: true });
+	const g = group("posed", {
+		models: [{ provider: "openai", modelId: "gpt-vision" }],
+		constraints: { modalities: ["text", "reasoning"] },
+	});
+	g.modalities.effective = ["text", "reasoning"];
+	const route = resolveSpawnModelRoute({ requestedGroup: "posed", groups: [g], parentModel: parent, parentThinking: "medium", modelRegistry: registry([parent, vision]) });
+	assert.equal(route.status, "routed");
+	assert.deepEqual(route.modalityCeiling, ["text", "reasoning"]);
+});
+
+test("groups without an explicit override get no modality ceiling", () => {
+	const parent = model("openai", "gpt-parent");
+	const vision = model("openai", "gpt-vision", { input: ["text", "image"], reasoning: true });
+	const g = group("openbox", { models: [{ provider: "openai", modelId: "gpt-vision" }] });
+	g.modalities.effective = ["text", "image", "reasoning"];
+	const route = resolveSpawnModelRoute({ requestedGroup: "openbox", groups: [g], parentModel: parent, parentThinking: "medium", modelRegistry: registry([parent, vision]) });
+	assert.equal(route.status, "routed");
+	assert.equal(route.modalityCeiling, undefined);
+});

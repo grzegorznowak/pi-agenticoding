@@ -7,7 +7,22 @@ import type { ConstraintViolation } from "./constraints/types.js";
 import { type ModelGroupModality, type ResolvedModelGroup } from "./types.js";
 
 export type SpawnRouteStatus = "inherited" | "routed" | "unknown-fallback";
-export interface SpawnModelRoute { status: SpawnRouteStatus; requestedGroup?: string; groupName?: string; model: Model<Api>; provider: string; modelId: string; thinking: ModelThinkingLevel }
+export interface SpawnModelRoute {
+	status: SpawnRouteStatus;
+	requestedGroup?: string;
+	groupName?: string;
+	model: Model<Api>;
+	provider: string;
+	modelId: string;
+	thinking: ModelThinkingLevel;
+	/**
+	 * For a routed group with an explicit modality override, the group's
+	 * effective capability set. Undefined for inherited/unknown-fallback routes
+	 * and for groups without an explicit override. Exposed so spawn can orient
+	 * the child to the group's declared capability ceiling (Level-1 advisory).
+	 */
+	modalityCeiling?: readonly ModelGroupModality[];
+}
 export type SpawnRouteErrorReason = "empty" | "no-usable-models" | "missing-modality" | "constraint-unsatisfied";
 export class SpawnRouteError extends Error {
 	readonly kind = "unusable-group" as const; readonly group: string; readonly reason: SpawnRouteErrorReason; readonly missingModalities: ModelGroupModality[]; readonly missingFromGroup: ModelGroupModality[]; readonly missingFromModel: ModelGroupModality[]; readonly constraintUnsatisfied?: readonly ConstraintViolation[];
@@ -27,7 +42,15 @@ export function resolveSpawnModelRoute(options: { requestedGroup?: string; const
 	const requestedGroup = options.requestedGroup?.trim(); const requirements = options.constraints ?? {}; const registry = options.constraintRegistry ?? productionConstraintRegistry;
 	const inherited = (status: "inherited" | "unknown-fallback"): SpawnModelRoute => ({ status, ...(status === "unknown-fallback" && requestedGroup ? { requestedGroup } : {}), model: options.parentModel, provider: parentProvider(options.parentModel), modelId: options.parentModel.id, thinking: options.parentThinking });
 	let route: SpawnModelRoute; let group: ResolvedModelGroup | undefined;
-	if (!requestedGroup) route = inherited("inherited"); else { group = effectiveGroupMap(options.groups).get(requestedGroup); if (!group) route = inherited("unknown-fallback"); else { if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty"); const usable = group.models.map((entry) => { const model = options.modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined; return model && options.modelRegistry.hasConfiguredAuth(model) ? { entry, model } : undefined; }).filter((entry): entry is { entry: ResolvedModelGroup["models"][number]; model: Model<Api> } => Boolean(entry)); if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models"); const selected = usable[Math.min(usable.length - 1, Math.max(0, Math.floor((options.rng ?? Math.random)() * usable.length)))]; route = { status: "routed", requestedGroup, groupName: group.name, model: selected.model, provider: selected.entry.provider, modelId: selected.entry.modelId, thinking: clampThinkingLevel(selected.model, selected.entry.thinkingLevel ?? options.parentThinking) }; } }
+	if (!requestedGroup) route = inherited("inherited"); else { group = effectiveGroupMap(options.groups).get(requestedGroup); if (!group) route = inherited("unknown-fallback"); else { if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty"); const usable = group.models.map((entry) => { const model = options.modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined; return model && options.modelRegistry.hasConfiguredAuth(model) ? { entry, model } : undefined; }).filter((entry): entry is { entry: ResolvedModelGroup["models"][number]; model: Model<Api> } => Boolean(entry)); if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models"); const selected = usable[Math.min(usable.length - 1, Math.max(0, Math.floor((options.rng ?? Math.random)() * usable.length)))]; route = { status: "routed", requestedGroup, groupName: group.name, model: selected.model, provider: selected.entry.provider, modelId: selected.entry.modelId, thinking: clampThinkingLevel(selected.model, selected.entry.thinkingLevel ?? options.parentThinking) };
+				// Level-1 capability orientation: an explicit modality override is the
+				// group's declared capability ceiling. Carry it on the route regardless
+				// of whether the caller declared a requirement, so spawn can orient the
+				// child to the group's allowed scope.
+				if (group.constraints?.modalities !== undefined) {
+					route = { ...route, modalityCeiling: [...(group.modalities?.effective ?? [])] };
+				}
+			 } }
 	if (!Object.keys(requirements).length) return route;
 	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };
 	const violations: ConstraintViolation[] = [];
