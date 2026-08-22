@@ -135,11 +135,11 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	assert.match(rendered(c, 200), /⚠ no common modalities/);
 	assert.match(rendered(c, 200), /⚠ stale modality override: reasoning/);
 	press(c, ENTER);
-	assert.match(rendered(c), /Common: text/);
+	assert.match(rendered(c), /Supported by every model: text/);
 	assert.match(rendered(c), /Modalities: override \(text, image\)/);
 	press(c, DOWN, DOWN, DOWN, ENTER);
-	assert.match(rendered(c), /Automatic \(common: text\)/);
-	assert.match(rendered(c), /T text \[always\]/);
+	assert.match(rendered(c), /Automatic \(text\)/);
+	assert.match(rendered(c), /T text  required base/);
 	assert.match(rendered(c), /I image  \[on\]/);
 	assert.doesNotMatch(rendered(c), /reasoning/);
 });
@@ -161,22 +161,22 @@ test("model groups TUI modality editor commits override and Automatic through up
 	press(c, ENTER);
 	selectRenderedLabel(c, "Modalities:");
 	press(c, ENTER);
-	assert.match(rendered(c), /MODALITIES/);
+	assert.match(rendered(c), /Modalities/);
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	assert.equal(calls.length, 1);
 	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image"]);
-	assert.match(rendered(c), /MODALITIES/, "toggle stays on the modalities screen");
+	assert.match(rendered(c), /Modalities/, "toggle stays on the modalities screen");
 	assert.match(rendered(c), /I image  \[on\]/);
 	press(c, ESC);
 	assert.match(rendered(c), /Modalities: override \(text, image\)/);
 	press(c, ENTER);
-	assert.match(rendered(c), /MODALITIES/);
+	assert.match(rendered(c), /Modalities/);
 	selectRenderedLabel(c, "Automatic");
 	press(c, ENTER);
 	assert.equal(calls.length, 2);
 	assert.equal(calls[1].def.constraints?.modalities, undefined);
-	assert.match(rendered(c), /MODALITIES/, "reset also stays on the modalities screen");
+	assert.match(rendered(c), /Modalities/, "reset also stays on the modalities screen");
 	press(c, ESC);
 	assert.match(rendered(c), /Modalities: automatic/);
 });
@@ -198,12 +198,12 @@ test("model groups TUI Space also toggles a modality and stays on screen", () =>
 	press(c, ENTER);
 	selectRenderedLabel(c, "Modalities:");
 	press(c, ENTER);
-	assert.match(rendered(c), /MODALITIES/);
+	assert.match(rendered(c), /Modalities/);
 	selectRenderedLabel(c, "I image");
 	press(c, " ");
 	assert.equal(calls.length, 1);
 	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image"]);
-	assert.match(rendered(c), /MODALITIES/, "space toggle stays on the modalities screen");
+	assert.match(rendered(c), /Modalities/, "space toggle stays on the modalities screen");
 	assert.match(rendered(c), /I image  \[on\]/);
 });
 
@@ -220,10 +220,10 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 		listResolvedModelGroups: () => boot([review]),
 	};
 	const { c } = component({ groups: [review], store, notify: (message) => messages.push(message) });
-	press(c, ENTER, DOWN, DOWN, DOWN, ENTER); // open MODALITIES
+	press(c, ENTER, DOWN, DOWN, DOWN, ENTER); // open Modalities
 	press(c, DOWN, DOWN, DOWN, ENTER); // pick an override → updateGroup throws
 	assert.ok(messages.some((m) => /modality write denied/.test(m)));
-	assert.match(rendered(c), /MODALITIES/, "screen retained after failure");
+	assert.match(rendered(c), /Modalities/, "screen retained after failure");
 });
 
 test("model groups TUI computes unique new-group names and opens editor after create", () => {

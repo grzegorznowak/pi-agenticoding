@@ -33,7 +33,7 @@ test("generic multi-select editor enumerates automatic + one toggle per choice",
 	const registry = createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor]);
 	const evaluated = evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }]), {}, registry);
 	assert.deepEqual(constraintEditorRows(modalitiesConstraint as AnyConstraintDescriptor, evaluated[0]), [
-		{ kind: "automatic", label: "Automatic (common: text, image)" },
+		{ kind: "automatic", label: "Automatic (text, image)" },
 		{ kind: "toggle", label: "text", value: "text", active: true },
 		{ kind: "toggle", label: "image", value: "image", active: true },
 		{ kind: "toggle", label: "reasoning", value: "reasoning", active: true },

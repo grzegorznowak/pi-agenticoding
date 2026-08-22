@@ -632,7 +632,7 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(selectableLine(state.row === (access.policy === "global-project" ? 1 : 0), "Location: global", state.editScope === "global" ? " ✓" : "")));
 		container.addChild(groupNameLineComponent());
 		const modalities = current?.modalities;
-		container.addChild(textLine(theme.fg("dim", `Common: ${modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none"}`)));
+		container.addChild(textLine(theme.fg("dim", `Supported by every model: ${modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none"}`)));
 		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.constraints?.modalities === undefined ? "automatic" : "override"} (${modalities?.effective.filter((modality) => modality !== "reasoning").join(", ") || "none"})`)));
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
@@ -647,9 +647,10 @@ export function createModelGroupsComponent(
 		activeSelect = null;
 		const container = new Container();
 		const editor = activeConstraintEditor();
-		container.addChild(textLine(theme.fg("accent", editor?.descriptor.editor.label.toUpperCase() ?? "MODALITIES")));
+		const current = currentEditGroup();
+		container.addChild(textLine(theme.fg("accent", `Modalities — ${escapeDisplayLabel(current?.name ?? "")}`)));
 		const isAutomatic = state.editDraft?.constraints?.[editor?.descriptor.key ?? "modalities"] === undefined;
-		container.addChild(textLine(`${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text [always]")}`));
+		container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  required base")}`));
 		for (const [index, row] of modalityEditorRows().entries()) {
 			let label: string;
 			if (row.kind === "toggle") {
@@ -665,7 +666,7 @@ export function createModelGroupsComponent(
 			}
 			container.addChild(textLine(selectableLine(state.row === index, label)));
 		}
-		container.addChild(textLine(theme.fg("dim", "↑↓ navigate • Enter/Space toggle • Esc close")));
+		container.addChild(textLine(theme.fg("dim", "↑↓ navigate • Enter/Space apply • Esc back")));
 		return container;
 	}
 
