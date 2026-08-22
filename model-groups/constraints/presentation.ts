@@ -7,6 +7,7 @@ export interface ConstraintDiagnosticRecord extends ConstraintDiagnostic {
 
 export type ConstraintEditorRow =
 	| { kind: "automatic"; label: string }
+	| { kind: "toggle"; label: string; value: string; active: boolean }
 	| { kind: "choice"; label: string; value: readonly string[] }
 	| { kind: "number"; label: string; value: number | null; unit: string; min: number; step: number };
 
@@ -45,11 +46,11 @@ export function constraintEditorRows(
 ): readonly ConstraintEditorRow[] {
 	const editor = descriptor.editor as ConstraintEditorSpec<unknown, unknown, unknown>;
 	if (editor.kind === "multi-select") {
-		const choices = [...new Set([...editor.choices(evaluation as ConstraintEvaluation<unknown, unknown>), ...(Array.isArray(override) ? override.filter((value): value is string => typeof value === "string") : [])])];
+		const choices = editor.choices(evaluation as ConstraintEvaluation<unknown, unknown>);
+		const effective = (evaluation as ConstraintEvaluation<unknown, unknown>).effective as readonly string[] | undefined;
 		const rows: ConstraintEditorRow[] = [{ kind: "automatic", label: editor.automatic(evaluation as ConstraintEvaluation<unknown, unknown>) }];
-		for (let mask = 0; mask < 2 ** choices.length; mask++) {
-			const value = choices.filter((_, index) => (mask & (1 << index)) !== 0);
-			rows.push({ kind: "choice", label: editor.format(value), value });
+		for (const choice of choices) {
+			rows.push({ kind: "toggle", label: choice, value: choice, active: effective?.includes(choice) ?? false });
 		}
 		return rows;
 	}

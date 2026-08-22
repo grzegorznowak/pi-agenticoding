@@ -299,7 +299,11 @@ export function createModelGroupsComponent(
 
 	function modalityEditorRows(): readonly ConstraintEditorRow[] {
 		const editor = activeConstraintEditor();
-		return editor ? constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key]) : [];
+		if (!editor) return [];
+		// Media-only editor: hide the reasoning capability row (handled via per-member thinkingLevel).
+		return constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key]).filter(
+			(row) => row.kind !== "toggle" || row.value !== "reasoning",
+		);
 	}
 
 	function maxRow(): number {
@@ -363,8 +367,13 @@ export function createModelGroupsComponent(
 				const next = cloneDef(state.editDraft);
 				if (selected.kind === "automatic") {
 					if (next.constraints) delete next.constraints[editor.descriptor.key];
-				} else if (selected.kind === "choice") {
-					(next.constraints ??= {})[editor.descriptor.key] = [...selected.value] as ModelGroupModality[];
+				} else if (selected.kind === "toggle") {
+					const base = [...(editor.evaluation.effective as ModelGroupModality[])];
+					const pressed = selected.value as ModelGroupModality;
+					const toggled = base.includes(pressed)
+						? base.filter((modality) => modality !== pressed)
+						: orderedModalities([...base, pressed]);
+					(next.constraints ??= {})[editor.descriptor.key] = toggled;
 				} else return;
 				updateDraft(next, () => { state.screen = "EDITOR"; state.row = modalityRow(); }); return;
 			}
@@ -488,16 +497,27 @@ export function createModelGroupsComponent(
 		image: "I",
 		reasoning: "R",
 	};
+	// Media modalities editable in the modalities screen. Reasoning is a distinct
+	// capability (per-member thinkingLevel / routing gate) and is not exposed here.
+	const VISIBLE_MODALITIES = MODEL_GROUP_MODALITIES.filter((modality) => modality !== "reasoning") as ModelGroupModality[];
+
+	/** Vocab-order the given modalities per MODEL_GROUP_MODALITIES. */
+	function orderedModalities(values: Iterable<ModelGroupModality>): ModelGroupModality[] {
+		const set = new Set(values);
+		return MODEL_GROUP_MODALITIES.filter((modality) => set.has(modality));
+	}
 
 	/** Dim wrap, so each description run re-asserts dim after an inner colored span's \x1b[39m. */
 	function dim(s: string): string {
 		return theme.fg("dim", s);
 	}
 
-	/** Colored single-letter run for a group's effective modalities + dimmed padding. Empty set -> "". */
+	/** Colored single-letter run for a group's effective media modalities + dimmed padding. Empty set -> "". */
 	function modalityLetterRun(effective: readonly ModelGroupModality[] | null | undefined): string {
 		if (!effective || effective.length === 0) return "";
-		return effective.map((modality) => theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])).join(dim(" "));
+		const visible = effective.filter((modality) => modality !== "reasoning");
+		if (visible.length === 0) return "";
+		return visible.map((modality) => theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])).join(dim(" "));
 	}
 
 	/** Build a modality-tagged description whose dim segments re-assert dim after each colored letter. */
@@ -560,7 +580,7 @@ export function createModelGroupsComponent(
 		const container = new Container();
 		container.addChild(textLine(theme.fg("accent", "Model Groups")));
 		container.addChild(textLine(theme.fg("dim", `Boot validation: ${summary.unavailableCount} unavailable model references · ${summary.overrideCount} project overrides`)));
-		const legend = `${theme.fg("dim", "modalities: ")}${MODEL_GROUP_MODALITIES.map((modality) => `${theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])}${dim(" " + modality)}`).join(dim(" · "))}`;
+		const legend = `${theme.fg("dim", "modalities: ")}${VISIBLE_MODALITIES.map((modality) => `${theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])}${dim(" " + modality)}`).join(dim(" · "))}`;
 		container.addChild(textLine(legend));
 		const items: SelectItem[] = state.groups.map((group, index) => {
 			const tags: string[] = [];
@@ -591,8 +611,8 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(selectableLine(state.row === (access.policy === "global-project" ? 1 : 0), "Location: global", state.editScope === "global" ? " ✓" : "")));
 		container.addChild(groupNameLineComponent());
 		const modalities = current?.modalities;
-		container.addChild(textLine(theme.fg("dim", `Common: ${modalities?.common.join(", ") || "none"}`)));
-		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.constraints?.modalities === undefined ? "automatic" : "override"} (${modalities?.effective.join(", ") || "none"})`)));
+		container.addChild(textLine(theme.fg("dim", `Common: ${modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none"}`)));
+		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.constraints?.modalities === undefined ? "automatic" : "override"} (${modalities?.effective.filter((modality) => modality !== "reasoning").join(", ") || "none"})`)));
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
 			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));
@@ -607,8 +627,20 @@ export function createModelGroupsComponent(
 		const container = new Container();
 		const editor = activeConstraintEditor();
 		container.addChild(textLine(theme.fg("accent", editor?.descriptor.editor.label.toUpperCase() ?? "MODALITIES")));
+		const isAutomatic = state.editDraft?.constraints?.[editor?.descriptor.key ?? "modalities"] === undefined;
 		for (const [index, row] of modalityEditorRows().entries()) {
-			const label = row.kind === "number" ? `${row.label}: ${row.value ?? "none"} ${row.unit}` : row.label;
+			let label: string;
+			if (row.kind === "toggle") {
+				const modality = row.value as ModelGroupModality;
+				const letter = theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality]);
+				label = `${letter}${dim(" " + row.label)}${dim(row.active ? "  [on]" : "  [off]")}`;
+			} else if (row.kind === "automatic") {
+				label = `${dim(row.label)}${isAutomatic ? dim(" [✓]") : ""}`;
+			} else if (row.kind === "number") {
+				label = `${row.label}: ${row.value ?? "none"} ${row.unit}`;
+			} else {
+				label = row.label;
+			}
 			container.addChild(textLine(selectableLine(state.row === index, label)));
 		}
 		return container;

@@ -61,7 +61,7 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		equals: (left, right) => modalityCodec().equals(left, right),
 		schema: Type.Object({ required: modalityCodec().schema }),
 	},
-	editor: { kind: "multi-select", label: "Modalities", choices: (evaluation) => evaluation.aggregate.supported, automatic: (evaluation) => `Automatic (common: ${evaluation.aggregate.common.join(", ") || "none"})`, format: (value) => `Override: ${value.join(", ") || "none"}`, allowAutomatic: true },
+	editor: { kind: "multi-select", label: "Modalities", choices: (evaluation) => evaluation.aggregate.supported, automatic: (evaluation) => `Automatic (common: ${evaluation.aggregate.common.filter((modality) => modality !== "reasoning").join(", ") || "none"})`, format: (value) => `Override: ${value.join(", ") || "none"}`, allowAutomatic: true },
 	present: {
 		group: (evaluation) => evaluation.effective.join(", "),
 		prompt: (evaluation) => evaluation.effective.join(", "),

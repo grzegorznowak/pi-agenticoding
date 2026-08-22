@@ -27,6 +27,17 @@ test("descriptor codecs report errors and retain vocabulary ordering", () => {
 	assert.deepEqual(modalitiesConstraint.persistence.override.decode(["text", "text"], "override"), { ok: false, message: "override must be a unique modality vocabulary array" });
 });
 
+test("generic multi-select editor enumerates automatic + one toggle per choice", () => {
+	const registry = createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor]);
+	const evaluated = evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }]), {}, registry);
+	assert.deepEqual(constraintEditorRows(modalitiesConstraint as AnyConstraintDescriptor, evaluated[0]), [
+		{ kind: "automatic", label: "Automatic (common: text, image)" },
+		{ kind: "toggle", label: "text", value: "text", active: true },
+		{ kind: "toggle", label: "image", value: "image", active: true },
+		{ kind: "toggle", label: "reasoning", value: "reasoning", active: true },
+	]);
+});
+
 test("injected scalar traverses resolution, aggregation, persistence, reconciliation, and production isolation", () => {
 	const injected = createConstraintRegistry([testMinContext as AnyConstraintDescriptor]);
 	const resolved = resolution([{ provider: "p", modelId: "rich", model: rich }, { provider: "p", modelId: "text", model: text }]);

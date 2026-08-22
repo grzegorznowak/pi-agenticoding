@@ -139,8 +139,9 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	assert.match(rendered(c), /Modalities: override \(text, image\)/);
 	press(c, DOWN, DOWN, DOWN, ENTER);
 	assert.match(rendered(c), /Automatic \(common: text\)/);
-	assert.match(rendered(c), /Override: none/);
-	assert.match(rendered(c), /Override: text, image, reasoning/);
+	assert.match(rendered(c), /T text  \[on\]/);
+	assert.match(rendered(c), /I image  \[on\]/);
+	assert.doesNotMatch(rendered(c), /reasoning/);
 });
 
 test("model groups TUI modality editor commits override and Automatic through updateGroup", () => {
@@ -161,10 +162,10 @@ test("model groups TUI modality editor commits override and Automatic through up
 	selectRenderedLabel(c, "Modalities:");
 	press(c, ENTER);
 	assert.match(rendered(c), /MODALITIES/);
-	selectRenderedLabel(c, "Override: text, image, reasoning");
+	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image", "reasoning"]);
+	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image"]);
 	assert.match(rendered(c), /Modalities: override/);
 	press(c, ENTER);
 	assert.match(rendered(c), /MODALITIES/);
