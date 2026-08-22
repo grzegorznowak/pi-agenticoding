@@ -127,7 +127,11 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	review.validation.emptyCommonModalities = true;
 	review.validation.unsupportedOverrideModalities = ["reasoning"];
 	const { c } = component({ groups: [review] });
-	assert.match(rendered(c, 200), /\breview text image\b/);
+	const reviewRow = stripAnsi(rendered(c, 200)).split("\n").find((line) => line.includes("review"));
+	assert.ok(reviewRow, "expected review row");
+	assert.match(reviewRow, /\bT\b/);
+	assert.match(reviewRow, /\bI\b/);
+	assert.match(reviewRow, /models .*?T I[\s]*/);
 	assert.match(rendered(c, 200), /⚠ no common modalities/);
 	assert.match(rendered(c, 200), /⚠ stale modality override: reasoning/);
 	press(c, ENTER);

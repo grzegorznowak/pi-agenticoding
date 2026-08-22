@@ -479,16 +479,38 @@ export function createModelGroupsComponent(
 	}
 
 	const MODALITY_FG: Record<ModelGroupModality, ThemeColor> = {
-		text: "accent",
+		text: "syntaxKeyword",
 		image: "success",
 		reasoning: "thinkingHigh",
 	};
-	const MODALITY_SEP = " ";
+	const MODALITY_LETTER: Record<ModelGroupModality, string> = {
+		text: "T",
+		image: "I",
+		reasoning: "R",
+	};
 
-	/** Colored inline chips for a group's effective modalities. Empty effective set -> "". */
-	function modalityChips(effective: readonly ModelGroupModality[] | null | undefined): string {
+	/** Dim wrap, so each description run re-asserts dim after an inner colored span's \x1b[39m. */
+	function dim(s: string): string {
+		return theme.fg("dim", s);
+	}
+
+	/** Colored single-letter run for a group's effective modalities + dimmed padding. Empty set -> "". */
+	function modalityLetterRun(effective: readonly ModelGroupModality[] | null | undefined): string {
 		if (!effective || effective.length === 0) return "";
-		return effective.map((modality) => theme.fg(MODALITY_FG[modality], modality)).join(MODALITY_SEP);
+		return effective.map((modality) => theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])).join(dim(" "));
+	}
+
+	/** Build a modality-tagged description whose dim segments re-assert dim after each colored letter. */
+	function modalityDescription(
+		scope: ModelGroupScope,
+		count: number,
+		thinking: string,
+		tags: string,
+		effective: readonly ModelGroupModality[] | null | undefined,
+	): string {
+		const head = dim(`[${scope}] ${count} models`);
+		const letters = modalityLetterRun(effective);
+		return `${head}${letters ? `${dim(" ")}${letters}${dim(" ")}` : dim(" ")}${dim(thinking)}${tags ? dim(` — ${tags}`) : ""}`;
 	}
 
 	const selectTheme = {
@@ -538,7 +560,8 @@ export function createModelGroupsComponent(
 		const container = new Container();
 		container.addChild(textLine(theme.fg("accent", "Model Groups")));
 		container.addChild(textLine(theme.fg("dim", `Boot validation: ${summary.unavailableCount} unavailable model references · ${summary.overrideCount} project overrides`)));
-		container.addChild(textLine(theme.fg("dim", "modalities: ") + modalityChips(MODEL_GROUP_MODALITIES)));
+		const legend = `${theme.fg("dim", "modalities: ")}${MODEL_GROUP_MODALITIES.map((modality) => `${theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])}${dim(" " + modality)}`).join(dim(" · "))}`;
+		container.addChild(textLine(legend));
 		const items: SelectItem[] = state.groups.map((group, index) => {
 			const tags: string[] = [];
 			if (group.validation.degraded) tags.push("⚠ degraded");
@@ -550,8 +573,8 @@ export function createModelGroupsComponent(
 				if (group.validation.emptyCommonModalities) tags.push("⚠ no common modalities");
 				if (group.validation.unsupportedOverrideModalities.length > 0) tags.push(`⚠ stale modality override: ${group.validation.unsupportedOverrideModalities.join(", ")}`);
 			}
-			const chips = modalityChips(group.modalities?.effective);
-			return { value: String(index), label: `${escapeDisplayLabel(group.name)}${chips ? ` ${chips}` : ""}`, description: `[${group.scope}] ${group.models.length} models ${models}${tags.length ? ` — ${tags.join(" · ")}` : ""}` };
+			const description = modalityDescription(group.scope, group.models.length, models, tags.join(" · "), group.modalities?.effective);
+			return { value: String(index), label: escapeDisplayLabel(group.name), description };
 		});
 		items.push({ value: String(state.groups.length), label: "+ Add group" });
 		container.addChild(buildSelect(items));
