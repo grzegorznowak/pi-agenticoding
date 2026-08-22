@@ -21,6 +21,13 @@ export const MODALITY_LETTER: Record<ModelGroupModality, string> = {
 export interface ModalityLetterRunOptions {
 	/** Include the reasoning letter. Default false, matching model list rows which surface R per-model. */
 	includeReasoning?: boolean;
+	/**
+	 * OpenRouter-style consolidation: when the visible media set contains any
+	 * non-text modality (image), drop the text letter — text is the always-present
+	 * base, so showing it alongside image is redundant. Text-only groups still
+	 * render T. Default false (preserves the full-text-significant list rows).
+	 */
+	hideTextWhenOtherMedia?: boolean;
 	/** Render one colored/letter token (e.g. a theme colorizer). Defaults to identity. */
 	render?(modality: ModelGroupModality, letter: string): string;
 	/** Separator between colored letters. Default " ". */
@@ -38,15 +45,23 @@ export function modalityLetterRun(
 ): string {
 	if (!effective || effective.length === 0) return "";
 	const includeReasoning = options.includeReasoning ?? false;
+	const hideTextWhenOtherMedia = options.hideTextWhenOtherMedia ?? false;
 	const render = options.render ?? ((_modality: ModelGroupModality, letter: string) => letter);
 	const separator = options.separator ?? " ";
 	const seen = new Set(effective);
-	const letters: string[] = [];
+	const rendered: string[] = [];
+	let hasOtherMedia = false;
 	for (const modality of MODEL_GROUP_MODALITIES) {
 		if (!seen.has(modality)) continue;
 		if (!includeReasoning && modality === "reasoning") continue;
-		letters.push(render(modality, MODALITY_LETTER[modality]));
+		if (modality !== "text") hasOtherMedia = true;
 	}
-	if (letters.length === 0) return "";
-	return letters.join(separator);
+	for (const modality of MODEL_GROUP_MODALITIES) {
+		if (!seen.has(modality)) continue;
+		if (!includeReasoning && modality === "reasoning") continue;
+		if (hideTextWhenOtherMedia && modality === "text" && hasOtherMedia) continue;
+		rendered.push(render(modality, MODALITY_LETTER[modality]));
+	}
+	if (rendered.length === 0) return "";
+	return rendered.join(separator);
 }

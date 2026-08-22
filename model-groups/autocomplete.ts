@@ -33,6 +33,9 @@ function buildCapsLetters(group: ResolvedModelGroup, colorize: DescriptionColori
 	return modalityLetterRun(group.modalities?.effective, {
 		render: (modality, letter) => colorize(MODALITY_FG[modality], letter),
 		separator: colorize("muted", " "),
+		// OpenRouter-style: text is the implied base, so only show I when image is
+		// present; text-only rows keep the single T.
+		hideTextWhenOtherMedia: true,
 	});
 }
 

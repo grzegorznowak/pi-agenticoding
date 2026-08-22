@@ -20,6 +20,17 @@ test("modalityLetterRun canonicalizes order and excludes reasoning by default", 
 	assert.equal(modalityLetterRun(null), "");
 });
 
+test("modalityLetterRun consolidates text away when another media modality is present", () => {
+	// Image implies text -> only the image letter shows (OpenRouter-style).
+	assert.equal(modalityLetterRun(["text", "image"], { hideTextWhenOtherMedia: true }), "I");
+	// Text-only keeps the T.
+	assert.equal(modalityLetterRun(["text"], { hideTextWhenOtherMedia: true }), "T");
+	// Reasoning is not a media modality; consolidation still applies after it is excluded.
+	assert.equal(modalityLetterRun(["text", "image", "reasoning"], { hideTextWhenOtherMedia: true }), "I");
+	// Default leaves full letters (list rows keep text alongside image).
+	assert.equal(modalityLetterRun(["text", "image"]), "T I");
+});
+
 test("modalityLetterRun honors a renderer and separator", () => {
 	const rendered = modalityLetterRun(["text", "image"], {
 		render: (modality, letter) => `${MODALITY_FG[modality]}(${letter})`,
