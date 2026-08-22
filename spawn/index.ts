@@ -293,6 +293,7 @@ const SPAWN_PROMPT_GUIDELINES = [
 	"Use spawn to delegate isolated work to child agents. They are trusted extensions of you with their own context and the same authority. Only condensed results are returned.",
 	"If the operator requests a known Model Group confidently, pass its exact name as group. If no known/confident group is requested, omit group so the child inherits the parent model/thinking.",
 	`Declare constraints when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
+	`A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.`,
 ];
 
 const SPAWN_CONSTRAINT_REQUIREMENTS = Type.Object(Object.fromEntries(productionConstraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any);
