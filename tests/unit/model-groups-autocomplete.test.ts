@@ -43,6 +43,29 @@ test("#group autocomplete suggests effective live group names and delegates else
 	assert.equal(provider.shouldTriggerFileCompletion([], 0, 0), false);
 });
 
+test("#group autocomplete prepends colored effective modality letters when a colorizer is supplied", async () => {
+	const state = createState();
+	state.modelGroups.groups = [group("research", { models: [{ provider: "google", modelId: "gemini-2.5-pro", thinkingLevel: "high" }] })];
+	// Unordered effective set -> must canonicalize to text-first and drop reasoning.
+	state.modelGroups.groups[0].modalities = { common: [], supported: [], effective: ["reasoning", "image", "text"] };
+	let delegated = 0;
+	const current = {
+		getSuggestions: async () => { delegated++; return { prefix: "", items: [{ value: "delegated" }] }; },
+		applyCompletion: () => "applied",
+		shouldTriggerFileCompletion: () => false,
+	};
+	const provide = createModelGroupAutocompleteProvider(state, (color, text) => `<${color}>${text}</${color}>`)(current as any);
+	const { items } = await provide.getSuggestions(["#res"], 0, 4, {});
+	const description = items[0].description;
+	// Media letters present, canonical order, no reasoning letter.
+	assert.match(description, /<syntaxKeyword>T<\/syntaxKeyword>/);
+	assert.match(description, /<success>I<\/success>/);
+	assert.ok(!/R<\//.test(description), "reasoning excluded");
+	// Muted wrappers around the separator and the appended per-model route details.
+	assert.match(description, /<muted>  <\/muted><muted>google\/gemini-2\.5-pro • high<\/muted>/);
+	assert.equal(delegated, 0);
+});
+
 test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", () => {
 	const state = createState();
 	const providers: any[] = [];

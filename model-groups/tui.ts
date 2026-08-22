@@ -1,4 +1,4 @@
-import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel, type Api } from "@earendil-works/pi-ai";
 import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type TUI } from "@earendil-works/pi-tui";
@@ -14,6 +14,7 @@ import {
 import { MODEL_GROUP_MODALITIES, ModelGroupsPersistenceError, type ModelGroupDef, type ModelGroupModality, type ModelGroupScope, type ModelGroupsAccess, type ModelGroupsBootValidation, type ResolvedModelGroup } from "./types.js";
 import { canonicalizeModelGroupName } from "./names.js";
 import { decodeDisplayLabel, escapeDisplayLabel } from "./display.js";
+import { MODALITY_FG, MODALITY_LETTER, modalityLetterRun as buildModalityLetterRun } from "./modality.js";
 import { constraintEditorRows, presentConstraintDiagnosticRecords, type ConstraintEditorRow } from "./constraints/presentation.js";
 import { productionConstraintRegistry } from "./constraints/registry.js";
 import type { AnyConstraintDescriptor, ErasedConstraintEvaluation } from "./constraints/types.js";
@@ -508,16 +509,6 @@ export function createModelGroupsComponent(
 		};
 	}
 
-	const MODALITY_FG: Record<ModelGroupModality, ThemeColor> = {
-		text: "syntaxKeyword",
-		image: "success",
-		reasoning: "thinkingHigh",
-	};
-	const MODALITY_LETTER: Record<ModelGroupModality, string> = {
-		text: "T",
-		image: "I",
-		reasoning: "R",
-	};
 	// Media modalities editable in the modalities screen. Reasoning is a distinct
 	// capability (per-member thinkingLevel / routing gate) and is not exposed here.
 	const VISIBLE_MODALITIES = MODEL_GROUP_MODALITIES.filter((modality) => modality !== "reasoning") as ModelGroupModality[];
@@ -540,10 +531,10 @@ export function createModelGroupsComponent(
 
 	/** Colored single-letter run for a group's effective media modalities + dimmed padding. Empty set -> "". */
 	function modalityLetterRun(effective: readonly ModelGroupModality[] | null | undefined): string {
-		if (!effective || effective.length === 0) return "";
-		const visible = effective.filter((modality) => modality !== "reasoning");
-		if (visible.length === 0) return "";
-		return visible.map((modality) => theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality])).join(dim(" "));
+		return buildModalityLetterRun(effective, {
+			render: (modality, letter) => theme.fg(MODALITY_FG[modality], letter),
+			separator: dim(" "),
+		});
 	}
 
 	/** Build a modality-tagged description whose dim segments re-assert dim after each colored letter. */
