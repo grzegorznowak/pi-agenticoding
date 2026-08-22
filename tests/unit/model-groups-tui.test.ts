@@ -166,14 +166,45 @@ test("model groups TUI modality editor commits override and Automatic through up
 	press(c, ENTER);
 	assert.equal(calls.length, 1);
 	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image"]);
-	assert.match(rendered(c), /Modalities: override/);
+	assert.match(rendered(c), /MODALITIES/, "toggle stays on the modalities screen");
+	assert.match(rendered(c), /I image  \[on\]/);
+	press(c, ESC);
+	assert.match(rendered(c), /Modalities: override \(text, image\)/);
 	press(c, ENTER);
 	assert.match(rendered(c), /MODALITIES/);
 	selectRenderedLabel(c, "Automatic");
 	press(c, ENTER);
 	assert.equal(calls.length, 2);
 	assert.equal(calls[1].def.constraints?.modalities, undefined);
+	assert.match(rendered(c), /MODALITIES/, "reset also stays on the modalities screen");
+	press(c, ESC);
 	assert.match(rendered(c), /Modalities: automatic/);
+});
+
+test("model groups TUI Space also toggles a modality and stays on screen", () => {
+	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
+	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text"] };
+	const calls: Array<{ scope: string; name: string; def: any }> = [];
+	let groups = [review];
+	const store = {
+		updateGroup: (scope: string, _cwd: string, name: string, def: any) => {
+			calls.push({ scope, name, def: { ...def, constraints: def.constraints ? { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined } });
+			groups = [group(name, { scope: scope as "project", models: def.models, constraints: def.constraints })];
+			groups[0].modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
+		},
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const { c } = component({ groups, store });
+	press(c, ENTER);
+	selectRenderedLabel(c, "Modalities:");
+	press(c, ENTER);
+	assert.match(rendered(c), /MODALITIES/);
+	selectRenderedLabel(c, "I image");
+	press(c, " ");
+	assert.equal(calls.length, 1);
+	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image"]);
+	assert.match(rendered(c), /MODALITIES/, "space toggle stays on the modalities screen");
+	assert.match(rendered(c), /I image  \[on\]/);
 });
 
 test("model groups TUI modality editor preserves state and notifies on updateGroup failure", () => {

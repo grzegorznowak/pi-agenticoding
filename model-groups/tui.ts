@@ -40,6 +40,7 @@ const defaultStore: ModelGroupsStoreOps = { listResolvedModelGroups, createGroup
 
 function isEnter(data: string): boolean { return matchesKey(data, Key.enter) || data === "\n"; }
 function isEsc(data: string): boolean { return matchesKey(data, Key.escape); }
+const isSpace = (data: string) => data === " ";
 function isUp(data: string): boolean { return matchesKey(data, Key.up); }
 function isDown(data: string): boolean { return matchesKey(data, Key.down); }
 function isLeft(data: string): boolean { return matchesKey(data, Key.left); }
@@ -236,18 +237,25 @@ export function createModelGroupsComponent(
 		}
 	}
 
-	function updateDraft(def: ModelGroupDef, afterSuccess: () => void): void {
+	/** Persist the draft, refresh state, and re-resolve the updated group. No navigation. */
+	function persistDraft(def: ModelGroupDef): ResolvedModelGroup | undefined {
 		const group = currentEditGroup();
-		if (!group) return;
+		if (!group) return undefined;
 		try {
 			store.updateGroup(group.scope, access, group.name, def, modelRegistry);
 			refresh();
-			const updated = state.groups.find((candidate) => candidate.name === group.name && candidate.scope === group.scope);
-			if (updated) openEditor(updated);
-			afterSuccess();
+			return state.groups.find((candidate) => candidate.name === group.name && candidate.scope === group.scope);
 		} catch (error) {
 			notifyError(error);
+			return undefined;
 		}
+	}
+
+	function updateDraft(def: ModelGroupDef, afterSuccess: () => void): void {
+		const updated = persistDraft(def);
+		if (!updated) return; // error already notified; do not navigate
+		openEditor(updated);
+		afterSuccess();
 	}
 
 	function availableModels(): Model<Api>[] {
@@ -375,7 +383,18 @@ export function createModelGroupsComponent(
 						: orderedModalities([...base, pressed]);
 					(next.constraints ??= {})[editor.descriptor.key] = toggled;
 				} else return;
-				updateDraft(next, () => { state.screen = "EDITOR"; state.row = modalityRow(); }); return;
+				const updated = persistDraft(next);
+				if (updated) {
+					// Re-bind the draft to the toggled override while staying on this screen.
+					state.editKey = groupKey(updated);
+					state.editName = escapeDisplayLabel(updated.name);
+					setGroupNameInputValue(state.editName);
+					state.editScope = updated.scope;
+					state.editDraft = next;
+					state.activeTextInput = null;
+					syncInputFocus();
+				}
+				return;
 			}
 			case "MODEL_EDIT": {
 				const model = state.editDraft?.models[state.modelEditIndex];
@@ -643,6 +662,7 @@ export function createModelGroupsComponent(
 			}
 			container.addChild(textLine(selectableLine(state.row === index, label)));
 		}
+		container.addChild(textLine(theme.fg("dim", "↑↓ navigate • Enter/Space toggle • Esc close")));
 		return container;
 	}
 
@@ -770,6 +790,7 @@ export function createModelGroupsComponent(
 			else if (activeSelect && (state.screen === "LIST" || state.screen.startsWith("WIZARD_")) && isEnter(data)) activate();
 			else if (isUp(data)) { state.row--; clampRow(); }
 			else if (isDown(data)) { state.row++; clampRow(); }
+			else if (state.screen === "MODALITIES" && isSpace(data)) activate();
 			else if (isLeft(data) || isEsc(data)) goBack();
 			else if (isEnter(data)) activate();
 			syncInputFocus();
