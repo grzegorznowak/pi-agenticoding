@@ -74,3 +74,24 @@ test("registerModelGroupAutocomplete uses ctx.ui.addAutocompleteProvider once", 
 	registerModelGroupAutocomplete(ctx as any, state);
 	assert.equal(providers.length, 1);
 });
+
+test("group autocomplete aligns the route column through a fixed caps width", async () => {
+	const state = createState();
+	state.modelGroups.groups = [
+		group("alpha", { models: [{ provider: "anthropic", modelId: "claude", thinkingLevel: "high" }] }),
+		group("beta", { models: [{ provider: "openai", modelId: "gpt-5" }] }),
+	];
+	// alpha has a wider caps run (T I) than beta (T).
+	state.modelGroups.groups[0].modalities = { common: [], supported: [], effective: ["text", "image"] };
+	state.modelGroups.groups[1].modalities = { common: [], supported: [], effective: ["text"] };
+	const identity = (color: string, text: string) => text;
+	const provide = createModelGroupAutocompleteProvider(state, identity as any)({ getSuggestions: async () => null } as any);
+	const { items } = await provide.getSuggestions(["#"], 0, 1, {});
+	const alpha = items[0].description;
+	const beta = items[1].description;
+	// alpha: "T I" + gap; beta: "T" padded to width 3 + gap -> both routes start at col 5.
+	assert.equal(alpha, "T I  anthropic/claude • high");
+	assert.equal(beta, "T    openai/gpt-5 • inherit");
+	assert.equal(alpha.indexOf("anthropic/claude"), 5);
+	assert.equal(beta.indexOf("openai/gpt-5"), 5);
+});
