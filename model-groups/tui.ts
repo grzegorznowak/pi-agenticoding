@@ -639,7 +639,12 @@ export function createModelGroupsComponent(
 		container.addChild(textLine(sectionBar("Models")));
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
-			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));
+			const found = modelRegistry.find(model.provider, model.modelId) as Model<Api> | undefined;
+			// Per-model capability chip, mirroring the Add-model picker (D2). Unresolved
+			// members have no fact, so they render without a chip.
+			const chip = found ? modalityLetterRun(getModalitiesModelFact(found)) : "";
+			const id = `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`;
+			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), chip ? `${id} ${chip}` : id, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));
 		});
 		const addRow = modelStartRow() + (state.editDraft?.models.length ?? 0);
 		container.addChild(textLine(selectableLine(state.row === addRow, "+ Add model…")));
@@ -670,6 +675,9 @@ export function createModelGroupsComponent(
 			container.addChild(textLine(selectableLine(state.row === index, label)));
 		}
 		container.addChild(textLine(theme.fg("dim", "↑↓ navigate • Enter/Space apply • Esc back")));
+		// Short guidance on limited vs unlimited groups when hand-editing modalities.
+		container.addChild(textLine(theme.fg("dim", "Automatic: the group uses every capability its members support.")));
+		container.addChild(textLine(theme.fg("dim", "Override: the group is limited to exactly the listed capabilities.")));
 		return container;
 	}
 

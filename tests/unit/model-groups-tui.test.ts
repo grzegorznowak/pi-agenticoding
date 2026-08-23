@@ -166,6 +166,33 @@ test("model groups TUI Add-model picker shows capability chips per model", () =>
 	assert.match(stripped, /openai\/gpt-vision\s+T I/);
 });
 
+test("model groups TUI editor rows show per-model capability chips and modalities screen explains limited vs unlimited", () => {
+	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-text" }, { provider: "openai", modelId: "gpt-vision" }] });
+	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
+	const models = [
+		{ provider: "openai", id: "gpt-text", reasoning: false, input: ["text"] },
+		{ provider: "openai", id: "gpt-vision", reasoning: false, input: ["text", "image"] },
+		{ provider: "openai", id: "gpt-missing", reasoning: true },
+	];
+	const { c } = component({ groups: [review], modelRegistry: catalog(models) });
+	press(c, ENTER);
+	const editor = stripAnsi(rendered(c));
+	// Per-model capability chips mirror the Add-model picker; unresolved members carry none.
+	assert.match(editor, /openai\/gpt-text\s+T\s+\(available/);
+	assert.match(editor, /openai\/gpt-vision\s+T I\s+\(available/);
+	assert.doesNotMatch(editor, /gpt-missing/);
+	// Hand-editing modalities surfaces short guidance for limited vs unlimited groups.
+	selectRenderedLabel(c, "Modalities:");
+	press(c, ENTER);
+	const modalities = stripAnsi(rendered(c));
+	assert.match(modalities, /Automatic: the group uses every capability its members support/);
+	assert.match(modalities, /Override: the group is limited to exactly the listed capabilities/);
+	selectRenderedLabel(c, "I image");
+	press(c, ENTER);
+	const afterOverride = stripAnsi(rendered(c));
+	assert.match(afterOverride, /Override: the group is limited to exactly the listed capabilities/);
+});
+
 test("model groups TUI modality editor commits override and Automatic through updateGroup", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
 	// Automatic groups open with their union capability set active; un-toggling a
