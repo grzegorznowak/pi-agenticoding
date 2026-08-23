@@ -11,11 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Model Groups manager** — added `/model-groups` with durable project/global JSON persistence, boot validation, CRUD TUI flows, per-model thinking levels, and operator notifications for invalid configs or unavailable model refs.
 - **Model Groups spawn routing** — `spawn` can route children through an optional exact Model Group name with names-only prompt guidance, `#group` autocomplete sugar that shows model/thinking details, authenticated random entry selection, thinking inheritance/clamping, and routed/fallback result identity lines.
+- **Capability-aware spawn routing** — a Model Group now carries a capability set (currently input modalities: `text` and `image`) derived from its configured, authenticated members, with the option to narrow it via an explicit override capped at the member union. A `spawn` call can declare `constraints` the delegated task needs; the router checks the group and the exact selected model and fails before any child would be created when the requirement can't be met. The main-session prompt lists each group's capabilities.
+- **Pluggable capability kernel** — added a small constraint system so each capability is one descriptor (read fact → aggregate → reconcile override → satisfy check → present). Modalities are the first, and only, production capability; a synthetic test-only descriptor exercises the full extension point so a future capability (e.g. min context window) needs no edits to config load, spawn routing, or UI render.
 
 ### Changed
 
 - Improved Model Groups editing with a searchable complete-result, ten-visible-row add-model picker and a prompt-free inline group-name editor.
 - Migrated child spawning to Pi's public selected-model and child-owned runtime APIs, added `max` thinking support, and disposed every created child session exactly once across completion, failure, abort, and reset races. Pi 0.82.0 and Node 22.19.0 are now the documented minimums; parent-only transient provider/auth state fails explicitly without model fallback.
+- **Model Group editing** — the editor now shows per-member capability chips (T/I) and lets users narrow the automatically derived modality set with an explicit override; group capability summaries also appear in `#group` autocomplete.
 
 ### Fixed
 
