@@ -675,7 +675,9 @@ export function createModelGroupsComponent(
 			if (row.kind !== "toggle") continue;
 			const modality = row.value as ModelGroupModality;
 			const letter = theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality]);
-			const label = `${letter}${dim(" " + row.label)}${dim(row.active ? "  [on]" : "  [off]")}`;
+			// Editable rows advertise the toggle action so [on]/[off] reads as live
+			// state, not a fixed fact — unlike the [required] text base row.
+			const label = `${letter}${dim(" " + row.label)}${dim(row.active ? "  [on]" : "  [off]")}${dim(" — Enter/Space toggles")}`;
 			container.addChild(textLine(selectableLine(state.row === index, label)));
 		}
 		if (rows.length === 0) container.addChild(textLine(theme.fg("dim", "  No optional media capabilities available.")));

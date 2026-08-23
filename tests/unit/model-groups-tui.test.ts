@@ -205,6 +205,9 @@ test("model groups TUI editor rows show per-model capability chips and modalitie
 	assert.doesNotMatch(modalities, /Automatic \(/);
 	assert.doesNotMatch(modalities, /required base/);
 	assert.match(modalities, /↑↓ navigate • Enter\/Space toggle • Esc back/);
+	// Editable rows advertise the toggle action; the required text row does not.
+	assert.match(modalities, /I image  \[on\] — Enter\/Space toggles/);
+	assert.doesNotMatch(modalities, /text  \[required\].*Enter\/Space toggles/);
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	const afterOverride = stripAnsi(rendered(c));
@@ -325,6 +328,7 @@ test("model groups TUI text-only modalities screen is inert and states Automatic
 	assert.match(screen, /Automatic — using every capability its members support/);
 	assert.match(screen, /Esc back/);
 	assert.doesNotMatch(screen, /Enter\/Space toggle/);
+	assert.doesNotMatch(screen, /Enter\/Space toggles/);
 	assert.doesNotMatch(screen, /→/);
 	// Enter/Space on the inert row must not persist anything.
 	press(c, ENTER, " ", ENTER);
