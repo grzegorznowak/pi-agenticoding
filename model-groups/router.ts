@@ -19,12 +19,54 @@ export interface SpawnModelRoute {
 	groupCapabilityCeilings?: readonly string[];
 }
 export type SpawnRouteErrorReason = "empty" | "no-usable-models" | "missing-modality" | "constraint-unsatisfied";
+export interface SpawnRouteErrorDetails {
+	missingModalities?: ModelGroupModality[];
+	missingFromGroup?: ModelGroupModality[];
+	missingFromModel?: ModelGroupModality[];
+	constraintUnsatisfied?: readonly ConstraintViolation[];
+	provider?: string;
+	modelId?: string;
+	knownGroup?: boolean;
+}
+
+function describeRouteError(group: string, reason: SpawnRouteErrorReason, details: SpawnRouteErrorDetails, missingModalities: ModelGroupModality[], missingFromGroup: ModelGroupModality[], missingFromModel: ModelGroupModality[]): string {
+	if (reason === "empty") return `Model Group '${group}' has no model entries.`;
+	if (reason === "no-usable-models") return `Model Group '${group}' has no configured/authenticated usable models.`;
+	if (reason === "missing-modality") {
+		if (details.knownGroup) {
+			return `Model Group '${group}' cannot satisfy required modalities: ${missingModalities.join(", ")}. Effective group modalities missing: ${missingFromGroup.join(", ") || "none"}. Routed model '${details.provider}/${details.modelId}' missing: ${missingFromModel.join(", ") || "none"}.`;
+		}
+		return `Spawn model '${details.provider}/${details.modelId}' cannot satisfy required modalities: ${missingModalities.join(", ")}.`;
+	}
+	return `Spawn route '${group}' cannot satisfy constraint requirements.`;
+}
+
+/**
+ * Unusable/unsatisfiable spawn route. Carries structured failure detail so
+ * callers can branch on reason without parsing the message; message strings
+ * are stable and asserted by tests.
+ */
 export class SpawnRouteError extends Error {
-	readonly kind = "unusable-group" as const; readonly group: string; readonly reason: SpawnRouteErrorReason; readonly missingModalities: ModelGroupModality[]; readonly missingFromGroup: ModelGroupModality[]; readonly missingFromModel: ModelGroupModality[]; readonly constraintUnsatisfied?: readonly ConstraintViolation[];
-	constructor(group: string, reason: SpawnRouteErrorReason, details: { missingModalities?: ModelGroupModality[]; missingFromGroup?: ModelGroupModality[]; missingFromModel?: ModelGroupModality[]; constraintUnsatisfied?: readonly ConstraintViolation[]; provider?: string; modelId?: string; knownGroup?: boolean } = {}) {
-		const missingModalities = details.missingModalities ?? [], missingFromGroup = details.missingFromGroup ?? [], missingFromModel = details.missingFromModel ?? [];
-		const message = reason === "empty" ? `Model Group '${group}' has no model entries.` : reason === "no-usable-models" ? `Model Group '${group}' has no configured/authenticated usable models.` : reason === "missing-modality" ? details.knownGroup ? `Model Group '${group}' cannot satisfy required modalities: ${missingModalities.join(", ")}. Effective group modalities missing: ${missingFromGroup.join(", ") || "none"}. Routed model '${details.provider}/${details.modelId}' missing: ${missingFromModel.join(", ") || "none"}.` : `Spawn model '${details.provider}/${details.modelId}' cannot satisfy required modalities: ${missingModalities.join(", ")}.` : `Spawn route '${group}' cannot satisfy constraint requirements.`;
-		super(message); this.name = "SpawnRouteError"; this.group = group; this.reason = reason; this.missingModalities = missingModalities; this.missingFromGroup = missingFromGroup; this.missingFromModel = missingFromModel; if (details.constraintUnsatisfied) this.constraintUnsatisfied = details.constraintUnsatisfied;
+	readonly kind = "unusable-group" as const;
+	readonly group: string;
+	readonly reason: SpawnRouteErrorReason;
+	readonly missingModalities: ModelGroupModality[];
+	readonly missingFromGroup: ModelGroupModality[];
+	readonly missingFromModel: ModelGroupModality[];
+	readonly constraintUnsatisfied?: readonly ConstraintViolation[];
+
+	constructor(group: string, reason: SpawnRouteErrorReason, details: SpawnRouteErrorDetails = {}) {
+		const missingModalities = details.missingModalities ?? [];
+		const missingFromGroup = details.missingFromGroup ?? [];
+		const missingFromModel = details.missingFromModel ?? [];
+		super(describeRouteError(group, reason, details, missingModalities, missingFromGroup, missingFromModel));
+		this.name = "SpawnRouteError";
+		this.group = group;
+		this.reason = reason;
+		this.missingModalities = missingModalities;
+		this.missingFromGroup = missingFromGroup;
+		this.missingFromModel = missingFromModel;
+		if (details.constraintUnsatisfied) this.constraintUnsatisfied = details.constraintUnsatisfied;
 	}
 }
 function parentProvider(model: Model<Api>): string { return typeof model.provider === "string" ? model.provider : ""; }
