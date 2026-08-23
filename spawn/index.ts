@@ -432,15 +432,11 @@ export function executeSpawn(
 	const authorityNote = state.readonlyEnabled
 		? READONLY_CHILD_AUTHORITY_NOTE
 		: "You have the same authority as the parent.";
-	// Level-1 capability orientation: when a model group carries an explicit
-	// modality override, the child is told the group's allowed scope so it can
-	// report a capability mismatch instead of silently working around it (e.g.
-	// reading an image when the group has image disabled).
-	const imageDisabled =
-		route.modalityCeiling !== undefined && !route.modalityCeiling.includes("image");
+	// Constraint descriptors own child-facing orientation for explicit group
+	// ceilings; spawn only presents the generic notes supplied by the route.
 	const capabilityNotice =
-		route.status === "routed" && imageDisabled
-			? `\n\n## Model Group capability ceiling\nImage input is disabled for this group. If the task requires reading or inspecting an image, do not work around it with OCR, third-party tools, or an alternate route; report the capability mismatch to the parent instead.\n\n`
+		route.status === "routed" && route.groupCapabilityCeilings?.length
+			? `\n\n## Model Group capability ceiling\n${route.groupCapabilityCeilings.join("\n")}\n\n`
 			: "";
 	const fullPrompt =
 		`You are a focused child agent spawned by a parent agent. ` +

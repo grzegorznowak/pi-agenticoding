@@ -51,7 +51,7 @@ function isDeleteChord(data: string): boolean { return data === "D" || matchesKe
 
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
 	const constraints = def.constraints === undefined ? undefined : { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) };
-	return { models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }) };
+	return { ...def, models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }) };
 }
 
 function groupKey(group: Pick<ResolvedModelGroup, "scope" | "name">): string {

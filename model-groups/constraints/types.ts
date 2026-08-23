@@ -60,6 +60,8 @@ export interface ConstraintDescriptor<K extends string, Fact, Aggregate, Overrid
 		prompt(evaluation: ConstraintEvaluation<Aggregate, Effective>): string;
 		diagnostic(diagnostic: ConstraintDiagnostic): string;
 		violation(violation: ConstraintViolation): string;
+		/** Optional child-facing note for an explicit group capability ceiling. */
+		ceiling?(evaluation: ConstraintEvaluation<Aggregate, Effective>): string | undefined;
 	};
 }
 

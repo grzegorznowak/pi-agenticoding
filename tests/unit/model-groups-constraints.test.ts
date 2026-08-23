@@ -5,7 +5,7 @@ import { constraintEditorRows, presentConstraintPrompt } from "../../model-group
 import { modalitiesConstraint } from "../../model-groups/constraints/modalities.js";
 import { createConstraintRegistry, productionConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import type { AnyConstraintDescriptor } from "../../model-groups/constraints/types.js";
-import { testMinContext } from "./model-groups-constraints-fixture.js";
+import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
 
 const rich = { provider: "p", id: "rich", input: ["text", "image"], reasoning: true, contextWindow: 100 } as any;
 const text = { provider: "p", id: "text", input: ["text"], reasoning: false, contextWindow: 10 } as any;
@@ -49,6 +49,16 @@ test("text is always present in effective even when the override drops it", () =
 	assert.deepEqual(onlyImage.effective, ["text", "image"]);
 });
 
+test("fully stale non-empty modality overrides fall back to the union while explicit empty remains text-only", () => {
+	const registry = createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor]);
+	const visionWithoutReasoning = { provider: "p", id: "vision", input: ["text", "image"], reasoning: false } as any;
+	const resolved = resolution([{ provider: "p", modelId: "vision", model: visionWithoutReasoning }]);
+	const stale = evaluateConstraints(resolved, { modalities: ["reasoning"] }, registry)[0];
+	assert.deepEqual(stale.effective, ["text", "image"]);
+	assert.deepEqual(stale.diagnostics, [{ key: "modalities", code: "unsupported-override", details: ["reasoning"] }]);
+	assert.deepEqual(evaluateConstraints(resolved, { modalities: [] }, registry)[0].effective, ["text"]);
+});
+
 test("injected scalar traverses resolution, aggregation, persistence, reconciliation, and production isolation", () => {
 	const injected = createConstraintRegistry([testMinContext as AnyConstraintDescriptor]);
 	const resolved = resolution([{ provider: "p", modelId: "rich", model: rich }, { provider: "p", modelId: "text", model: text }]);
@@ -67,6 +77,23 @@ test("injected scalar traverses resolution, aggregation, persistence, reconcilia
 	assert.deepEqual(unsupported.diagnostics, [{ key: "testMinContext", code: "unsupported-override", details: 101 }]);
 	assert.deepEqual(productionConstraintRegistry.descriptors.map((descriptor) => descriptor.key), ["modalities"]);
 	assert.equal(productionConstraintRegistry.get("testMinContext"), undefined);
+	assert.equal(productionConstraintRegistry.get("testMaxBudget"), undefined);
+});
+
+test("injected lower-is-better budget rejects an override above the supported cap", () => {
+	const injected = createConstraintRegistry([testMaxBudget as AnyConstraintDescriptor]);
+	const resolved = resolution([
+		{ provider: "p", modelId: "cheap", model: { ...text, cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 } } },
+		{ provider: "p", modelId: "costly", model: { ...rich, cost: { input: 1, output: 5, cacheRead: 1, cacheWrite: 1 } } },
+	]);
+	const automatic = evaluateConstraints(resolved, {}, injected)[0];
+	assert.deepEqual(automatic.aggregate, { automatic: 5, supported: 1 });
+	assert.equal(automatic.effective, 5);
+	const capped = evaluateConstraints(resolved, { testMaxBudget: 1 }, injected)[0];
+	assert.equal(capped.effective, 1);
+	const unsupported = evaluateConstraints(resolved, { testMaxBudget: 2 }, injected)[0];
+	assert.equal(unsupported.effective, null);
+	assert.deepEqual(unsupported.diagnostics, [{ key: "testMaxBudget", code: "unsupported-override", details: 2 }]);
 });
 
 test("generic modality prompt presentation preserves effective and empty labels", () => {

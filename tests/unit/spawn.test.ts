@@ -311,6 +311,31 @@ test("spawn injects a capability ceiling notice for a routed group with image di
 	assert.match(seenPrompt, /report the capability mismatch/i);
 });
 
+test("spawn injects descriptor-provided scalar capability ceilings", async () => {
+	const pi = createTestPI();
+	pi.setActiveTools(["read", "bash", "spawn"]);
+	const state = createState();
+	const small = { provider: "openai", id: "small", input: ["text"], reasoning: false, contextWindow: 10 };
+	const large = { provider: "openai", id: "large", input: ["text"], reasoning: false, contextWindow: 100 };
+	state.modelGroups.groups = [{
+		name: "context-capped", scope: "project", sourcePath: "<project>",
+		models: [{ provider: "openai", modelId: "small" }, { provider: "openai", modelId: "large" }],
+		constraints: { testMinContext: 50 },
+		modalities: { common: ["text"], supported: ["text"], effective: ["text"] },
+	} as any];
+	let seenPrompt = "";
+	registerSpawnTool(pi as any, state, async () => ({
+		session: mockSessionFactory({ prompt: async (prompt?: string) => { seenPrompt = prompt ?? ""; } }),
+		extensionsResult: undefined as any,
+	}), createConstraintRegistry([testMinContext]));
+	await pi.tools.get("spawn").execute("spawn-context-cap", { prompt: "Do the task", group: "context-capped" }, undefined, undefined, {
+		model: { provider: "openai", id: "parent", contextWindow: 100 }, cwd: "/tmp",
+		modelRegistry: { find: (_provider: string, id: string) => id === "small" ? small : id === "large" ? large : undefined, hasConfiguredAuth: () => true },
+	} as any);
+	assert.match(seenPrompt, /## Model Group capability ceiling/i);
+	assert.match(seenPrompt, /minimum context is capped at 50 tokens/i);
+});
+
 test("spawn execute builds prompt with notebook pages and task", async () => {
 	const pi = createTestPI();
 	pi.setActiveTools(["read", "bash", "spawn"]);

@@ -46,7 +46,10 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		// D1 route pre-selection picks a capable member). An explicit override stays
 		// an authoritative subtractive ceiling: only members' supported modalities
 		// may be listed, so the union is never exceeded.
-		const base = override === undefined ? aggregate.supported : ordered(override.filter((modality) => aggregate.supported.includes(modality)));
+		const filteredOverride = override === undefined ? undefined : ordered(override.filter((modality) => aggregate.supported.includes(modality)));
+		// An explicit [] is an intentional text-only ceiling. A non-empty override
+		// made entirely stale, however, must fall back to the derived union.
+		const base = override === undefined ? aggregate.supported : override.length === 0 ? [] : filteredOverride!.length ? filteredOverride! : aggregate.supported;
 		// Text is the always-present base capability (image/reasoning both imply it);
 		// keep it in the effective set whenever the group supports it, regardless of override.
 		const effective = aggregate.supported.includes("text") ? ordered(["text", ...base.filter((modality) => modality !== "text")]) : base;
@@ -75,8 +78,11 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		prompt: (evaluation) => evaluation.effective.join(", "),
 		diagnostic: (diagnostic) => diagnostic.code === "empty-common"
 			? "⚠ no common modalities"
-			: `⚠ stale modality override: ${((diagnostic.details as ModelGroupModality[] | undefined) ?? []).join(", ")}`, 
+			: `⚠ stale modality override: ${((diagnostic.details as ModelGroupModality[] | undefined) ?? []).join(", ")}`,
 		violation: (violation: ConstraintViolation) => violation.key,
+		ceiling: (evaluation) => evaluation.aggregate.supported.includes("image") && !evaluation.effective.includes("image")
+			? "Image input is disabled for this group. If the task requires reading or inspecting an image, do not work around it with OCR, third-party tools, or an alternate route; report the capability mismatch to the parent instead."
+			: undefined,
 	},
 };
 

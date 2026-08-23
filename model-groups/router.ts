@@ -3,8 +3,7 @@ import { clampThinkingLevel, type Api, type Model, type ModelThinkingLevel } fro
 import { evaluateConstraint, evaluateGroupRequirement, evaluateModelRequirement } from "./constraints/engine.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "./constraints/registry.js";
 import { resolveConstraintMembers } from "./constraints/resolution.js";
-import { getModalitiesModelFact } from "./constraints/modalities.js";
-import type { ConstraintViolation } from "./constraints/types.js";
+import type { AnyConstraintDescriptor, ConstraintViolation } from "./constraints/types.js";
 import { type ModelGroupModality, type ResolvedModelGroup } from "./types.js";
 
 export type SpawnRouteStatus = "inherited" | "routed" | "unknown-fallback";
@@ -16,13 +15,8 @@ export interface SpawnModelRoute {
 	provider: string;
 	modelId: string;
 	thinking: ModelThinkingLevel;
-	/**
-	 * For a routed group with an explicit modality override, the group's
-	 * effective capability set. Undefined for inherited/unknown-fallback routes
-	 * and for groups without an explicit override. Exposed so spawn can orient
-	 * the child to the group's declared capability ceiling (Level-1 advisory).
-	 */
-	modalityCeiling?: readonly ModelGroupModality[];
+	/** Child-facing notes produced by constraint descriptors for explicit group ceilings. */
+	groupCapabilityCeilings?: readonly string[];
 }
 export type SpawnRouteErrorReason = "empty" | "no-usable-models" | "missing-modality" | "constraint-unsatisfied";
 export class SpawnRouteError extends Error {
@@ -41,28 +35,32 @@ export function getEffectiveModelGroupNames(groups: ResolvedModelGroup[]): strin
 /** Route selection remains auth-aware; constraint evaluation receives its explicit member snapshot. */
 export function resolveSpawnModelRoute(options: { requestedGroup?: string; constraints?: Readonly<Record<string, unknown>>; groups: ResolvedModelGroup[]; parentModel: Model<Api>; parentThinking: ModelThinkingLevel; modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">; constraintRegistry?: ConstraintRegistry; rng?: () => number; routeCursor?: Map<string, number> }): SpawnModelRoute {
 	const requestedGroup = options.requestedGroup?.trim(); const requirements = options.constraints ?? {}; const registry = options.constraintRegistry ?? productionConstraintRegistry;
-	const inherited = (status: "inherited" | "unknown-fallback"): SpawnModelRoute => ({ status, ...(status === "unknown-fallback" && requestedGroup ? { requestedGroup } : {}), model: options.parentModel, provider: parentProvider(options.parentModel), modelId: options.parentModel.id, thinking: options.parentThinking });
-	let route: SpawnModelRoute; let group: ResolvedModelGroup | undefined;
-	if (!requestedGroup) route = inherited("inherited"); else { group = effectiveGroupMap(options.groups).get(requestedGroup); if (!group) route = inherited("unknown-fallback"); else { if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty"); const usable = group.models.map((entry) => { const model = options.modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined; return model && options.modelRegistry.hasConfiguredAuth(model) ? { entry, model } : undefined; }).filter((entry): entry is { entry: ResolvedModelGroup["models"][number]; model: Model<Api> } => Boolean(entry)); if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models"); const rawModal = requirements.modalities; const modalityRequirement = rawModal === undefined ? [] : Array.isArray(rawModal) ? rawModal as ModelGroupModality[] : (() => { const d = registry.get("modalities"); if (!d) return []; const dec = d.requirement.decode(rawModal, "constraints.modalities"); return dec.ok ? dec.value as ModelGroupModality[] : []; })(); const capable = modalityRequirement.length ? usable.filter(({ model }) => modalityRequirement.every((m) => getModalitiesModelFact(model).includes(m))) : usable; const pool = capable.length ? capable : usable; let selected; if (options.routeCursor && modalityRequirement.length && capable.length) { const index = options.routeCursor.get(group.name) ?? 0; options.routeCursor.set(group.name, (index + 1) % pool.length); selected = pool[index % pool.length]; } else { selected = pool[Math.min(pool.length - 1, Math.max(0, Math.floor((options.rng ?? Math.random)() * pool.length)))]; } route = { status: "routed", requestedGroup, groupName: group.name, model: selected.model, provider: selected.entry.provider, modelId: selected.entry.modelId, thinking: clampThinkingLevel(selected.model, selected.entry.thinkingLevel ?? options.parentThinking) };
-				// Level-1 capability orientation: an explicit modality override is the
-				// group's declared capability ceiling. Carry it on the route regardless
-				// of whether the caller declared a requirement, so spawn can orient the
-				// child to the group's allowed scope.
-				if (group.constraints?.modalities !== undefined) {
-					route = { ...route, modalityCeiling: [...(group.modalities?.effective ?? [])] };
-				}
-			 } }
-	if (!Object.keys(requirements).length) return route;
-	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };
-	const violations: ConstraintViolation[] = [];
-	for (const [key, rawRequirement] of Object.entries(requirements)) {
+	let declaredRequirements: readonly { descriptor: AnyConstraintDescriptor; requirement: unknown }[] | undefined;
+	const getDeclaredRequirements = () => declaredRequirements ??= Object.entries(requirements).map(([key, rawRequirement]) => {
 		const descriptor = registry.get(key);
 		if (!descriptor) throw new Error(`Unknown spawn constraint requirement '${key}'.`);
 		const decoded = Array.isArray(rawRequirement) ? { ok: true as const, value: rawRequirement } : descriptor.requirement.decode(rawRequirement, `constraints.${key}`);
 		if (!decoded.ok) throw new Error(decoded.message);
-		const requirement = decoded.value;
+		return { descriptor, requirement: decoded.value };
+	});
+	const inherited = (status: "inherited" | "unknown-fallback"): SpawnModelRoute => ({ status, ...(status === "unknown-fallback" && requestedGroup ? { requestedGroup } : {}), model: options.parentModel, provider: parentProvider(options.parentModel), modelId: options.parentModel.id, thinking: options.parentThinking });
+	let route: SpawnModelRoute; let group: ResolvedModelGroup | undefined;
+	if (!requestedGroup) route = inherited("inherited"); else { group = effectiveGroupMap(options.groups).get(requestedGroup); if (!group) route = inherited("unknown-fallback"); else { if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty"); const usable = group.models.map((entry) => { const model = options.modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined; return model && options.modelRegistry.hasConfiguredAuth(model) ? { entry, model } : undefined; }).filter((entry): entry is { entry: ResolvedModelGroup["models"][number]; model: Model<Api> } => Boolean(entry)); if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models"); const declared = getDeclaredRequirements(); const capable = declared.length ? usable.filter(({ model }) => declared.every(({ descriptor, requirement }) => descriptor.modelSatisfies({ fact: descriptor.modelFact(model), requirement }).satisfied)) : usable; const pool = capable.length ? capable : usable; let selected; if (options.routeCursor && declared.length && capable.length) { const index = options.routeCursor.get(group.name) ?? 0; options.routeCursor.set(group.name, (index + 1) % pool.length); selected = pool[index % pool.length]; } else { selected = pool[Math.min(pool.length - 1, Math.max(0, Math.floor((options.rng ?? Math.random)() * pool.length)))]; } route = { status: "routed", requestedGroup, groupName: group.name, model: selected.model, provider: selected.entry.provider, modelId: selected.entry.modelId, thinking: clampThinkingLevel(selected.model, selected.entry.thinkingLevel ?? options.parentThinking) };
+			} }
+	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };
+	if (group && route.status === "routed") {
+		const groupCapabilityCeilings = registry.descriptors.flatMap((descriptor) => {
+			if (group.constraints?.[descriptor.key] === undefined || !descriptor.present.ceiling) return [];
+			const note = descriptor.present.ceiling(evaluateConstraint(descriptor, resolution, group.constraints[descriptor.key]));
+			return note ? [note] : [];
+		});
+		if (groupCapabilityCeilings.length) route = { ...route, groupCapabilityCeilings };
+	}
+	if (!Object.keys(requirements).length) return route;
+	const violations: ConstraintViolation[] = [];
+	for (const { descriptor, requirement } of getDeclaredRequirements()) {
 		if (group) {
-			const override = group.constraints?.[key];
+			const override = group.constraints?.[descriptor.key];
 			const evaluation = evaluateConstraint(descriptor, resolution, override);
 			const violation = evaluateGroupRequirement(descriptor, evaluation, requirement);
 			if (violation) violations.push(violation);

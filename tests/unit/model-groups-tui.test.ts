@@ -218,6 +218,7 @@ test("model groups TUI editor rows show per-model capability chips and modalitie
 
 test("model groups TUI modality editor commits override and Automatic through updateGroup", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
+	(review as any).opaqueTopLevel = { preserve: true };
 	// Automatic groups open with their union capability set active; un-toggling a
 	// supported capability writes a subtractive override excluding it.
 	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
@@ -246,6 +247,7 @@ test("model groups TUI modality editor commits override and Automatic through up
 	press(c, ENTER);
 	assert.equal(calls.length, 1);
 	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "reasoning"]);
+	assert.deepEqual(calls[0].def.opaqueTopLevel, { preserve: true }, "TUI edits retain opaque top-level group keys");
 	assert.match(rendered(c), /Modalities/, "toggle stays on the modalities screen");
 	assert.match(rendered(c), /I image  \[off\]/);
 	assert.match(rendered(c), /Override — media limited to text/);

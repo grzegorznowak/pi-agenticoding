@@ -309,8 +309,14 @@ test("store-level validation derives empty-common and stale-override flags and c
 	assert.equal(summary.staleModalityOverrideCount, 1);
 }));
 
-test("create and update reject unsupported modality override before writing", () => withTemp(({ cwd }) => {
+test("low-level save permits shape-valid overrides while CRUD rejects union-cap-invalid overrides", () => withTemp(({ cwd }) => {
 	const a = access(cwd);
+	// The low-level persistence boundary only validates v2 shape. It deliberately
+	// persists this image override even though claude's union has text only.
+	saveModelGroups("project", a, { version: 2, groups: { persistenceOnly: { models: [{ provider: "anthropic", modelId: "claude" }], constraints: { modalities: ["image"] } } } });
+	assert.deepEqual(read("project", cwd).groups.persistenceOnly.constraints.modalities, ["image"]);
+	// CRUD owns the union-cap invariant and must reject the same invalid shape
+	// before any write.
 	// claude supports only text, so an override of image must be rejected by the CRUD gate.
 	let writes = 0;
 	__setModelGroupsFsForTests({ writeFileSync: (_p?: unknown, _d?: unknown, ..._r: unknown[]) => { writes++; fs.writeFileSync(_p as any, _d as any, ...(_r as any)); } });
@@ -373,6 +379,19 @@ test("legacy modalityOverride is opaque and not interpreted", () => withTemp(({ 
 	const loaded = loadModelGroups(access(cwd));
 	assert.equal(loaded.configs.project.groups.legacy.constraints, undefined);
 	assert.equal(Object.hasOwn(loaded.configs.project.groups.legacy, "modalityOverride"), true);
+	assert.equal(fs.readFileSync(sourcePath, "utf8"), v1Bytes);
+	saveModelGroups("project", access(cwd), loaded.configs.project);
+	assert.equal(Object.hasOwn(read("project", cwd).groups.legacy, "modalityOverride"), false);
+}));
+
+test("malformed legacy modalityOverride loads opaquely and is dropped on a v2 write", () => withTemp(({ cwd }) => {
+	const sourcePath = modelGroupsPath("project", cwd);
+	const v1Bytes = JSON.stringify({ version: 1, groups: { legacy: { models: [], modalityOverride: "not-an-array" } } }, null, 2) + "\n";
+	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+	fs.writeFileSync(sourcePath, v1Bytes, "utf8");
+	const loaded = loadModelGroups(access(cwd));
+	assert.equal(loaded.issues.length, 0);
+	assert.equal((loaded.configs.project.groups.legacy as any).modalityOverride, "not-an-array");
 	assert.equal(fs.readFileSync(sourcePath, "utf8"), v1Bytes);
 	saveModelGroups("project", access(cwd), loaded.configs.project);
 	assert.equal(Object.hasOwn(read("project", cwd).groups.legacy, "modalityOverride"), false);

@@ -4,7 +4,7 @@ import { getEffectiveModelGroupNames, resolveSpawnModelRoute, SpawnRouteError } 
 import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
 import type { ResolvedModelGroup } from "../../model-groups/types.js";
 import { group } from "./model-groups-helpers.js";
-import { testMinContext } from "./model-groups-constraints-fixture.js";
+import { testMaxBudget, testMinContext } from "./model-groups-constraints-fixture.js";
 
 function model(provider: string, id: string, overrides: Record<string, unknown> = {}): any {
 	return { provider, id, reasoning: true, input: ["text"], ...overrides };
@@ -66,7 +66,7 @@ test("automatic mixed groups default effective to the union so a capability rout
 	assert.equal(route.status, "routed");
 	assert.equal(route.modelId, "image");
 	// Automatic groups carry no ceiling.
-	assert.equal(route.modalityCeiling, undefined);
+	assert.equal(route.groupCapabilityCeilings, undefined);
 	// The union never invents capabilities no member has: a reasoning requirement on
 	// members that all lack reasoning still rejects with the group miss.
 	const textNr = model("p", "text-nr", { reasoning: false });
@@ -114,6 +114,23 @@ test("injected scalar requirements use generic violations, not modality arrays",
 	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "small", constraints: { testMinContext: 20 }, groups: [group("small", { models: [{ provider: "p", modelId: "small" }] })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, small]), constraintRegistry: createConstraintRegistry([testMinContext]) }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "constraint-unsatisfied" && error.constraintUnsatisfied?.length === 2 && error.missingModalities.length === 0 && error.missingFromGroup.length === 0 && error.missingFromModel.length === 0);
 });
 
+test("generic scalar requirements narrow mixed groups in both comparison directions", () => {
+	const parent = model("p", "parent", { contextWindow: 100, cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 } });
+	const smallCheap = model("p", "small-cheap", { contextWindow: 10, cost: { input: 1, output: 1, cacheRead: 1, cacheWrite: 1 } });
+	const largeCostly = model("p", "large-costly", { contextWindow: 100, cost: { input: 1, output: 5, cacheRead: 1, cacheWrite: 1 } });
+	const reg = registry([parent, smallCheap, largeCostly]);
+	const injected = createConstraintRegistry([testMinContext, testMaxBudget]);
+	const minGroup = group("min", { models: [{ provider: "p", modelId: "small-cheap" }, { provider: "p", modelId: "large-costly" }], constraints: { testMinContext: 50 } });
+	const minRoute = resolveSpawnModelRoute({ requestedGroup: "min", constraints: { testMinContext: 50 }, groups: [minGroup], parentModel: parent, parentThinking: "low", modelRegistry: reg, constraintRegistry: injected, rng: () => 0 });
+	assert.equal(minRoute.modelId, "large-costly", "higher-is-better requirements select the >= capable member");
+	assert.deepEqual(minRoute.groupCapabilityCeilings, ["Minimum context is capped at 50 tokens for this group."]);
+
+	const budgetGroup = group("budget", { models: [{ provider: "p", modelId: "large-costly" }, { provider: "p", modelId: "small-cheap" }], constraints: { testMaxBudget: 1 } });
+	const budgetRoute = resolveSpawnModelRoute({ requestedGroup: "budget", constraints: { testMaxBudget: 2 }, groups: [budgetGroup], parentModel: parent, parentThinking: "low", modelRegistry: reg, constraintRegistry: injected, rng: () => 0 });
+	assert.equal(budgetRoute.modelId, "small-cheap", "lower-is-better requirements select the <= capable member");
+	assert.deepEqual(budgetRoute.groupCapabilityCeilings, ["Maximum output budget is capped at 1 credits for this group."]);
+});
+
 test("plain inherited route honors requiredModalities with empty-array no-op", () => {
 	const rich = model("p", "rich-parent", { input: ["text", "image"] });
 	const text = model("p", "text-parent", { input: ["text"] });
@@ -135,7 +152,7 @@ test("explicit group override carries a modality ceiling even when caller declar
 	g.modalities.effective = ["text", "reasoning"];
 	const route = resolveSpawnModelRoute({ requestedGroup: "posed", groups: [g], parentModel: parent, parentThinking: "medium", modelRegistry: registry([parent, vision]) });
 	assert.equal(route.status, "routed");
-	assert.deepEqual(route.modalityCeiling, ["text", "reasoning"]);
+	assert.deepEqual(route.groupCapabilityCeilings, ["Image input is disabled for this group. If the task requires reading or inspecting an image, do not work around it with OCR, third-party tools, or an alternate route; report the capability mismatch to the parent instead."]);
 });
 
 test("groups without an explicit override get no modality ceiling", () => {
@@ -145,7 +162,7 @@ test("groups without an explicit override get no modality ceiling", () => {
 	g.modalities.effective = ["text", "image", "reasoning"];
 	const route = resolveSpawnModelRoute({ requestedGroup: "openbox", groups: [g], parentModel: parent, parentThinking: "medium", modelRegistry: registry([parent, vision]) });
 	assert.equal(route.status, "routed");
-	assert.equal(route.modalityCeiling, undefined);
+	assert.equal(route.groupCapabilityCeilings, undefined);
 });
 
 test("explicit override stays a subtractive ceiling even when a capable member exists", () => {
