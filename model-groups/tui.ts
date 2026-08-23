@@ -667,21 +667,26 @@ export function createModelGroupsComponent(
 		const key = editor?.descriptor.key ?? "modalities";
 		const isAutomatic = state.editDraft?.constraints?.[key] === undefined;
 		const effective = (editor?.evaluation.effective ?? []) as ModelGroupModality[];
+		const rows = modalityEditorRows();
 		container.addChild(textLine(theme.fg("accent", `Modalities — ${escapeDisplayLabel(current?.name ?? "")}`)));
 		// Text is the always-present base capability, not toggleable.
 		container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  [required]")}`));
-		const rows = modalityEditorRows();
 		for (const [index, row] of rows.entries()) {
 			if (row.kind !== "toggle") continue;
 			const modality = row.value as ModelGroupModality;
 			const letter = theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality]);
-			// Editable rows advertise the toggle action so [on]/[off] reads as live
-			// state, not a fixed fact — unlike the [required] text base row.
-			const label = `${letter}${dim(" " + row.label)}${dim(row.active ? "  [on]" : "  [off]")}${dim(" — Enter/Space toggles")}`;
-			container.addChild(textLine(selectableLine(state.row === index, label)));
+			const stateText = row.active ? "[on]" : "[off]";
+			// The selected row is accent-highlighted (arrow + label) while the modality
+			// letter keeps its own color; [on]/[off] read as live toggle state.
+			const selected = state.row === index;
+			const label = selected
+				? `${theme.fg("accent", "→")} ${letter}${theme.fg("accent", ` ${row.label}  ${stateText}`)}`
+				: `  ${letter}${dim(` ${row.label}  ${stateText}`)}`;
+			container.addChild(textLine(label));
 		}
 		if (rows.length === 0) container.addChild(textLine(theme.fg("dim", "  No optional media capabilities available.")));
-		container.addChild(textLine(theme.fg("dim", rows.length ? "↑↓ navigate • Enter/Space toggle • Esc back" : "Esc back")));
+		// Single editable row screens drop arrow navigation — toggling + Esc is the whole flow.
+		container.addChild(textLine(theme.fg("dim", rows.length > 1 ? "↑↓ navigate • Enter/Space toggle • Esc back" : rows.length === 1 ? "Enter/Space toggle • Esc back" : "Esc back")));
 		// Single dynamic status: Automatic uses the union; an override limits the media set.
 		container.addChild(textLine(theme.fg("dim", isAutomatic
 			? "Automatic — using every capability its members support."

@@ -204,10 +204,11 @@ test("model groups TUI editor rows show per-model capability chips and modalitie
 	assert.match(modalities, /Automatic — using every capability its members support/);
 	assert.doesNotMatch(modalities, /Automatic \(/);
 	assert.doesNotMatch(modalities, /required base/);
-	assert.match(modalities, /↑↓ navigate • Enter\/Space toggle • Esc back/);
-	// Editable rows advertise the toggle action; the required text row does not.
-	assert.match(modalities, /I image  \[on\] — Enter\/Space toggles/);
-	assert.doesNotMatch(modalities, /text  \[required\].*Enter\/Space toggles/);
+	// Single editable row: compact footer without arrow-nav; no per-row hint.
+	assert.match(modalities, /Enter\/Space toggle • Esc back/);
+	assert.doesNotMatch(modalities, /↑↓ navigate/);
+	assert.doesNotMatch(modalities, /Enter\/Space toggles/);
+	assert.match(modalities, /I image  \[on\]/);
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	const afterOverride = stripAnsi(rendered(c));
@@ -476,6 +477,14 @@ test("model groups TUI selected markers and primary labels use accent token", ()
 	const modelEdit = component({ groups: [group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] })], renderTheme: accentTheme }).c;
 	press(modelEdit, ENTER, DOWN, DOWN, DOWN, DOWN, ENTER);
 	assert.match(rendered(modelEdit), /<accent>→<\/accent> <accent>Thinking: inherit<\/accent>/);
+
+	const g = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
+	g.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
+	const modalitiesC = component({ groups: [g], renderTheme: accentTheme }).c;
+	press(modalitiesC, ENTER, DOWN, DOWN, DOWN, ENTER);
+	// The selected capability row is accent-highlighted; the modality letter keeps its own color.
+	assert.match(rendered(modalitiesC), /<accent>→<\/accent> I<accent> image  \[on\]<\/accent>/);
+	assert.match(rendered(modalitiesC), /Enter\/Space toggle • Esc back/);
 
 	const deleteConfirm = component({ groups: [group("review", { scope: "project" })], renderTheme: accentTheme }).c;
 	press(deleteConfirm, "D");
@@ -829,7 +838,7 @@ test("model groups TUI keeps every screen width-bounded without wrapping logical
 		if (width === 12) assert.match(stripAnsi(lines.join("\n")).replaceAll(CURSOR_MARKER, ""), /界e\u0301/);
 	}
 	press(c, DOWN, ENTER);
-	assertScreen(c); // MODEL_EDIT
+	assertScreen(c); // MODALITIES (from the name row, Down lands on the Modalities row)
 	press(c, ESC, DOWN, DOWN, DOWN, DOWN, ENTER);
 	assertScreen(c); // WIZARD_PROVIDER
 	press(c, DOWN, DOWN, ENTER);
