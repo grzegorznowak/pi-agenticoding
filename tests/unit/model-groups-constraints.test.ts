@@ -19,9 +19,10 @@ test("constraint registry orders descriptors and rejects duplicate keys", () => 
 
 	test("engine preserves unresolved members as unknown facts", () => {
 	const result = evaluateConstraints(resolution([{ provider: "p", modelId: "rich", model: rich }, { provider: "p", modelId: "gone" }]), {}, createConstraintRegistry([modalitiesConstraint as AnyConstraintDescriptor]));
-	// An unresolved member leaves common empty, but text is always present via the
-	// resolved member (text is the base invariant), so effective carries text.
-	assert.deepEqual(result[0], { key: "modalities", aggregate: { common: [], supported: ["text", "image", "reasoning"], effective: [] }, effective: ["text"], diagnostics: [{ key: "modalities", code: "empty-common" }] });
+	// An unresolved member leaves common empty (hence the warning), but the union
+	// default still carries every capability the resolved members support: text is
+	// the base invariant, so effective carries the full resolved capability set.
+	assert.deepEqual(result[0], { key: "modalities", aggregate: { common: [], supported: ["text", "image", "reasoning"], effective: [] }, effective: ["text", "image", "reasoning"], diagnostics: [{ key: "modalities", code: "empty-common" }] });
 });
 
 test("descriptor codecs report errors and retain vocabulary ordering", () => {

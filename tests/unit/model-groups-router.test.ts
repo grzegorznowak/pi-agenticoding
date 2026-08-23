@@ -53,6 +53,29 @@ test("required modalities prefer a capable member and still reject a wholly-inca
 	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "text-only", constraints: { modalities: { required: ["image"] } }, groups: [textOnly], parentModel: parent, parentThinking: "low", modelRegistry: reg }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup[0] === "image");
 });
 
+test("automatic mixed groups default effective to the union so a capability routes to a capable member", () => {
+	const parent = model("p", "parent");
+	const text = model("p", "text");
+	const image = model("p", "image", { input: ["text", "image"] });
+	const routed = group("mixed-auto", { models: [{ provider: "p", modelId: "text" }, { provider: "p", modelId: "image" }] });
+	// No explicit override: the router reconciles fresh, and the group gate now sees
+	// the union default, so the image requirement passes and D1 lands on the image
+	// member even when rng targets the text-only member (index 0).
+	const reg = registry([parent, text, image]);
+	const route = resolveSpawnModelRoute({ requestedGroup: "mixed-auto", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => 0 });
+	assert.equal(route.status, "routed");
+	assert.equal(route.modelId, "image");
+	// Automatic groups carry no ceiling.
+	assert.equal(route.modalityCeiling, undefined);
+	// The union never invents capabilities no member has: a reasoning requirement on
+	// members that all lack reasoning still rejects with the group miss.
+	const textNr = model("p", "text-nr", { reasoning: false });
+	const imageNr = model("p", "image-nr", { input: ["text", "image"], reasoning: false });
+	const reg2 = registry([parent, textNr, imageNr]);
+	const routed2 = group("mixed-auto-noreasoning", { models: [{ provider: "p", modelId: "text-nr" }, { provider: "p", modelId: "image-nr" }] });
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "mixed-auto-noreasoning", constraints: { modalities: { required: ["reasoning"] } }, groups: [routed2], parentModel: parent, parentThinking: "low", modelRegistry: reg2 }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup[0] === "reasoning");
+});
+
 test("capability pre-selection excludes unauthenticated capable models and round-robins the capable set", () => {
 	const parent = model("p", "parent");
 	const capA = model("p", "cap-a", { input: ["text", "image"] });
@@ -123,4 +146,16 @@ test("groups without an explicit override get no modality ceiling", () => {
 	const route = resolveSpawnModelRoute({ requestedGroup: "openbox", groups: [g], parentModel: parent, parentThinking: "medium", modelRegistry: registry([parent, vision]) });
 	assert.equal(route.status, "routed");
 	assert.equal(route.modalityCeiling, undefined);
+});
+
+test("explicit override stays a subtractive ceiling even when a capable member exists", () => {
+	const parent = model("p", "parent");
+	const vision = model("p", "gpt-vision", { input: ["text", "image"], reasoning: true });
+	const text = model("p", "text");
+	const g = group("posed", { models: [{ provider: "p", modelId: "gpt-vision" }, { provider: "p", modelId: "text" }], constraints: { modalities: ["text", "reasoning"] } });
+	g.modalities.effective = ["text", "reasoning"];
+	// The group gate must still reject image even though the routed member itself
+	// supports it: the override is the declared ceiling (rng lands on the vision member).
+	const reg = registry([parent, vision, text]);
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "posed", constraints: { modalities: { required: ["image"] } }, groups: [g], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => 0 }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup[0] === "image" && error.missingFromModel.length === 0);
 });

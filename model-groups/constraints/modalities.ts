@@ -41,7 +41,12 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		return { common, supported, effective: common };
 	},
 	reconcile({ aggregate, override }) {
-		const base = override === undefined ? aggregate.common : ordered(override.filter((modality) => aggregate.supported.includes(modality)));
+		// Without an explicit override the group's capability is the union of its
+		// members' individual modalities (any member can satisfy the capability, and
+		// D1 route pre-selection picks a capable member). An explicit override stays
+		// an authoritative subtractive ceiling: only members' supported modalities
+		// may be listed, so the union is never exceeded.
+		const base = override === undefined ? aggregate.supported : ordered(override.filter((modality) => aggregate.supported.includes(modality)));
 		// Text is the always-present base capability (image/reasoning both imply it);
 		// keep it in the effective set whenever the group supports it, regardless of override.
 		const effective = aggregate.supported.includes("text") ? ordered(["text", ...base.filter((modality) => modality !== "text")]) : base;

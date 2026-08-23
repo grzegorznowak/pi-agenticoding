@@ -191,6 +191,22 @@ test("before_agent_start injects fresh names-and-effective-modalities guidance",
 	assert.doesNotMatch(result.systemPrompt, /model-groups\.json/);
 }));
 
+test("before_agent_start exposes union-effective modalities for automatic mixed groups", async () => withTemp(async ({ cwd }) => {
+	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
+	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { mixed: { models: [{ provider: "openai", modelId: "gpt-5" }, { provider: "google", modelId: "gemini-text" }] } } }), "utf8");
+	const pi = createTestPI();
+	registerAgenticoding(pi as any);
+	const handler = pi.handlers.get("before_agent_start")!.at(-1)!;
+	const models = [
+		{ provider: "openai", id: "gpt-5", input: ["text", "image"], reasoning: true, thinkingLevelMap: { xhigh: "x" } },
+		{ provider: "google", id: "gemini-text", input: ["text"], reasoning: false },
+	];
+	const reg = { getAll: () => models, getAvailable: () => models, find: (provider: string, id: string) => models.find((m) => m.provider === provider && m.id === id), hasConfiguredAuth: () => true };
+	// Automatic mixed group: guidance lists the union — image/reasoning present via the capable member.
+	const result = await handler({ systemPrompt: "Base." }, { hasUI: false, isProjectTrusted: () => true, cwd, modelRegistry: reg, getContextUsage: () => null });
+	assert.match(result.systemPrompt, /Available Model Groups: mixed \(text, image, reasoning\)/);
+}));
+
 test("before_agent_start labels empty effective modalities unambiguously", async () => withTemp(async ({ cwd }) => {
 	fs.mkdirSync(path.dirname(modelGroupsPath("project", cwd)), { recursive: true });
 	fs.writeFileSync(modelGroupsPath("project", cwd), JSON.stringify({ version: 2, groups: { foo: { models: [] }, "foo (none)": { models: [] } } }), "utf8");

@@ -168,14 +168,22 @@ test("model groups TUI Add-model picker shows capability chips per model", () =>
 
 test("model groups TUI modality editor commits override and Automatic through updateGroup", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
-	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text"] };
+	// Automatic groups open with their union capability set active; un-toggling a
+	// supported capability writes a subtractive override excluding it.
+	review.modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
 	const calls: Array<{ scope: string; name: string; def: any }> = [];
 	let groups = [review];
+	// Mock mirrors production reconciliation: an override narrows effective to its
+	// supported list; automatic stays at the union.
+	const reconciledEffective = (def: any, supported: string[]) => {
+		const base = Array.isArray(def.constraints?.modalities) ? def.constraints.modalities.filter((m: string) => supported.includes(m)) : [...supported];
+		return ["text", ...base.filter((m: string) => m !== "text")];
+	};
 	const store = {
 		updateGroup: (scope: string, _cwd: string, name: string, def: any) => {
 			calls.push({ scope, name, def: { ...def, constraints: def.constraints ? { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined } });
 			groups = [group(name, { scope: scope as "project", models: def.models, constraints: def.constraints })];
-			groups[0].modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
+			groups[0].modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: reconciledEffective(def, ["text", "image", "reasoning"]) };
 		},
 		listResolvedModelGroups: () => boot(groups),
 	};
@@ -187,11 +195,13 @@ test("model groups TUI modality editor commits override and Automatic through up
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image"]);
+	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "reasoning"]);
 	assert.match(rendered(c), /Modalities/, "toggle stays on the modalities screen");
-	assert.match(rendered(c), /I image  \[on\]/);
+	assert.match(rendered(c), /I image  \[off\]/);
 	press(c, ESC);
-	assert.match(rendered(c), /Modalities: Override \(text, image\)/);
+	// The stored override is [text, reasoning]; the modalities detail line hides
+	// reasoning (per-model thinking), so the visible subtraction is just image.
+	assert.match(rendered(c), /Modalities: Override \(text\)/);
 	press(c, ENTER);
 	assert.match(rendered(c), /Modalities/);
 	selectRenderedLabel(c, "Automatic");
@@ -205,14 +215,18 @@ test("model groups TUI modality editor commits override and Automatic through up
 
 test("model groups TUI Space also toggles a modality and stays on screen", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-5" }] });
-	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text"] };
+	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	const calls: Array<{ scope: string; name: string; def: any }> = [];
 	let groups = [review];
+	const reconciledEffective = (def: any, supported: string[]) => {
+		const base = Array.isArray(def.constraints?.modalities) ? def.constraints.modalities.filter((m: string) => supported.includes(m)) : [...supported];
+		return ["text", ...base.filter((m: string) => m !== "text")];
+	};
 	const store = {
 		updateGroup: (scope: string, _cwd: string, name: string, def: any) => {
 			calls.push({ scope, name, def: { ...def, constraints: def.constraints ? { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) } : undefined } });
 			groups = [group(name, { scope: scope as "project", models: def.models, constraints: def.constraints })];
-			groups[0].modalities = { common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"] };
+			groups[0].modalities = { common: ["text"], supported: ["text", "image"], effective: reconciledEffective(def, ["text", "image"]) };
 		},
 		listResolvedModelGroups: () => boot(groups),
 	};
@@ -224,9 +238,9 @@ test("model groups TUI Space also toggles a modality and stays on screen", () =>
 	selectRenderedLabel(c, "I image");
 	press(c, " ");
 	assert.equal(calls.length, 1);
-	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "image"]);
+	assert.deepEqual(calls[0].def.constraints.modalities, ["text"]);
 	assert.match(rendered(c), /Modalities/, "space toggle stays on the modalities screen");
-	assert.match(rendered(c), /I image  \[on\]/);
+	assert.match(rendered(c), /I image  \[off\]/);
 });
 
 test("model groups TUI modality editor preserves state and notifies on updateGroup failure", () => {

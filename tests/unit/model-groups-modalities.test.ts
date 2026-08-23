@@ -16,7 +16,7 @@ test("derives ordered common, supported, and override-effective modalities from 
 	];
 	const group = { models: [{ provider: "p", modelId: "rich" }, { provider: "p", modelId: "text" }] };
 	assert.deepEqual(deriveModelGroupModalities(group, registry(models)), {
-		common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text"],
+		common: ["text"], supported: ["text", "image", "reasoning"], effective: ["text", "image", "reasoning"],
 	});
 	const effectiveAfterOverride = deriveModelGroupModalities({ ...group, constraints: { modalities: ["reasoning", "image"] } }, registry(models)).effective;
 	assert.deepEqual(effectiveAfterOverride, ["text", "image", "reasoning"], "text stays always-present ahead of overridden add-ons");
