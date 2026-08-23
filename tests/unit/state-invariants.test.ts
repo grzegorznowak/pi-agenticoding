@@ -30,7 +30,8 @@ type StateAction =
 	| { type: "clearTopic" }
 	| { type: "savePage"; name: string }
 	| { type: "addChildSession"; id: string }
-	| { type: "abortChildren" };
+	| { type: "abortChildren" }
+	| { type: "setCursor"; key: string; value: number };
 
 /** Generator for valid normalized topic names (non-empty after normalizeNotebookTopic). */
 const arbTopicName = fc
@@ -72,6 +73,9 @@ async function apply(
 		case "abortChildren":
 			abortAndClearChildSessions(state);
 			break;
+		case "setCursor":
+			state.spawnRouteCursors.set(action.key, action.value);
+			break;
 	}
 }
 
@@ -103,6 +107,7 @@ function assertResetClears(state: AgenticodingState): void {
 	assert.equal(state.notebookPages.size, 0, "notebookPages must be empty after reset");
 	assert.equal(state.childSessions.size, 0, "childSessions must be empty after reset");
 	assert.equal(state.liveChildSessions.size, 0, "liveChildSessions must be empty after reset");
+	assert.equal(state.spawnRouteCursors.size, 0, "spawnRouteCursors must be empty after reset");
 	assert.equal(state.epoch, 0, "epoch must be 0 after reset");
 	assert.equal(state.activeNotebookTopic, null, "topic must be null after reset");
 	assert.equal(state.activeNotebookTopicSource, null, "topic source must be null after reset");
@@ -247,6 +252,7 @@ test("Property 4: Reset clears all state fields", async () => {
 						fc.constant({ type: "clearTopic" } as StateAction),
 						fc.record({ type: fc.constant("savePage"), name: arbPageName }),
 						fc.record({ type: fc.constant("addChildSession"), id: arbSessionId }),
+						fc.record({ type: fc.constant("setCursor"), key: arbSessionId, value: fc.nat() }),
 						fc.constant({ type: "abortChildren" } as StateAction),
 					),
 					{ maxLength: 30 },
@@ -274,6 +280,7 @@ test("Property 4: Reset clears all state fields", async () => {
 					s2.frontmatterSkillIssues.set("skill-b", { kind: "invalid-readonly-value", filePath: "/tmp/skill-b.md" });
 					s2.frontmatterPromptIssues.set("prompt-b", { kind: "unreadable-file", filePath: "/tmp/prompt-b.md" });
 					s2.pendingReadonlyCommands.push({ type: "skill", name: "skill-a" });
+					s2.spawnRouteCursors.set("stale", 1);
 					s2.modelGroups.groups = [{
 						name: "stale",
 						scope: "project",

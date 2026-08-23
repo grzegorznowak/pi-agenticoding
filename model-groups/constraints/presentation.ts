@@ -44,7 +44,7 @@ export function constraintEditorRows(
 	evaluation: ErasedConstraintEvaluation,
 	override?: unknown,
 ): readonly ConstraintEditorRow[] {
-	const editor = descriptor.editor as ConstraintEditorSpec<unknown, unknown, unknown>;
+	const editor = descriptor.editor as ConstraintEditorSpec<unknown, unknown>;
 	if (editor.kind === "multi-select") {
 		const choices = editor.choices(evaluation as ConstraintEvaluation<unknown, unknown>);
 		const effective = (evaluation as ConstraintEvaluation<unknown, unknown>).effective as readonly string[] | undefined;

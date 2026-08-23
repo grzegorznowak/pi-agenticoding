@@ -72,7 +72,7 @@ import { registerModelGroupsCommand } from "./model-groups/command.js";
 import { resolveSpawnModelRoute, SpawnRouteError } from "./model-groups/router.js";
 import { registerModelGroupAutocomplete } from "./model-groups/autocomplete.js";
 import { getEffectiveModelGroups, getEffectiveModelGroupNames } from "./model-groups/router.js";
-import { MODEL_GROUP_MODALITIES, type ResolvedModelGroup, type ModelGroupsAccess } from "./model-groups/types.js";
+import { MODEL_GROUP_MODALITY_PROSE, type ResolvedModelGroup, type ModelGroupsAccess } from "./model-groups/types.js";
 import { loadModelGroups, summarizeBootValidation, validateModelGroups } from "./model-groups/store.js";
 import { escapeDisplayLabel } from "./model-groups/display.js";
 import { presentConstraintPrompt } from "./model-groups/constraints/presentation.js";
@@ -102,8 +102,6 @@ import {
 	updateIndicators,
 } from "./tui.js";
 import { applyReadonlyBashGuard } from "./readonly-bash.js";
-
-const MODEL_GROUP_MODALITY_PROSE = MODEL_GROUP_MODALITIES.join(", ").replace(/, ([^,]+)$/, ", or $1");
 
 // ── Helpers ────────────────────────────────────────────────────────────
 

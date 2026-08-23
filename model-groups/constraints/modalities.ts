@@ -46,10 +46,17 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		// D1 route pre-selection picks a capable member). An explicit override stays
 		// an authoritative subtractive ceiling: only members' supported modalities
 		// may be listed, so the union is never exceeded.
-		const filteredOverride = override === undefined ? undefined : ordered(override.filter((modality) => aggregate.supported.includes(modality)));
 		// An explicit [] is an intentional text-only ceiling. A non-empty override
 		// made entirely stale, however, must fall back to the derived union.
-		const base = override === undefined ? aggregate.supported : override.length === 0 ? [] : filteredOverride!.length ? filteredOverride! : aggregate.supported;
+		let base: ModelGroupModality[];
+		if (override === undefined) {
+			base = aggregate.supported;
+		} else if (override.length === 0) {
+			base = [];
+		} else {
+			const filteredOverride = ordered(override.filter((modality) => aggregate.supported.includes(modality)));
+			base = filteredOverride.length ? filteredOverride : aggregate.supported;
+		}
 		// Text is the always-present base capability (image/reasoning both imply it);
 		// keep it in the effective set whenever the group supports it, regardless of override.
 		const effective = aggregate.supported.includes("text") ? ordered(["text", ...base.filter((modality) => modality !== "text")]) : base;
@@ -62,7 +69,7 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 	},
 	groupSatisfies({ effective, requirement }) { return satisfaction(ordered(requirement.filter((modality) => !effective.includes(modality)))); },
 	modelSatisfies({ fact, requirement }) { return satisfaction(ordered(requirement.filter((modality) => !fact.includes(modality)))); },
-	persistence: { override: modalityCodec(), clone: (value) => [...value] },
+	persistence: { override: modalityCodec() },
 	requirement: {
 		decode(value, path) {
 			if (!value || typeof value !== "object" || Array.isArray(value) || !("required" in value)) return { ok: false, message: `${path} must be an object with required modalities` };
@@ -72,7 +79,7 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		equals: (left, right) => modalityCodec().equals(left, right),
 		schema: Type.Object({ required: modalityCodec().schema }),
 	},
-	editor: { kind: "multi-select", label: "Modalities", choices: (evaluation) => evaluation.aggregate.supported, automatic: (evaluation) => `Automatic (${evaluation.aggregate.common.filter((modality) => modality !== "reasoning").join(", ") || "none"})`, format: (value) => `Override: ${value.join(", ") || "none"}`, allowAutomatic: true },
+	editor: { kind: "multi-select", label: "Modalities", choices: (evaluation) => evaluation.aggregate.supported, automatic: (evaluation) => `Automatic (${evaluation.aggregate.common.filter((modality) => modality !== "reasoning").join(", ") || "none"})` },
 	present: {
 		group: (evaluation) => evaluation.effective.join(", "),
 		prompt: (evaluation) => evaluation.effective.join(", "),

@@ -34,7 +34,7 @@ import { formatPageList } from "../notebook/store.js";
 import { createNotebookToolDefinitions } from "../notebook/tools.js";
 import { resolveSpawnModelRoute } from "../model-groups/router.js";
 import { productionConstraintRegistry, type ConstraintRegistry } from "../model-groups/constraints/registry.js";
-import { MODEL_GROUP_MODALITIES } from "../model-groups/types.js";
+import { MODEL_GROUP_MODALITY_PROSE } from "../model-groups/types.js";
 import { applyReadonlyBashGuard } from "../readonly-bash.js";
 import {
 	renderSpawnCall,
@@ -49,7 +49,6 @@ import {
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-const MODEL_GROUP_MODALITY_PROSE = MODEL_GROUP_MODALITIES.join(", ").replace(/, ([^,]+)$/, ", or $1");
 const CHILD_MAX_LINES = 2000;
 const CHILD_MAX_BYTES = 50 * 1024;
 
@@ -296,26 +295,29 @@ const SPAWN_PROMPT_GUIDELINES = [
 	`A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.`,
 ];
 
-const SPAWN_CONSTRAINT_REQUIREMENTS = Type.Object(Object.fromEntries(productionConstraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any);
-
-const SPAWN_PARAMETERS = Type.Object({
-	prompt: Type.String({
-		description:
-			"Self-contained task description. Reference notebook pages by name — " +
-			"child will notebook_read them on demand.",
-	}),
-	group: Type.Optional(Type.String({
-		description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
-	})),
-	constraints: Type.Optional(SPAWN_CONSTRAINT_REQUIREMENTS),
-	thinking: Type.Optional(StringEnum(
-		["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
-		{
+export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
+	const constraintRequirements = Type.Object(
+		Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any,
+	);
+	return Type.Object({
+		prompt: Type.String({
 			description:
-				"Override child thinking level. A routed Model Group entry may override it.",
-		},
-	)),
-});
+				"Self-contained task description. Reference notebook pages by name — " +
+				"child will notebook_read them on demand.",
+		}),
+		group: Type.Optional(Type.String({
+			description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
+		})),
+		constraints: Type.Optional(constraintRequirements),
+		thinking: Type.Optional(StringEnum(
+			["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
+			{
+				description:
+					"Override child thinking level. A routed Model Group entry may override it.",
+			},
+		)),
+	});
+}
 
 
 /**
@@ -654,7 +656,7 @@ export function registerSpawnTool(
 		description: SPAWN_DESCRIPTION,
 		promptSnippet: SPAWN_PROMPT_SNIPPET,
 		promptGuidelines: SPAWN_PROMPT_GUIDELINES,
-		parameters: SPAWN_PARAMETERS,
+		parameters: buildSpawnParameters(constraintRegistry),
 		renderShell: "self",
 
 		execute(

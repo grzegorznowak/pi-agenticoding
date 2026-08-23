@@ -19,7 +19,7 @@ export const MODALITY_LETTER: Record<ModelGroupModality, string> = {
 };
 
 export interface ModalityLetterRunOptions {
-	/** Include the reasoning letter. Default false, matching model list rows which surface R per-model. */
+	/** Include the reasoning letter. Defaults to false, so capability rows omit R unless requested. */
 	includeReasoning?: boolean;
 	/**
 	 * OpenRouter-style consolidation: when the visible media set contains any

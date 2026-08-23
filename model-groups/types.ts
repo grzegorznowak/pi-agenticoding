@@ -2,6 +2,7 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ErasedConstraintEvaluation } from "./constraints/types.js";
 
 export const MODEL_GROUP_MODALITIES = ["text", "image", "reasoning"] as const;
+export const MODEL_GROUP_MODALITY_PROSE = MODEL_GROUP_MODALITIES.join(", ").replace(/, ([^,]+)$/, ", or $1");
 export type ModelGroupModality = typeof MODEL_GROUP_MODALITIES[number];
 export interface ModelGroupModalities {
 	common: ModelGroupModality[];

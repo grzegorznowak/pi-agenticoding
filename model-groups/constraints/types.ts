@@ -33,9 +33,9 @@ export interface ConstraintViolation {
 	satisfaction: ConstraintSatisfaction;
 }
 
-export type ConstraintEditorSpec<Override, Aggregate, Effective> =
-	| { kind: "multi-select"; label: string; choices(evaluation: ConstraintEvaluation<Aggregate, Effective>): readonly string[]; automatic(evaluation: ConstraintEvaluation<Aggregate, Effective>): string; format(value: readonly string[]): string; allowAutomatic: true }
-	| { kind: "number"; label: string; unit: string; min: number; step: number; automatic(evaluation: ConstraintEvaluation<Aggregate, Effective>): string; value(evaluation: ConstraintEvaluation<Aggregate, Effective>): number | null; allowAutomatic: true };
+export type ConstraintEditorSpec<Aggregate, Effective> =
+	| { kind: "multi-select"; label: string; choices(evaluation: ConstraintEvaluation<Aggregate, Effective>): readonly string[]; automatic(evaluation: ConstraintEvaluation<Aggregate, Effective>): string }
+	| { kind: "number"; label: string; unit: string; min: number; step: number; automatic(evaluation: ConstraintEvaluation<Aggregate, Effective>): string; value(evaluation: ConstraintEvaluation<Aggregate, Effective>): number | null };
 
 export interface ConstraintEvaluation<Aggregate, Effective> {
 	key: string;
@@ -52,9 +52,9 @@ export interface ConstraintDescriptor<K extends string, Fact, Aggregate, Overrid
 	reconcile(input: { aggregate: Aggregate; override: Override | undefined }): { effective: Effective; diagnostics: ConstraintDiagnostic[] };
 	groupSatisfies(input: { aggregate: Aggregate; effective: Effective; requirement: Requirement }): ConstraintSatisfaction;
 	modelSatisfies(input: { fact: Fact; requirement: Requirement }): ConstraintSatisfaction;
-	persistence: { override: ConstraintCodec<Override>; clone(value: Override): Override };
+	persistence: { override: ConstraintCodec<Override> };
 	requirement: ConstraintCodec<Requirement>;
-	editor: ConstraintEditorSpec<Override, Aggregate, Effective>;
+	editor: ConstraintEditorSpec<Aggregate, Effective>;
 	present: {
 		group(evaluation: ConstraintEvaluation<Aggregate, Effective>): string;
 		prompt(evaluation: ConstraintEvaluation<Aggregate, Effective>): string;

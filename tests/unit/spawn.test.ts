@@ -250,11 +250,12 @@ test("spawn round-robins across capable members via the session cursor", async (
 	const state = createState();
 	const capA = { provider: "openai", id: "gpt-cap-a", reasoning: true, input: ["text", "image"] };
 	const capB = { provider: "openai", id: "gpt-cap-b", reasoning: true, input: ["text", "image"] };
+	const textOnly = { provider: "openai", id: "gpt-text", reasoning: true, input: ["text"] };
 	state.modelGroups.groups = [{
 		name: "multi",
 		scope: "project",
 		sourcePath: "<project>",
-		models: [{ provider: "openai", modelId: "gpt-cap-a" }, { provider: "openai", modelId: "gpt-cap-b" }],
+		models: [{ provider: "openai", modelId: "gpt-cap-a" }, { provider: "openai", modelId: "gpt-cap-b" }, { provider: "openai", modelId: "gpt-text" }],
 		constraints: { modalities: ["text", "image"] },
 		modalities: { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] },
 	} as any];
@@ -264,8 +265,8 @@ test("spawn round-robins across capable members via the session cursor", async (
 		return { session: mockSessionFactory({ prompt: async () => {} }), extensionsResult: undefined as any };
 	});
 	const ctx = { model: { provider: "openai", id: "parent" }, cwd: "/tmp", modelRegistry: {
-		find: (_p: string, id: string) => id === "gpt-cap-a" ? capA : id === "gpt-cap-b" ? capB : undefined,
-		hasConfiguredAuth: (m: any) => m === capA || m === capB,
+		find: (_p: string, id: string) => id === "gpt-cap-a" ? capA : id === "gpt-cap-b" ? capB : id === "gpt-text" ? textOnly : undefined,
+		hasConfiguredAuth: (m: any) => m === capA || m === capB || m === textOnly,
 	} } as any;
 	await pi.tools.get("spawn").execute("spawn-a", { prompt: "t", group: "multi", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, ctx);
 	await pi.tools.get("spawn").execute("spawn-b", { prompt: "t", group: "multi", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, ctx);
@@ -909,6 +910,27 @@ test("registered spawn tool rejects injected scalar group and model requirements
 		(error: unknown) => error instanceof SpawnRouteError && error.reason === "constraint-unsatisfied" && error.constraintUnsatisfied?.length === 2 && error.missingModalities.length === 0 && error.missingFromGroup.length === 0 && error.missingFromModel.length === 0,
 	);
 	assert.equal(factoryCalls, 0); assert.equal(state.childSessions.size, 0); assert.equal(state.liveChildSessions.size, 0);
+});
+
+test("registered spawn tool schema accepts injected scalar requirements", () => {
+	const pi = createTestPI();
+	registerSpawnTool(pi as any, createState(), undefined, createConstraintRegistry([testMinContext]));
+	const schema = pi.tools.get("spawn").parameters;
+	assert.equal(
+		Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 20 } }),
+		true,
+		"the registered schema accepts an injected descriptor's scalar requirement",
+	);
+	assert.equal(
+		Value.Check(schema, { prompt: "Do the task", constraints: { testMinContext: 0 } }),
+		false,
+		"the injected descriptor retains its requirement schema",
+	);
+	assert.equal(
+		Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text"] } } }),
+		false,
+		"the injected registry, not the production registry, defines the registered schema",
+	);
 });
 
 test("spawn requirements normalize the canonical envelope", () => {

@@ -131,6 +131,27 @@ test("generic scalar requirements narrow mixed groups in both comparison directi
 	assert.deepEqual(budgetRoute.groupCapabilityCeilings, ["Maximum output budget is capped at 1 credits for this group."]);
 });
 
+test("routed empty modality requirements use uniform RNG instead of the capability cursor", () => {
+	const parent = model("p", "parent");
+	const first = model("p", "first");
+	const second = model("p", "second");
+	const cursor = new Map<string, number>();
+	let rngCalls = 0;
+	const route = resolveSpawnModelRoute({
+		requestedGroup: "routed",
+		constraints: { modalities: { required: [] } },
+		groups: [group("routed", { models: [{ provider: "p", modelId: "first" }, { provider: "p", modelId: "second" }] })],
+		parentModel: parent,
+		parentThinking: "medium",
+		modelRegistry: registry([parent, first, second]),
+		routeCursor: cursor,
+		rng: () => { rngCalls++; return 0.75; },
+	});
+	assert.equal(route.modelId, "second", "the RNG-selected member wins when no members are narrowed out");
+	assert.equal(rngCalls, 1, "an empty requirement must consult RNG instead of the cursor");
+	assert.equal(cursor.size, 0, "an empty requirement must not advance a group cursor");
+});
+
 test("plain inherited route honors requiredModalities with empty-array no-op", () => {
 	const rich = model("p", "rich-parent", { input: ["text", "image"] });
 	const text = model("p", "text-parent", { input: ["text"] });

@@ -27,9 +27,9 @@ export const testMinContext: ConstraintDescriptor<"testMinContext", number, Test
 	},
 	groupSatisfies: ({ effective, requirement }) => effective !== null && effective >= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
 	modelSatisfies: ({ fact, requirement }) => fact >= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
-	persistence: { override: positiveIntegerCodec, clone: (value) => value },
+	persistence: { override: positiveIntegerCodec },
 	requirement: positiveIntegerCodec,
-	editor: { kind: "number", label: "Test minimum context", unit: "tokens", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective, allowAutomatic: true },
+	editor: { kind: "number", label: "Test minimum context", unit: "tokens", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective },
 	present: {
 		group: (evaluation) => `minimum ${evaluation.effective ?? "unknown"} tokens`,
 		prompt: (evaluation) => `minimum ${evaluation.effective ?? "unknown"} tokens`,
@@ -58,9 +58,9 @@ export const testMaxBudget: ConstraintDescriptor<"testMaxBudget", number, TestMa
 	},
 	groupSatisfies: ({ effective, requirement }) => effective !== null && effective <= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
 	modelSatisfies: ({ fact, requirement }) => fact <= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
-	persistence: { override: positiveIntegerCodec, clone: (value) => value },
+	persistence: { override: positiveIntegerCodec },
 	requirement: positiveIntegerCodec,
-	editor: { kind: "number", label: "Test maximum budget", unit: "credits", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective, allowAutomatic: true },
+	editor: { kind: "number", label: "Test maximum budget", unit: "credits", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective },
 	present: {
 		group: (evaluation) => `maximum ${evaluation.effective ?? "unknown"} credits`,
 		prompt: (evaluation) => `maximum ${evaluation.effective ?? "unknown"} credits`,
