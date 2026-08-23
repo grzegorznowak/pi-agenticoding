@@ -140,9 +140,10 @@ test("model groups TUI renders modality labels, warnings, and stale override cho
 	assert.match(rendered(c), /Capabilities/);
 	assert.match(rendered(c), /Models/);
 	press(c, DOWN, DOWN, DOWN, ENTER);
-	assert.match(rendered(c), /Automatic \(text\)/);
-	assert.match(rendered(c), /T text  required base/);
+	assert.match(rendered(c), /T text  \[required\]/);
 	assert.match(rendered(c), /I image  \[on\]/);
+	// The group carries a persisted override (text, image, reasoning) → status reflects it.
+	assert.match(rendered(c), /Override — media limited to text, image/);
 	assert.doesNotMatch(rendered(c), /reasoning/);
 });
 
@@ -166,7 +167,7 @@ test("model groups TUI Add-model picker shows capability chips per model", () =>
 	assert.match(stripped, /openai\/gpt-vision\s+T I/);
 });
 
-test("model groups TUI editor rows show per-model capability chips and modalities screen explains limited vs unlimited", () => {
+test("model groups TUI editor rows show per-model capability chips and modalities screen shows dynamic Automatic/Override status", () => {
 	const review = group("review", { scope: "project", models: [{ provider: "openai", modelId: "gpt-text" }, { provider: "openai", modelId: "gpt-vision" }] });
 	review.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	const models = [
@@ -174,23 +175,41 @@ test("model groups TUI editor rows show per-model capability chips and modalitie
 		{ provider: "openai", id: "gpt-vision", reasoning: false, input: ["text", "image"] },
 		{ provider: "openai", id: "gpt-missing", reasoning: true },
 	];
-	const { c } = component({ groups: [review], modelRegistry: catalog(models) });
+	// Mock store mirrors production reconciliation so the toggle can persist.
+	let groups = [review];
+	const reconciledEffective = (def: any, supported: string[]) => {
+		const base = Array.isArray(def.constraints?.modalities) ? def.constraints.modalities.filter((m: string) => supported.includes(m)) : [...supported];
+		return ["text", ...base.filter((m: string) => m !== "text")];
+	};
+	const store = {
+		updateGroup: (scope: string, _cwd: string, name: string, def: any) => {
+			groups = [group(name, { scope: scope as "project", models: def.models, constraints: def.constraints })];
+			groups[0].modalities = { common: ["text"], supported: ["text", "image"], effective: reconciledEffective(def, ["text", "image"]) };
+		},
+		listResolvedModelGroups: () => boot(groups),
+	};
+	const { c } = component({ groups: [review], store, modelRegistry: catalog(models) });
 	press(c, ENTER);
 	const editor = stripAnsi(rendered(c));
 	// Per-model capability chips mirror the Add-model picker; unresolved members carry none.
 	assert.match(editor, /openai\/gpt-text\s+T\s+\(available/);
 	assert.match(editor, /openai\/gpt-vision\s+T I\s+\(available/);
 	assert.doesNotMatch(editor, /gpt-missing/);
-	// Hand-editing modalities surfaces short guidance for limited vs unlimited groups.
+	// Hand-editing modalities surfaces a dynamic status for Automatic vs Override.
 	selectRenderedLabel(c, "Modalities:");
 	press(c, ENTER);
 	const modalities = stripAnsi(rendered(c));
-	assert.match(modalities, /Automatic: the group uses every capability its members support/);
-	assert.match(modalities, /Override: the group is limited to exactly the listed capabilities/);
+	// Text is a non-toggleable required base; no Automatic selector row remains.
+	assert.match(modalities, /T text  \[required\]/);
+	assert.match(modalities, /Automatic — using every capability its members support/);
+	assert.doesNotMatch(modalities, /Automatic \(/);
+	assert.doesNotMatch(modalities, /required base/);
+	assert.match(modalities, /↑↓ navigate • Enter\/Space toggle • Esc back/);
 	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	const afterOverride = stripAnsi(rendered(c));
-	assert.match(afterOverride, /Override: the group is limited to exactly the listed capabilities/);
+	assert.match(afterOverride, /Override — media limited to text/);
+	assert.match(afterOverride, /I image  \[off\]/);
 });
 
 test("model groups TUI modality editor commits override and Automatic through updateGroup", () => {
@@ -225,17 +244,15 @@ test("model groups TUI modality editor commits override and Automatic through up
 	assert.deepEqual(calls[0].def.constraints.modalities, ["text", "reasoning"]);
 	assert.match(rendered(c), /Modalities/, "toggle stays on the modalities screen");
 	assert.match(rendered(c), /I image  \[off\]/);
-	press(c, ESC);
-	// The stored override is [text, reasoning]; the modalities detail line hides
-	// reasoning (per-model thinking), so the visible subtraction is just image.
-	assert.match(rendered(c), /Modalities: Override \(text\)/);
-	press(c, ENTER);
-	assert.match(rendered(c), /Modalities/);
-	selectRenderedLabel(c, "Automatic");
+	assert.match(rendered(c), /Override — media limited to text/);
+	// Re-enabling the capability back to the full union returns the group to Automatic
+	// (no stored override, so no spawn ceiling attaches to a non-limit).
+	selectRenderedLabel(c, "I image");
 	press(c, ENTER);
 	assert.equal(calls.length, 2);
 	assert.equal(calls[1].def.constraints?.modalities, undefined);
-	assert.match(rendered(c), /Modalities/, "reset also stays on the modalities screen");
+	assert.match(rendered(c), /Modalities/, "re-enable also stays on the modalities screen");
+	assert.match(rendered(c), /Automatic — using every capability its members support/);
 	press(c, ESC);
 	assert.match(rendered(c), /Modalities: Automatic \(text, image\)/);
 });
@@ -284,9 +301,34 @@ test("model groups TUI modality editor preserves state and notifies on updateGro
 	};
 	const { c } = component({ groups: [review], store, notify: (message) => messages.push(message) });
 	press(c, ENTER, DOWN, DOWN, DOWN, ENTER); // open Modalities
-	press(c, DOWN, DOWN, DOWN, ENTER); // pick an override → updateGroup throws
+	press(c, ENTER); // toggle the single media row → updateGroup throws
 	assert.ok(messages.some((m) => /modality write denied/.test(m)));
 	assert.match(rendered(c), /Modalities/, "screen retained after failure");
+});
+
+test("model groups TUI text-only modalities screen is inert and states Automatic", () => {
+	const textOnly = group("text-only", { scope: "project", models: [{ provider: "openai", modelId: "gpt-text" }] });
+	textOnly.modalities = { common: ["text"], supported: ["text"], effective: ["text"] };
+	let updateCalls = 0;
+	const store = {
+		updateGroup: () => { updateCalls++; },
+		listResolvedModelGroups: () => boot([textOnly]),
+	};
+	const { c } = component({ groups: [textOnly], store });
+	press(c, ENTER);
+	selectRenderedLabel(c, "Modalities:");
+	press(c, ENTER);
+	const screen = stripAnsi(rendered(c));
+	// No toggleable media rows: only the required text row, no toggle nav, no selection.
+	assert.match(screen, /T text  \[required\]/);
+	assert.match(screen, /No optional media capabilities available/);
+	assert.match(screen, /Automatic — using every capability its members support/);
+	assert.match(screen, /Esc back/);
+	assert.doesNotMatch(screen, /Enter\/Space toggle/);
+	assert.doesNotMatch(screen, /→/);
+	// Enter/Space on the inert row must not persist anything.
+	press(c, ENTER, " ", ENTER);
+	assert.equal(updateCalls, 0);
 });
 
 test("model groups TUI computes unique new-group names and opens editor after create", () => {

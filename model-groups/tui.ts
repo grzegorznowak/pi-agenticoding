@@ -310,11 +310,12 @@ export function createModelGroupsComponent(
 	function modalityEditorRows(): readonly ConstraintEditorRow[] {
 		const editor = activeConstraintEditor();
 		if (!editor) return [];
-		// Media editor rows are the additive, toggleable capabilities only:
-		// text is the always-present base, and reasoning is handled per-model (thinkingLevel),
-		// so both are excluded from the toggle list.
+		// The modalities hand-edit screen is rebuilt around disabling capabilities
+		// from the union: only the toggleable media rows remain (no Automatic
+		// selector row). Text is the always-present required base and reasoning is
+		// handled per-model (thinkingLevel), so both are excluded from toggles.
 		return constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key]).filter(
-			(row) => row.kind !== "toggle" || (row.value !== "reasoning" && row.value !== "text"),
+			(row) => row.kind === "toggle" && row.value !== "reasoning" && row.value !== "text",
 		);
 	}
 
@@ -375,18 +376,25 @@ export function createModelGroupsComponent(
 				if (!state.editDraft) return;
 				const editor = activeConstraintEditor();
 				const selected = modalityEditorRows()[state.row];
-				if (!editor || !selected) return;
+				// No toggle rows (text-only / unresolvable) → Enter/Space are inert.
+				if (!editor || !selected || selected.kind !== "toggle") return;
 				const next = cloneDef(state.editDraft);
-				if (selected.kind === "automatic") {
+				const base = [...(editor.evaluation.effective as ModelGroupModality[])];
+				const pressed = selected.value as ModelGroupModality;
+				// Disable a capability by subtracting it from the current effective
+				// (preserving hidden reasoning); re-enable by adding it back.
+				const toggled = base.includes(pressed)
+					? base.filter((modality) => modality !== pressed)
+					: orderedModalities([...base, pressed]);
+				const supported = orderedModalities((editor.evaluation.aggregate as { supported?: ModelGroupModality[] }).supported ?? []);
+				if (orderedModalities(toggled).join(",") === supported.join(",")) {
+					// Re-enabling back to the full union returns the group to Automatic:
+					// no override is stored, so no spawn ceiling attaches to a non-limit.
 					if (next.constraints) delete next.constraints[editor.descriptor.key];
-				} else if (selected.kind === "toggle") {
-					const base = [...(editor.evaluation.effective as ModelGroupModality[])];
-					const pressed = selected.value as ModelGroupModality;
-					const toggled = base.includes(pressed)
-						? base.filter((modality) => modality !== pressed)
-						: orderedModalities([...base, pressed]);
+					if (next.constraints && Object.keys(next.constraints).length === 0) delete next.constraints;
+				} else {
 					(next.constraints ??= {})[editor.descriptor.key] = toggled;
-				} else return;
+				}
 				const updated = persistDraft(next);
 				if (updated) {
 					// Re-bind the draft to the toggled override while staying on this screen.
@@ -656,28 +664,26 @@ export function createModelGroupsComponent(
 		const container = new Container();
 		const editor = activeConstraintEditor();
 		const current = currentEditGroup();
+		const key = editor?.descriptor.key ?? "modalities";
+		const isAutomatic = state.editDraft?.constraints?.[key] === undefined;
+		const effective = (editor?.evaluation.effective ?? []) as ModelGroupModality[];
 		container.addChild(textLine(theme.fg("accent", `Modalities — ${escapeDisplayLabel(current?.name ?? "")}`)));
-		const isAutomatic = state.editDraft?.constraints?.[editor?.descriptor.key ?? "modalities"] === undefined;
-		container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  required base")}`));
-		for (const [index, row] of modalityEditorRows().entries()) {
-			let label: string;
-			if (row.kind === "toggle") {
-				const modality = row.value as ModelGroupModality;
-				const letter = theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality]);
-				label = `${letter}${dim(" " + row.label)}${dim(row.active ? "  [on]" : "  [off]")}`;
-			} else if (row.kind === "automatic") {
-				label = `${dim(row.label)}${isAutomatic ? dim(" [✓]") : ""}`;
-			} else if (row.kind === "number") {
-				label = `${row.label}: ${row.value ?? "none"} ${row.unit}`;
-			} else {
-				label = row.label;
-			}
+		// Text is the always-present base capability, not toggleable.
+		container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  [required]")}`));
+		const rows = modalityEditorRows();
+		for (const [index, row] of rows.entries()) {
+			if (row.kind !== "toggle") continue;
+			const modality = row.value as ModelGroupModality;
+			const letter = theme.fg(MODALITY_FG[modality], MODALITY_LETTER[modality]);
+			const label = `${letter}${dim(" " + row.label)}${dim(row.active ? "  [on]" : "  [off]")}`;
 			container.addChild(textLine(selectableLine(state.row === index, label)));
 		}
-		container.addChild(textLine(theme.fg("dim", "↑↓ navigate • Enter/Space apply • Esc back")));
-		// Short guidance on limited vs unlimited groups when hand-editing modalities.
-		container.addChild(textLine(theme.fg("dim", "Automatic: the group uses every capability its members support.")));
-		container.addChild(textLine(theme.fg("dim", "Override: the group is limited to exactly the listed capabilities.")));
+		if (rows.length === 0) container.addChild(textLine(theme.fg("dim", "  No optional media capabilities available.")));
+		container.addChild(textLine(theme.fg("dim", rows.length ? "↑↓ navigate • Enter/Space toggle • Esc back" : "Esc back")));
+		// Single dynamic status: Automatic uses the union; an override limits the media set.
+		container.addChild(textLine(theme.fg("dim", isAutomatic
+			? "Automatic — using every capability its members support."
+			: `Override — media limited to ${effective.filter((modality) => modality !== "reasoning").join(", ") || "none"}.`)));
 		return container;
 	}
 
