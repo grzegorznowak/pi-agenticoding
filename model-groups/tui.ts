@@ -324,7 +324,12 @@ export function createModelGroupsComponent(
 			case "LIST": return state.groups.length;
 			case "EDITOR": return modelStartRow() + (state.editDraft?.models.length ?? 0);
 			case "MODALITIES": return Math.max(0, modalityEditorRows().length - 1);
-			case "MODEL_EDIT": return thinkingOptionsFor(modelRegistry.find(state.editDraft?.models[state.modelEditIndex]?.provider ?? "", state.editDraft?.models[state.modelEditIndex]?.modelId ?? "") as Model<Api> | undefined).length;
+			case "MODEL_EDIT": {
+				const reference = state.editDraft?.models[state.modelEditIndex];
+				const model = modelRegistry.find(reference?.provider ?? "", reference?.modelId ?? "") as Model<Api> | undefined;
+				const options = thinkingOptionsFor(model);
+				return options.length;
+			}
 			case "WIZARD_PROVIDER": return Math.max(0, allProviders().length - 1);
 			case "WIZARD_MODEL": return Math.max(0, filteredModelsForProvider(state.wizardProvider).length - 1);
 			case "WIZARD_THINKING": return Math.max(0, thinkingOptionsFor(currentWizardModel()).length - 1);
@@ -636,15 +641,31 @@ export function createModelGroupsComponent(
 		activeSelect = null;
 		const container = new Container();
 		const current = currentEditGroup();
-		container.addChild(textLine(theme.fg("accent", `Model Group: ${escapeDisplayLabel(current?.name ?? "")}`)));
-		if (access.policy === "global-project") container.addChild(textLine(selectableLine(state.row === 0, "Location: project", state.editScope === "project" ? " ✓" : "")));
-		container.addChild(textLine(selectableLine(state.row === (access.policy === "global-project" ? 1 : 0), "Location: global", state.editScope === "global" ? " ✓" : "")));
+		const title = theme.fg("accent", `Model Group: ${escapeDisplayLabel(current?.name ?? "")}`);
+		container.addChild(textLine(title));
+
+		if (access.policy === "global-project") {
+			const projectLocation = selectableLine(state.row === 0, "Location: project", state.editScope === "project" ? " ✓" : "");
+			container.addChild(textLine(projectLocation));
+		}
+		const globalLocationRow = access.policy === "global-project" ? 1 : 0;
+		const globalLocation = selectableLine(state.row === globalLocationRow, "Location: global", state.editScope === "global" ? " ✓" : "");
+		container.addChild(textLine(globalLocation));
 		container.addChild(groupNameLineComponent());
+
 		const modalities = current?.modalities;
-		container.addChild(textLine(sectionBar("Capabilities")));
-		container.addChild(textLine(theme.fg("dim", `  Supported by every model: ${modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none"}`)));
-		container.addChild(textLine(selectableLine(state.row === modalityRow(), `Modalities: ${state.editDraft?.constraints?.modalities === undefined ? "Automatic" : "Override"} (${modalities?.effective.filter((modality) => modality !== "reasoning").join(", ") || "none"})`)));
-		container.addChild(textLine(sectionBar("Models")));
+		const capabilitiesBar = sectionBar("Capabilities");
+		container.addChild(textLine(capabilitiesBar));
+		const commonModalities = modalities?.common.filter((modality) => modality !== "reasoning").join(", ") || "none";
+		const commonCapabilities = theme.fg("dim", `  Supported by every model: ${commonModalities}`);
+		container.addChild(textLine(commonCapabilities));
+		const modalityState = state.editDraft?.constraints?.modalities === undefined ? "Automatic" : "Override";
+		const effectiveModalities = modalities?.effective.filter((modality) => modality !== "reasoning").join(", ") || "none";
+		const modalityLine = selectableLine(state.row === modalityRow(), `Modalities: ${modalityState} (${effectiveModalities})`);
+		container.addChild(textLine(modalityLine));
+		const modelsBar = sectionBar("Models");
+		container.addChild(textLine(modelsBar));
+
 		state.editDraft?.models.forEach((model, index) => {
 			const available = modelAvailable(modelRegistry, model.provider, model.modelId) ? "available" : "unavailable";
 			const found = modelRegistry.find(model.provider, model.modelId) as Model<Api> | undefined;
@@ -652,10 +673,15 @@ export function createModelGroupsComponent(
 			// members have no fact, so they render without a chip.
 			const chip = found ? modalityLetterRun(getModalitiesModelFact(found)) : "";
 			const id = `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.modelId)}`;
-			container.addChild(textLine(selectableLine(state.row === index + modelStartRow(), chip ? `${id} ${chip}` : id, ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`)));
+			const selected = state.row === index + modelStartRow();
+			const label = chip ? `${id} ${chip}` : id;
+			const suffix = ` (${available}, thinking ${thinkingLabel(model.thinkingLevel)})`;
+			const modelLine = selectableLine(selected, label, suffix);
+			container.addChild(textLine(modelLine));
 		});
 		const addRow = modelStartRow() + (state.editDraft?.models.length ?? 0);
-		container.addChild(textLine(selectableLine(state.row === addRow, "+ Add model…")));
+		const addModelLine = selectableLine(state.row === addRow, "+ Add model…");
+		container.addChild(textLine(addModelLine));
 		return container;
 	}
 

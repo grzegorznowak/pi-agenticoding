@@ -60,15 +60,32 @@ function normalizeOverrideEnvelope(rawDef: Record<string, unknown>, sourceVersio
 function normalizeGroups(rawGroups: Record<string, unknown>, sourceVersion: number): { ok: true; groups: Record<string, ModelGroupDef> } | { ok: false; message: string } {
 	const groups = ownGroups();
 	for (const rawName of Object.keys(rawGroups)) {
-		const name = canonicalizeModelGroupName(rawName); if (!name) return { ok: false, message: "group name must not be empty after trimming" }; if (hasOwnGroup(groups, name)) return { ok: false, message: `group keys collide after trimming at '${name}'` };
-		const rawDef = rawGroups[rawName]; if (!isPlainRecord(rawDef) || !Array.isArray(rawDef.models)) return { ok: false, message: `group ${rawName}${isPlainRecord(rawDef) ? ".models must be an array" : " must be an object"}` };
-		const models: ModelGroupModel[] = []; for (let i = 0; i < rawDef.models.length; i++) { const result = validateModelEntry(rawDef.models[i], `group ${rawName}.models[${i}]`); if (!result.ok) return result; models.push(result.model); }
+		const name = canonicalizeModelGroupName(rawName);
+		if (!name) return { ok: false, message: "group name must not be empty after trimming" };
+		if (hasOwnGroup(groups, name)) return { ok: false, message: `group keys collide after trimming at '${name}'` };
+
+		const rawDef = rawGroups[rawName];
+		if (!isPlainRecord(rawDef) || !Array.isArray(rawDef.models)) {
+			return { ok: false, message: `group ${rawName}${isPlainRecord(rawDef) ? ".models must be an array" : " must be an object"}` };
+		}
+
+		const models: ModelGroupModel[] = [];
+		for (let i = 0; i < rawDef.models.length; i++) {
+			const result = validateModelEntry(rawDef.models[i], `group ${rawName}.models[${i}]`);
+			if (!result.ok) return result;
+			models.push(result.model);
+		}
 		const envelope = normalizeOverrideEnvelope(rawDef, sourceVersion, rawName);
 		if (!envelope.ok) return envelope;
 		// Strip runtime-derived fields while retaining opaque config keys and the v2 envelope.
 		const { name: _name, scope: _scope, sourcePath: _sourcePath, modalities: _modalities, validation: _validation, models: _rawModels, constraints: _constraints, modalityOverride: _modalityOverride, ...configDef } = rawDef;
 		const { ok: _ok, ...normalizedEnvelope } = envelope;
-		defineGroup(groups, name, { ...configDef, models, ...normalizedEnvelope, ...(sourceVersion < 2 && Object.hasOwn(rawDef, "modalityOverride") ? { modalityOverride: rawDef.modalityOverride } : {}) });
+		defineGroup(groups, name, {
+			...configDef,
+			models,
+			...normalizedEnvelope,
+			...(sourceVersion < 2 && Object.hasOwn(rawDef, "modalityOverride") ? { modalityOverride: rawDef.modalityOverride } : {}),
+		});
 	}
 	return { ok: true, groups };
 }
@@ -79,26 +96,273 @@ function validateConfig(raw: unknown): { ok: true; config: ModelGroupsConfig } |
 	if (sourceVersion > CURRENT_VERSION) return { ok: false, message: `unsupported version ${sourceVersion}` };
 	const normalized = normalizeGroups(raw.groups, sourceVersion); return normalized.ok ? { ok: true, config: { version: CURRENT_VERSION, groups: normalized.groups } } : normalized;
 }
-function backupAndIssue(scope: ModelGroupScope, sourcePath: string, kind: ModelGroupsLoadIssue["kind"], message: string, version?: number): ModelGroupsLoadIssue { const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath: `${sourcePath}.bak`, version }; if (kind === "unsupported-version") return issue; try { fsOps.copyFileSync(sourcePath, issue.backupPath!); } catch (cause) { issue.backupFailed = true; issue.message = `${message}; backup failed: ${cause instanceof Error ? cause.message : String(cause)}`; } return issue; }
-function loadScope(scope: ModelGroupScope, access: ModelGroupsAccess): { config: ModelGroupsConfig; issue?: ModelGroupsLoadIssue } { assertScopeAllowed(scope, access); const sourcePath = modelGroupsPath(scope, access.cwd); if (!fsOps.existsSync(sourcePath)) return { config: emptyConfig() }; let parsed: unknown; try { parsed = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8"))); } catch (cause) { return { config: emptyConfig(), issue: backupAndIssue(scope, sourcePath, "corrupt-json", cause instanceof Error ? cause.message : String(cause)) }; } if (isPlainRecord(parsed) && typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) return { config: emptyConfig(), issue: backupAndIssue(scope, sourcePath, "unsupported-version", `unsupported version ${parsed.version}`, parsed.version) }; const validated = validateConfig(parsed); return validated.ok ? { config: validated.config } : { config: emptyConfig(), issue: backupAndIssue(scope, sourcePath, "schema-invalid", validated.message) }; }
-function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, access: ModelGroupsAccess): ModelGroupsLoadedGroup[] { const names = new Set([...Object.keys(configs.global.groups), ...Object.keys(configs.project.groups)]); const out: ModelGroupsLoadedGroup[] = []; for (const name of [...names].sort()) { if (hasOwnGroup(configs.global.groups, name)) out.push({ name, scope: "global", sourcePath: modelGroupsPath("global", access.cwd), ...cloneDef(configs.global.groups[name]) }); if (access.policy === "global-project" && hasOwnGroup(configs.project.groups, name)) out.push({ name, scope: "project", sourcePath: modelGroupsPath("project", access.cwd), ...cloneDef(configs.project.groups[name]) }); } return out; }
-export function loadModelGroups(access: ModelGroupsAccess): ModelGroupsLoadResult { const global = loadScope("global", access); const project = access.policy === "global-project" ? loadScope("project", access) : { config: emptyConfig() }; return { configs: { global: global.config, project: project.config }, merged: mergeLoaded({ global: global.config, project: project.config }, access), issues: [global.issue, project.issue].filter((i): i is ModelGroupsLoadIssue => Boolean(i)) }; }
-function normalizeSaveConfig(scope: ModelGroupScope, sourcePath: string, config: ModelGroupsConfig): ModelGroupsConfig { const normalized = normalizeGroups(config.groups as any, 2); if (!normalized.ok) throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: normalized.message }); return { version: CURRENT_VERSION, groups: normalized.groups }; }
+function backupAndIssue(scope: ModelGroupScope, sourcePath: string, kind: ModelGroupsLoadIssue["kind"], message: string, version?: number): ModelGroupsLoadIssue {
+	const issue: ModelGroupsLoadIssue = { scope, sourcePath, kind, message, backupPath: `${sourcePath}.bak`, version };
+	if (kind === "unsupported-version") return issue;
+	try {
+		fsOps.copyFileSync(sourcePath, issue.backupPath!);
+	} catch (cause) {
+		issue.backupFailed = true;
+		issue.message = `${message}; backup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+	}
+	return issue;
+}
+function loadScope(scope: ModelGroupScope, access: ModelGroupsAccess): { config: ModelGroupsConfig; issue?: ModelGroupsLoadIssue } {
+	assertScopeAllowed(scope, access);
+	const sourcePath = modelGroupsPath(scope, access.cwd);
+	if (!fsOps.existsSync(sourcePath)) return { config: emptyConfig() };
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8")));
+	} catch (cause) {
+		return {
+			config: emptyConfig(),
+			issue: backupAndIssue(scope, sourcePath, "corrupt-json", cause instanceof Error ? cause.message : String(cause)),
+		};
+	}
+	if (isPlainRecord(parsed) && typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) {
+		return {
+			config: emptyConfig(),
+			issue: backupAndIssue(scope, sourcePath, "unsupported-version", `unsupported version ${parsed.version}`, parsed.version),
+		};
+	}
+	const validated = validateConfig(parsed);
+	return validated.ok
+		? { config: validated.config }
+		: { config: emptyConfig(), issue: backupAndIssue(scope, sourcePath, "schema-invalid", validated.message) };
+}
+function mergeLoaded(configs: Record<ModelGroupScope, ModelGroupsConfig>, access: ModelGroupsAccess): ModelGroupsLoadedGroup[] {
+	const names = new Set([...Object.keys(configs.global.groups), ...Object.keys(configs.project.groups)]);
+	const out: ModelGroupsLoadedGroup[] = [];
+	for (const name of [...names].sort()) {
+		if (hasOwnGroup(configs.global.groups, name)) {
+			out.push({
+				name,
+				scope: "global",
+				sourcePath: modelGroupsPath("global", access.cwd),
+				...cloneDef(configs.global.groups[name]),
+			});
+		}
+		if (access.policy === "global-project" && hasOwnGroup(configs.project.groups, name)) {
+			out.push({
+				name,
+				scope: "project",
+				sourcePath: modelGroupsPath("project", access.cwd),
+				...cloneDef(configs.project.groups[name]),
+			});
+		}
+	}
+	return out;
+}
+export function loadModelGroups(access: ModelGroupsAccess): ModelGroupsLoadResult {
+	const global = loadScope("global", access);
+	const project = access.policy === "global-project" ? loadScope("project", access) : { config: emptyConfig() };
+	return {
+		configs: { global: global.config, project: project.config },
+		merged: mergeLoaded({ global: global.config, project: project.config }, access),
+		issues: [global.issue, project.issue].filter((i): i is ModelGroupsLoadIssue => Boolean(i)),
+	};
+}
+function normalizeSaveConfig(scope: ModelGroupScope, sourcePath: string, config: ModelGroupsConfig): ModelGroupsConfig {
+	const normalized = normalizeGroups(config.groups as any, 2);
+	if (!normalized.ok) {
+		throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: normalized.message });
+	}
+	return { version: CURRENT_VERSION, groups: normalized.groups };
+}
 /** Low-level persistence: unlike createGroup/updateGroup, this does not enforce the modality union-cap invariant; cap enforcement is CRUD-only, so rename/delete/move are out of scope. */
-export function saveModelGroups(scope: ModelGroupScope, access: ModelGroupsAccess, config: ModelGroupsConfig): void { assertScopeAllowed(scope, access); const sourcePath = modelGroupsPath(scope, access.cwd); const normalized = normalizeSaveConfig(scope, sourcePath, config); let raw: Record<string, unknown> = {}; if (fsOps.existsSync(sourcePath)) { try { const parsed = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8"))); if (isPlainRecord(parsed)) { if (typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: `unsupported version ${parsed.version}` }); raw = parsed; } } catch (cause) { if (cause instanceof ModelGroupsPersistenceError) throw cause; } } const tempPath = `${sourcePath}.${process.pid}.${Date.now()}.tmp`; try { fsOps.mkdirSync(path.dirname(sourcePath), { recursive: true }); fsOps.writeFileSync(tempPath, JSON.stringify({ ...raw, version: CURRENT_VERSION, groups: normalized.groups }, null, 2) + "\n", "utf8"); } catch (cause) { throw persistenceError({ operation: "save", scope, sourcePath, targetPath: tempPath, phase: "temp-write", message: `Failed to write temp model-groups file for ${scope}: ${cause instanceof Error ? cause.message : String(cause)}`, cause }); } try { fsOps.renameSync(tempPath, sourcePath); } catch (cause) { let detail = ""; try { fsOps.unlinkSync(tempPath); } catch (cleanup) { detail = `; temp cleanup failed: ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`; } throw persistenceError({ operation: "save", scope, sourcePath, targetPath: tempPath, phase: "rename", message: `Failed to commit model-groups file for ${scope}: ${cause instanceof Error ? cause.message : String(cause)}${detail}`, cause }); } }
-function loadScopeConfig(scope: ModelGroupScope, access: ModelGroupsAccess): ModelGroupsConfig { const loaded = loadScope(scope, access); if (loaded.issue?.backupFailed || loaded.issue?.kind === "unsupported-version") throw persistenceError({ operation: "save", scope, sourcePath: loaded.issue!.sourcePath, targetPath: loaded.issue!.backupPath, phase: loaded.issue?.kind === "unsupported-version" ? "config-validation" : "load-recovery", message: `Refusing to overwrite ${scope} model-groups config after ${loaded.issue!.kind} recovery because ${loaded.issue!.message}`, cause: loaded.issue }); return loaded.config; }
+export function saveModelGroups(scope: ModelGroupScope, access: ModelGroupsAccess, config: ModelGroupsConfig): void {
+	assertScopeAllowed(scope, access);
+	const sourcePath = modelGroupsPath(scope, access.cwd);
+	const normalized = normalizeSaveConfig(scope, sourcePath, config);
+	let raw: Record<string, unknown> = {};
+	if (fsOps.existsSync(sourcePath)) {
+		try {
+			const parsed = JSON.parse(String(fsOps.readFileSync(sourcePath, "utf8")));
+			if (isPlainRecord(parsed)) {
+				if (typeof parsed.version === "number" && Number.isInteger(parsed.version) && parsed.version > CURRENT_VERSION) {
+					throw persistenceError({ operation: "save", scope, sourcePath, phase: "config-validation", message: `unsupported version ${parsed.version}` });
+				}
+				raw = parsed;
+			}
+		} catch (cause) {
+			if (cause instanceof ModelGroupsPersistenceError) throw cause;
+		}
+	}
+
+	const tempPath = `${sourcePath}.${process.pid}.${Date.now()}.tmp`;
+	try {
+		fsOps.mkdirSync(path.dirname(sourcePath), { recursive: true });
+		fsOps.writeFileSync(tempPath, JSON.stringify({ ...raw, version: CURRENT_VERSION, groups: normalized.groups }, null, 2) + "\n", "utf8");
+	} catch (cause) {
+		throw persistenceError({
+			operation: "save",
+			scope,
+			sourcePath,
+			targetPath: tempPath,
+			phase: "temp-write",
+			message: `Failed to write temp model-groups file for ${scope}: ${cause instanceof Error ? cause.message : String(cause)}`,
+			cause,
+		});
+	}
+	try {
+		fsOps.renameSync(tempPath, sourcePath);
+	} catch (cause) {
+		let detail = "";
+		try {
+			fsOps.unlinkSync(tempPath);
+		} catch (cleanup) {
+			detail = `; temp cleanup failed: ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`;
+		}
+		throw persistenceError({
+			operation: "save",
+			scope,
+			sourcePath,
+			targetPath: tempPath,
+			phase: "rename",
+			message: `Failed to commit model-groups file for ${scope}: ${cause instanceof Error ? cause.message : String(cause)}${detail}`,
+			cause,
+		});
+	}
+}
+function loadScopeConfig(scope: ModelGroupScope, access: ModelGroupsAccess): ModelGroupsConfig {
+	const loaded = loadScope(scope, access);
+	if (loaded.issue?.backupFailed || loaded.issue?.kind === "unsupported-version") {
+		throw persistenceError({
+			operation: "save",
+			scope,
+			sourcePath: loaded.issue!.sourcePath,
+			targetPath: loaded.issue!.backupPath,
+			phase: loaded.issue?.kind === "unsupported-version" ? "config-validation" : "load-recovery",
+			message: `Refusing to overwrite ${scope} model-groups config after ${loaded.issue!.kind} recovery because ${loaded.issue!.message}`,
+			cause: loaded.issue,
+		});
+	}
+	return loaded.config;
+}
 function canonicalName(raw: string): string { const name = canonicalizeModelGroupName(raw); if (!name) throw new Error("Model group name is required"); return name; }
 function normalizeMutationDef(def: ModelGroupDef): ModelGroupDef {
 	const normalized = normalizeGroups({ group: def }, CURRENT_VERSION);
 	if (!normalized.ok) throw persistenceError({ operation: "save", phase: "config-validation", message: normalized.message });
 	return normalized.groups.group;
 }
-export function createGroup(scope: ModelGroupScope, access: ModelGroupsAccess, rawName: string, def: ModelGroupDef, modelRegistry: Pick<ModelRegistry, "find">): void { assertScopeAllowed(scope, access); const name = canonicalName(rawName); const config = loadScopeConfig(scope, access); if (hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' already exists in ${scope} scope`); const normalizedDef = normalizeMutationDef(def); assertModalityOverrideSupported(normalizedDef, modelRegistry); defineGroup(config.groups, name, normalizedDef); saveModelGroups(scope, access, config); }
-export function updateGroup(scope: ModelGroupScope, access: ModelGroupsAccess, rawName: string, def: ModelGroupDef, modelRegistry: Pick<ModelRegistry, "find">): void { assertScopeAllowed(scope, access); const name = canonicalName(rawName); const config = loadScopeConfig(scope, access); if (!hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' does not exist in ${scope} scope`); const normalizedDef = normalizeMutationDef(def); assertModalityOverrideSupported(normalizedDef, modelRegistry); defineGroup(config.groups, name, normalizedDef); saveModelGroups(scope, access, config); }
-export function renameGroup(scope: ModelGroupScope, access: ModelGroupsAccess, old: string, next: string): void { const config = loadScopeConfig(scope, access); const a = canonicalName(old), b = canonicalName(next); if (a === b) return; if (!hasOwnGroup(config.groups, a)) throw new Error(`Model group '${a}' does not exist in ${scope} scope`); if (hasOwnGroup(config.groups, b)) throw new Error(`Model group '${b}' already exists in ${scope} scope`); const def = config.groups[a]; delete config.groups[a]; defineGroup(config.groups, b, def); saveModelGroups(scope, access, config); }
-export function deleteGroup(scope: ModelGroupScope, access: ModelGroupsAccess, rawName: string): { otherScopeHasOverride: boolean } { const config = loadScopeConfig(scope, access); const name = canonicalName(rawName); if (!hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' does not exist in ${scope} scope`); delete config.groups[name]; const other = access.policy === "global-only" ? emptyConfig() : loadScopeConfig(scope === "global" ? "project" : "global", access); try { saveModelGroups(scope, access, config); } catch (cause) { if (cause instanceof ModelGroupsPersistenceError) throw new ModelGroupsPersistenceError({ operation: "delete", scope: cause.scope, sourcePath: cause.sourcePath, targetPath: cause.targetPath, phase: cause.phase, message: cause.message, cause }); throw cause; } return { otherScopeHasOverride: hasOwnGroup(other.groups, name) }; }
-export function moveGroup(access: ModelGroupsAccess, rawName: string, newScope: ModelGroupScope): void { const name = canonicalName(rawName), oldScope: ModelGroupScope = newScope === "project" ? "global" : "project"; const source = loadScopeConfig(oldScope, access), target = loadScopeConfig(newScope, access); if (!hasOwnGroup(source.groups, name)) throw new Error(`Model group '${name}' does not exist in ${oldScope} scope`); if (hasOwnGroup(target.groups, name)) throw new Error(`Model group '${name}' already exists in ${newScope} scope`); defineGroup(target.groups, name, source.groups[name]); try { saveModelGroups(newScope, access, target); } catch (cause) { if (cause instanceof ModelGroupsPersistenceError) throw new ModelGroupsPersistenceError({ operation: "move", scope: newScope, sourcePath: modelGroupsPath(oldScope, access.cwd), targetPath: cause.targetPath, phase: cause.phase, message: cause.message, cause }); throw cause; } delete source.groups[name]; try { saveModelGroups(oldScope, access, source); } catch (cause) { if (cause instanceof ModelGroupsPersistenceError) throw new ModelGroupsPersistenceError({ operation: "move", scope: oldScope, sourcePath: modelGroupsPath(oldScope, access.cwd), targetPath: modelGroupsPath(newScope, access.cwd), phase: "source-remove", partialMove: "target-written-source-retained", message: cause.message, cause }); throw cause; } }
-export function validateModelGroups(loadResult: ModelGroupsLoadResult, modelRegistry: ModelRegistry): ResolvedModelGroup[] { const projectNames = new Set(Object.keys(loadResult.configs.project.groups)); return loadResult.merged.map((group) => { const unavailableRefs = group.models.filter((ref) => { const model = modelRegistry.find(ref.provider, ref.modelId); return !model || !modelRegistry.hasConfiguredAuth(model); }).map(({ provider, modelId }) => ({ provider, modelId })); const evaluations = evaluateConstraints(resolveConstraintMembers(group.models, modelRegistry), group.constraints ?? {}, productionConstraintRegistry); const modalityEvaluation = evaluations.find((evaluation) => evaluation.key === modalitiesConstraint.key)!; const modalities = modalityEvaluation.aggregate as ModelGroupModalities; const diagnostics = presentConstraintDiagnosticRecords(evaluations, productionConstraintRegistry); const unsupportedOverrideModalities = (diagnostics.find((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "unsupported-override")?.details as ModelGroupModality[] | undefined) ?? []; return { ...group, modalities: { ...modalities, effective: modalityEvaluation.effective as ModelGroupModality[] }, evaluations, validation: { unavailableRefs, shadowedByProject: group.scope === "global" && projectNames.has(group.name), degraded: unavailableRefs.length > 0 && unavailableRefs.length < group.models.length, emptyCommonModalities: diagnostics.some((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "empty-common"), unsupportedOverrideModalities } }; }); }
-export function listResolvedModelGroups(access: ModelGroupsAccess, registry: ModelRegistry): ModelGroupsBootValidation { const loaded = loadModelGroups(access); return { groups: validateModelGroups(loaded, registry), loadIssues: loaded.issues }; }
-export function summarizeBootValidation(groups: ResolvedModelGroup[]): { unavailableCount: number; overrideCount: number; emptyModalityCount: number; staleModalityOverrideCount: number } { const diagnostics = groups.flatMap((group) => group.evaluations ? presentConstraintDiagnosticRecords(group.evaluations, productionConstraintRegistry) : []); return { unavailableCount: groups.reduce((sum, group) => sum + group.validation.unavailableRefs.length, 0), overrideCount: groups.filter((g) => g.validation.shadowedByProject).length, emptyModalityCount: diagnostics.filter((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "empty-common").length, staleModalityOverrideCount: diagnostics.filter((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "unsupported-override").length }; }
+export function createGroup(scope: ModelGroupScope, access: ModelGroupsAccess, rawName: string, def: ModelGroupDef, modelRegistry: Pick<ModelRegistry, "find">): void {
+	assertScopeAllowed(scope, access);
+	const name = canonicalName(rawName);
+	const config = loadScopeConfig(scope, access);
+	if (hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' already exists in ${scope} scope`);
+	const normalizedDef = normalizeMutationDef(def);
+	assertModalityOverrideSupported(normalizedDef, modelRegistry);
+	defineGroup(config.groups, name, normalizedDef);
+	saveModelGroups(scope, access, config);
+}
+export function updateGroup(scope: ModelGroupScope, access: ModelGroupsAccess, rawName: string, def: ModelGroupDef, modelRegistry: Pick<ModelRegistry, "find">): void {
+	assertScopeAllowed(scope, access);
+	const name = canonicalName(rawName);
+	const config = loadScopeConfig(scope, access);
+	if (!hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' does not exist in ${scope} scope`);
+	const normalizedDef = normalizeMutationDef(def);
+	assertModalityOverrideSupported(normalizedDef, modelRegistry);
+	defineGroup(config.groups, name, normalizedDef);
+	saveModelGroups(scope, access, config);
+}
+export function renameGroup(scope: ModelGroupScope, access: ModelGroupsAccess, old: string, next: string): void {
+	const config = loadScopeConfig(scope, access);
+	const a = canonicalName(old);
+	const b = canonicalName(next);
+	if (a === b) return;
+	if (!hasOwnGroup(config.groups, a)) throw new Error(`Model group '${a}' does not exist in ${scope} scope`);
+	if (hasOwnGroup(config.groups, b)) throw new Error(`Model group '${b}' already exists in ${scope} scope`);
+	const def = config.groups[a];
+	delete config.groups[a];
+	defineGroup(config.groups, b, def);
+	saveModelGroups(scope, access, config);
+}
+export function deleteGroup(scope: ModelGroupScope, access: ModelGroupsAccess, rawName: string): { otherScopeHasOverride: boolean } {
+	const config = loadScopeConfig(scope, access);
+	const name = canonicalName(rawName);
+	if (!hasOwnGroup(config.groups, name)) throw new Error(`Model group '${name}' does not exist in ${scope} scope`);
+	delete config.groups[name];
+	const other = access.policy === "global-only" ? emptyConfig() : loadScopeConfig(scope === "global" ? "project" : "global", access);
+	try {
+		saveModelGroups(scope, access, config);
+	} catch (cause) {
+		if (cause instanceof ModelGroupsPersistenceError) {
+			throw new ModelGroupsPersistenceError({ operation: "delete", scope: cause.scope, sourcePath: cause.sourcePath, targetPath: cause.targetPath, phase: cause.phase, message: cause.message, cause });
+		}
+		throw cause;
+	}
+	return { otherScopeHasOverride: hasOwnGroup(other.groups, name) };
+}
+export function moveGroup(access: ModelGroupsAccess, rawName: string, newScope: ModelGroupScope): void {
+	const name = canonicalName(rawName);
+	const oldScope: ModelGroupScope = newScope === "project" ? "global" : "project";
+	const source = loadScopeConfig(oldScope, access);
+	const target = loadScopeConfig(newScope, access);
+	if (!hasOwnGroup(source.groups, name)) throw new Error(`Model group '${name}' does not exist in ${oldScope} scope`);
+	if (hasOwnGroup(target.groups, name)) throw new Error(`Model group '${name}' already exists in ${newScope} scope`);
+	defineGroup(target.groups, name, source.groups[name]);
+	try {
+		saveModelGroups(newScope, access, target);
+	} catch (cause) {
+		if (cause instanceof ModelGroupsPersistenceError) {
+			throw new ModelGroupsPersistenceError({ operation: "move", scope: newScope, sourcePath: modelGroupsPath(oldScope, access.cwd), targetPath: cause.targetPath, phase: cause.phase, message: cause.message, cause });
+		}
+		throw cause;
+	}
+	delete source.groups[name];
+	try {
+		saveModelGroups(oldScope, access, source);
+	} catch (cause) {
+		if (cause instanceof ModelGroupsPersistenceError) {
+			throw new ModelGroupsPersistenceError({ operation: "move", scope: oldScope, sourcePath: modelGroupsPath(oldScope, access.cwd), targetPath: modelGroupsPath(newScope, access.cwd), phase: "source-remove", partialMove: "target-written-source-retained", message: cause.message, cause });
+		}
+		throw cause;
+	}
+}
+export function validateModelGroups(loadResult: ModelGroupsLoadResult, modelRegistry: ModelRegistry): ResolvedModelGroup[] {
+	const projectNames = new Set(Object.keys(loadResult.configs.project.groups));
+	return loadResult.merged.map((group) => {
+		const unavailableRefs = group.models
+			.filter((ref) => {
+				const model = modelRegistry.find(ref.provider, ref.modelId);
+				return !model || !modelRegistry.hasConfiguredAuth(model);
+			})
+			.map(({ provider, modelId }) => ({ provider, modelId }));
+		const evaluations = evaluateConstraints(resolveConstraintMembers(group.models, modelRegistry), group.constraints ?? {}, productionConstraintRegistry);
+		const modalityEvaluation = evaluations.find((evaluation) => evaluation.key === modalitiesConstraint.key)!;
+		const modalities = modalityEvaluation.aggregate as ModelGroupModalities;
+		const diagnostics = presentConstraintDiagnosticRecords(evaluations, productionConstraintRegistry);
+		const unsupportedOverrideModalities = (diagnostics.find((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "unsupported-override")?.details as ModelGroupModality[] | undefined) ?? [];
+		const shadowedByProject = group.scope === "global" && projectNames.has(group.name);
+		const degraded = unavailableRefs.length > 0 && unavailableRefs.length < group.models.length;
+		const emptyCommonModalities = diagnostics.some((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "empty-common");
+		return {
+			...group,
+			modalities: { ...modalities, effective: modalityEvaluation.effective as ModelGroupModality[] },
+			evaluations,
+			validation: {
+				unavailableRefs,
+				shadowedByProject,
+				degraded,
+				emptyCommonModalities,
+				unsupportedOverrideModalities,
+			},
+		};
+	});
+}
+export function listResolvedModelGroups(access: ModelGroupsAccess, registry: ModelRegistry): ModelGroupsBootValidation {
+	const loaded = loadModelGroups(access);
+	return { groups: validateModelGroups(loaded, registry), loadIssues: loaded.issues };
+}
+export function summarizeBootValidation(groups: ResolvedModelGroup[]): { unavailableCount: number; overrideCount: number; emptyModalityCount: number; staleModalityOverrideCount: number } {
+	const diagnostics = groups.flatMap((group) => group.evaluations ? presentConstraintDiagnosticRecords(group.evaluations, productionConstraintRegistry) : []);
+	return {
+		unavailableCount: groups.reduce((sum, group) => sum + group.validation.unavailableRefs.length, 0),
+		overrideCount: groups.filter((g) => g.validation.shadowedByProject).length,
+		emptyModalityCount: diagnostics.filter((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "empty-common").length,
+		staleModalityOverrideCount: diagnostics.filter((diagnostic) => diagnostic.key === "modalities" && diagnostic.code === "unsupported-override").length,
+	};
+}
 export const EMPTY_MODEL_GROUPS_CONFIG: ModelGroupsConfig = emptyConfig(); export { CURRENT_VERSION as MODEL_GROUPS_CONFIG_VERSION, hasOwnGroup };

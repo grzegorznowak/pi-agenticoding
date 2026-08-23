@@ -70,13 +70,23 @@ export class SpawnRouteError extends Error {
 	}
 }
 function parentProvider(model: Model<Api>): string { return typeof model.provider === "string" ? model.provider : ""; }
-function effectiveGroupMap(groups: ResolvedModelGroup[]): Map<string, ResolvedModelGroup> { const map = new Map<string, ResolvedModelGroup>(); for (const group of groups) { if (group.validation?.shadowedByProject) continue; const current = map.get(group.name); if (!current || group.scope === "project") map.set(group.name, group); } return map; }
+function effectiveGroupMap(groups: ResolvedModelGroup[]): Map<string, ResolvedModelGroup> {
+	const map = new Map<string, ResolvedModelGroup>();
+	for (const group of groups) {
+		if (group.validation?.shadowedByProject) continue;
+		const current = map.get(group.name);
+		if (!current || group.scope === "project") map.set(group.name, group);
+	}
+	return map;
+}
 export function getEffectiveModelGroups(groups: ResolvedModelGroup[]): ResolvedModelGroup[] { return [...effectiveGroupMap(groups).values()].sort((a, b) => a.name.localeCompare(b.name)); }
 export function getEffectiveModelGroupNames(groups: ResolvedModelGroup[]): string[] { return getEffectiveModelGroups(groups).map((group) => group.name); }
 
 /** Route selection remains auth-aware; constraint evaluation receives its explicit member snapshot. */
 export function resolveSpawnModelRoute(options: { requestedGroup?: string; constraints?: Readonly<Record<string, unknown>>; groups: ResolvedModelGroup[]; parentModel: Model<Api>; parentThinking: ModelThinkingLevel; modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">; constraintRegistry?: ConstraintRegistry; rng?: () => number; routeCursor?: Map<string, number> }): SpawnModelRoute {
-	const requestedGroup = options.requestedGroup?.trim(); const requirements = options.constraints ?? {}; const registry = options.constraintRegistry ?? productionConstraintRegistry;
+	const requestedGroup = options.requestedGroup?.trim();
+	const requirements = options.constraints ?? {};
+	const registry = options.constraintRegistry ?? productionConstraintRegistry;
 	let declaredRequirements: readonly { descriptor: AnyConstraintDescriptor; requirement: unknown }[] | undefined;
 	const getDeclaredRequirements = () => declaredRequirements ??= Object.entries(requirements).map(([key, rawRequirement]) => {
 		const descriptor = registry.get(key);
@@ -85,10 +95,59 @@ export function resolveSpawnModelRoute(options: { requestedGroup?: string; const
 		if (!decoded.ok) throw new Error(decoded.message);
 		return { descriptor, requirement: decoded.value };
 	});
-	const inherited = (status: "inherited" | "unknown-fallback"): SpawnModelRoute => ({ status, ...(status === "unknown-fallback" && requestedGroup ? { requestedGroup } : {}), model: options.parentModel, provider: parentProvider(options.parentModel), modelId: options.parentModel.id, thinking: options.parentThinking });
-	let route: SpawnModelRoute; let group: ResolvedModelGroup | undefined;
-	if (!requestedGroup) route = inherited("inherited"); else { group = effectiveGroupMap(options.groups).get(requestedGroup); if (!group) route = inherited("unknown-fallback"); else { if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty"); const usable = group.models.map((entry) => { const model = options.modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined; return model && options.modelRegistry.hasConfiguredAuth(model) ? { entry, model } : undefined; }).filter((entry): entry is { entry: ResolvedModelGroup["models"][number]; model: Model<Api> } => Boolean(entry)); if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models"); const declared = getDeclaredRequirements(); const capable = declared.length ? usable.filter(({ model }) => declared.every(({ descriptor, requirement }) => descriptor.modelSatisfies({ fact: descriptor.modelFact(model), requirement }).satisfied)) : usable; const pool = capable.length ? capable : usable; let selected; if (options.routeCursor && declared.length && capable.length && capable.length < usable.length) { const index = options.routeCursor.get(group.name) ?? 0; options.routeCursor.set(group.name, (index + 1) % pool.length); selected = pool[index % pool.length]; } else { selected = pool[Math.min(pool.length - 1, Math.max(0, Math.floor((options.rng ?? Math.random)() * pool.length)))]; } route = { status: "routed", requestedGroup, groupName: group.name, model: selected.model, provider: selected.entry.provider, modelId: selected.entry.modelId, thinking: clampThinkingLevel(selected.model, selected.entry.thinkingLevel ?? options.parentThinking) };
-			} }
+	const inherited = (status: "inherited" | "unknown-fallback"): SpawnModelRoute => ({
+		status,
+		...(status === "unknown-fallback" && requestedGroup ? { requestedGroup } : {}),
+		model: options.parentModel,
+		provider: parentProvider(options.parentModel),
+		modelId: options.parentModel.id,
+		thinking: options.parentThinking,
+	});
+
+	let route: SpawnModelRoute;
+	let group: ResolvedModelGroup | undefined;
+	if (!requestedGroup) {
+		route = inherited("inherited");
+	} else {
+		group = effectiveGroupMap(options.groups).get(requestedGroup);
+		if (!group) {
+			route = inherited("unknown-fallback");
+		} else {
+			if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty");
+			const usable = group.models
+				.map((entry) => {
+					const model = options.modelRegistry.find(entry.provider, entry.modelId) as Model<Api> | undefined;
+					return model && options.modelRegistry.hasConfiguredAuth(model) ? { entry, model } : undefined;
+				})
+				.filter((entry): entry is { entry: ResolvedModelGroup["models"][number]; model: Model<Api> } => Boolean(entry));
+			if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models");
+
+			const declared = getDeclaredRequirements();
+			const capable = declared.length
+				? usable.filter(({ model }) => declared.every(({ descriptor, requirement }) => descriptor.modelSatisfies({ fact: descriptor.modelFact(model), requirement }).satisfied))
+				: usable;
+			const pool = capable.length ? capable : usable;
+
+			let selected;
+			if (options.routeCursor && declared.length && capable.length && capable.length < usable.length) {
+				const index = options.routeCursor.get(group.name) ?? 0;
+				options.routeCursor.set(group.name, (index + 1) % pool.length);
+				selected = pool[index % pool.length];
+			} else {
+				const randomIndex = Math.min(pool.length - 1, Math.max(0, Math.floor((options.rng ?? Math.random)() * pool.length)));
+				selected = pool[randomIndex];
+			}
+			route = {
+				status: "routed",
+				requestedGroup,
+				groupName: group.name,
+				model: selected.model,
+				provider: selected.entry.provider,
+				modelId: selected.entry.modelId,
+				thinking: clampThinkingLevel(selected.model, selected.entry.thinkingLevel ?? options.parentThinking),
+			};
+		}
+	}
 	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };
 	if (group && route.status === "routed") {
 		const groupCapabilityCeilings = registry.descriptors.flatMap((descriptor) => {
@@ -112,14 +171,24 @@ export function resolveSpawnModelRoute(options: { requestedGroup?: string; const
 	}
 	const modalityViolations = violations.filter((violation) => violation.key === "modalities");
 	if (modalityViolations.length) {
-		const missingFromGroup = modalityViolations.filter((violation) => violation.scope === "group").flatMap((violation) => violation.satisfaction.missing as ModelGroupModality[] ?? []);
-		const missingFromModel = modalityViolations.filter((violation) => violation.scope === "model").flatMap((violation) => violation.satisfaction.missing as ModelGroupModality[] ?? []);
+		const groupViolations = modalityViolations.filter((violation) => violation.scope === "group");
+		const missingFromGroup = groupViolations.flatMap((violation) => violation.satisfaction.missing as ModelGroupModality[] ?? []);
+		const modelViolations = modalityViolations.filter((violation) => violation.scope === "model");
+		const missingFromModel = modelViolations.flatMap((violation) => violation.satisfaction.missing as ModelGroupModality[] ?? []);
 		const codec = registry.get("modalities")!.requirement;
 		const ordered = (values: readonly ModelGroupModality[]) => {
 			const decoded = codec.decode({ required: values }, "modalities");
 			return decoded.ok ? decoded.value as ModelGroupModality[] : [...values];
 		};
-		throw new SpawnRouteError(group?.name ?? (requestedGroup || "<inherited>"), "missing-modality", { missingModalities: ordered([...missingFromGroup, ...missingFromModel]), missingFromGroup: ordered(missingFromGroup), missingFromModel: ordered(missingFromModel), provider: route.provider, modelId: route.modelId, knownGroup: Boolean(group) });
+		const missingModalities = ordered([...missingFromGroup, ...missingFromModel]);
+		throw new SpawnRouteError(group?.name ?? (requestedGroup || "<inherited>"), "missing-modality", {
+			missingModalities,
+			missingFromGroup: ordered(missingFromGroup),
+			missingFromModel: ordered(missingFromModel),
+			provider: route.provider,
+			modelId: route.modelId,
+			knownGroup: Boolean(group),
+		});
 	}
 	if (violations.length) throw new SpawnRouteError(group?.name ?? (requestedGroup || "<inherited>"), "constraint-unsatisfied", { constraintUnsatisfied: violations, provider: route.provider, modelId: route.modelId, knownGroup: Boolean(group) });
 	return route;
