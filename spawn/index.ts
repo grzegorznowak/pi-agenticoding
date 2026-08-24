@@ -288,13 +288,17 @@ const SPAWN_DESCRIPTION =
 
 const SPAWN_PROMPT_SNIPPET = "Spawn a focused subtask agent";
 
-const SPAWN_PROMPT_GUIDELINES = [
-	"Use spawn to delegate isolated work to child agents. They are trusted extensions of you with their own context and the same authority. Only condensed results are returned.",
-	"If the operator requests a known Model Group confidently, pass its exact name as group. If no known/confident group is requested, omit group so the child inherits the parent model/thinking.",
-	`Declare constraints when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
-	`Valid modality values are exactly text, image, or reasoning — do not invent capability names (e.g. \"code\"). Invalid values are rejected before any child is created.`,
-	`A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.`,
-];
+function spawnPromptGuidelines(constraintRegistry: ConstraintRegistry): string[] {
+	const constraintKeys = constraintRegistry.descriptors.map((descriptor) => descriptor.key);
+	return [
+		"Use spawn to delegate isolated work to child agents. They are trusted extensions of you with their own context and the same authority. Only condensed results are returned.",
+		"If the operator requests a known Model Group confidently, pass its exact name as group. If no known/confident group is requested, omit group so the child inherits the parent model/thinking.",
+		`Declare constraints when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
+		`A constraint is keyed by its exact name (${constraintKeys.join(", ")}); values must match the key's schema — unknown keys or invalid values are rejected before any child is created.`,
+		"A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.",
+		`Valid modality values are exactly text, image, or reasoning — do not invent capability names (e.g. \"code\"). Invalid values are rejected before any child is created.`,
+	];
+}
 
 export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 	return Type.Object({
@@ -307,7 +311,7 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 			description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
 		})),
 		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
-			description: "Capability requirements for the delegated task, keyed by constraint name. Keys and values are defined by the constraint registry; unknown keys or invalid values are rejected before a child is created.",
+			description: `Capability requirements for the delegated task, keyed by constraint name. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — values must match the key's schema; unknown keys or invalid values are rejected before a child is created.`,
 		})),
 		thinking: Type.Optional(StringEnum(
 			["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
@@ -655,7 +659,7 @@ export function registerSpawnTool(
 		label: "Spawn",
 		description: SPAWN_DESCRIPTION,
 		promptSnippet: SPAWN_PROMPT_SNIPPET,
-		promptGuidelines: SPAWN_PROMPT_GUIDELINES,
+		promptGuidelines: spawnPromptGuidelines(constraintRegistry),
 		parameters: buildSpawnParameters(constraintRegistry),
 		renderShell: "self",
 

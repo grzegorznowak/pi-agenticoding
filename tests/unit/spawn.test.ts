@@ -955,6 +955,22 @@ test("spawn tool schema validates constraints via Value.Check", () => {
 	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: "text" } }), false, "non-object requirement rejected");
 });
 
+test("spawn constraints description enumerates the registry keys (production)", () => {
+	const pi = createTestPI();
+	registerSpawnTool(pi as any, createState());
+	const parameters = (pi.tools.get("spawn") as any).parameters;
+	const constraintsDesc = parameters.properties.constraints.description as string;
+	assert.ok(constraintsDesc.includes("Keys: modalities"), "description names the production constraint key");
+});
+
+test("spawn constraints description enumerates injected registry keys", () => {
+	const pi = createTestPI();
+	registerSpawnTool(pi as any, createState(), undefined, createConstraintRegistry([testMinContext]));
+	const parameters = (pi.tools.get("spawn") as any).parameters;
+	const constraintsDesc = parameters.properties.constraints.description as string;
+	assert.ok(constraintsDesc.includes("Keys: testMinContext"), "description names the injected registry's constraint key");
+});
+
 test("executeSpawn forwards inherited constraints to routing and succeeds when satisfied", async () => {
 	const pi = createTestPI();
 	pi.setActiveTools(["read", "spawn"]);
