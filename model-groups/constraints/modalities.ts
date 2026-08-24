@@ -77,7 +77,7 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		},
 		encode: (value) => ({ required: [...value] }),
 		equals: (left, right) => modalityCodec().equals(left, right),
-		schema: Type.Object({ required: modalityCodec().schema }, { description: `required input modalities for the delegated task — values must be exactly ${MODEL_GROUP_MODALITIES.join(", ")} (no other capability names)` }),
+		schema: Type.Object({ required: modalityCodec().schema }, { description: `required input modalities for the delegated task — shape is an object with a single "required" array key, e.g. { "required": ["text", "reasoning"] } (not a bare array). Array entries must be exactly ${MODEL_GROUP_MODALITIES.join(", ")} (no other capability names)` }),
 	},
 	editor: { kind: "multi-select", label: "Modalities", choices: (evaluation) => evaluation.aggregate.supported, automatic: (evaluation) => `Automatic (${evaluation.aggregate.common.filter((modality) => modality !== "reasoning").join(", ") || "none"})` },
 	present: {

@@ -296,7 +296,7 @@ function spawnPromptGuidelines(constraintRegistry: ConstraintRegistry): string[]
 		`Declare constraints when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
 		`A constraint is keyed by its exact name (${constraintKeys.join(", ")}); values must match the key's schema — unknown keys or invalid values are rejected before any child is created.`,
 		"A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.",
-		`Valid modality values are exactly text, image, or reasoning — do not invent capability names (e.g. \"code\"). Invalid values are rejected before any child is created.`,
+		`Pass modality requirements as constraints: { modalities: { required: [\"text\", ...] } } — modalities is an object whose only key is \"required\" (an array of modality names), not a bare array, and constraints itself is a JSON object, not a JSON string. Valid entries are exactly text, image, or reasoning — do not invent capability names (e.g. \"code\"). Invalid shapes are rejected before any child is created.`,
 	];
 }
 
@@ -311,7 +311,7 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 			description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
 		})),
 		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
-			description: `Capability requirements for the delegated task, keyed by constraint name. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — values must match the key's schema; unknown keys or invalid values are rejected before a child is created.`,
+			description: `Capability requirements for the delegated task — a JSON object keyed by constraint name, not a JSON string and not an array. Keys: ${constraintRegistry.descriptors.map((descriptor) => descriptor.key).join(", ")} — each value must match its key's schema; unknown keys or invalid values are rejected before a child is created.`,
 		})),
 		thinking: Type.Optional(StringEnum(
 			["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,

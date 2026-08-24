@@ -937,6 +937,9 @@ test("spawn requirements normalize the canonical envelope", () => {
 	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image", "text"] } } }), { modalities: ["text", "image"] });
 	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } } }), { modalities: ["image"] });
 	assert.throws(() => normalizeSpawnRequirements({ constraints: { unknown: {} } }), /Unknown spawn constraint/);
+	assert.throws(() => normalizeSpawnRequirements({ constraints: "{\"modalities\":{\"required\":[\"text\"]}}" as any }), /must be an object/);
+	assert.throws(() => normalizeSpawnRequirements({ constraints: { modalities: ["text"] } }), /must be an object with required modalities/);
+	assert.throws(() => normalizeSpawnRequirements({ constraints: { modalities: ["required", ["text"]] } }), /must be an object with required modalities/);
 	assert.deepEqual(normalizeSpawnRequirements({}), normalizeSpawnRequirements({ constraints: {}}));
 });
 
@@ -953,6 +956,9 @@ test("spawn tool schema validates constraints via Value.Check", () => {
 	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["text", "text"] } } }), false, "duplicates rejected");
 	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: { required: ["audio"] } } }), false, "out-of-vocabulary rejected");
 	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: "text" } }), false, "non-object requirement rejected");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: "{\"modalities\":{\"required\":[\"text\"]}}" }), false, "stringified constraints rejected");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: ["text", "image"] } }), false, "bare-array modalities rejected");
+	assert.equal(Value.Check(schema, { prompt: "Do the task", constraints: { modalities: ["required", ["text"]] } }), false, "array-with-embedded-required rejected");
 });
 
 test("spawn constraints description enumerates the registry keys (production)", () => {
