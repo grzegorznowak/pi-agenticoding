@@ -16,7 +16,7 @@ function modalityCodec(): ConstraintCodec<ModelGroupModality[]> {
 		},
 		encode: (value) => [...value],
 		equals: (left, right) => left.length === right.length && left.every((value, index) => value === right[index]),
-		schema: Type.Array(Type.Union(MODEL_GROUP_MODALITIES.map((value) => Type.Literal(value))), { uniqueItems: true }),
+		schema: Type.Array(Type.Union(MODEL_GROUP_MODALITIES.map((value) => Type.Literal(value))), { uniqueItems: true, description: `one of: ${MODEL_GROUP_MODALITIES.join(", ")}` }),
 	};
 }
 
@@ -77,7 +77,7 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 		},
 		encode: (value) => ({ required: [...value] }),
 		equals: (left, right) => modalityCodec().equals(left, right),
-		schema: Type.Object({ required: modalityCodec().schema }),
+		schema: Type.Object({ required: modalityCodec().schema }, { description: `required input modalities for the delegated task — values must be exactly ${MODEL_GROUP_MODALITIES.join(", ")} (no other capability names)` }),
 	},
 	editor: { kind: "multi-select", label: "Modalities", choices: (evaluation) => evaluation.aggregate.supported, automatic: (evaluation) => `Automatic (${evaluation.aggregate.common.filter((modality) => modality !== "reasoning").join(", ") || "none"})` },
 	present: {

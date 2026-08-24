@@ -292,13 +292,11 @@ const SPAWN_PROMPT_GUIDELINES = [
 	"Use spawn to delegate isolated work to child agents. They are trusted extensions of you with their own context and the same authority. Only condensed results are returned.",
 	"If the operator requests a known Model Group confidently, pass its exact name as group. If no known/confident group is requested, omit group so the child inherits the parent model/thinking.",
 	`Declare constraints when the delegated task needs ${MODEL_GROUP_MODALITY_PROSE} capability; do not work around a missing required modality with third-party tools.`,
+	`Valid modality values are exactly text, image, or reasoning — do not invent capability names (e.g. \"code\"). Invalid values are rejected before any child is created.`,
 	`A specified group is binding: if the operator asks for a specific group and it lacks a needed capability, do NOT substitute a different group or inherit the parent model. Stop and report to the operator that the named group cannot satisfy the task, and ask how to proceed.`,
 ];
 
 export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
-	const constraintRequirements = Type.Object(
-		Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any,
-	);
 	return Type.Object({
 		prompt: Type.String({
 			description:
@@ -308,7 +306,9 @@ export function buildSpawnParameters(constraintRegistry: ConstraintRegistry) {
 		group: Type.Optional(Type.String({
 			description: "Optional exact Model Group name for child model routing. Omit to inherit the parent model/thinking.",
 		})),
-		constraints: Type.Optional(constraintRequirements),
+		constraints: Type.Optional(Type.Object(Object.fromEntries(constraintRegistry.descriptors.map((descriptor) => [descriptor.key, descriptor.requirement.schema])) as any, {
+			description: "Capability requirements for the delegated task, keyed by constraint name. Keys and values are defined by the constraint registry; unknown keys or invalid values are rejected before a child is created.",
+		})),
 		thinking: Type.Optional(StringEnum(
 			["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
 			{
