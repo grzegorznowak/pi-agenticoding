@@ -1138,6 +1138,51 @@ test("model groups TUI focuses the searchable Model Input only on the focused Mo
 	assert.equal(rendered(c).includes(CURSOR_MARKER), false);
 });
 
+test("model groups TUI model picker preserves the id tail behind an ellipsis and shows the full id in the Selected detail", () => {
+	const models = [
+		{ provider: "openai", id: "gpt-5.2-codex-2025-07-01-rc1", name: "GPT-5.2 Codex", reasoning: true },
+		{ provider: "openai", id: "o3-pro-2025-04-16-nightly-build", name: "O3 Pro", reasoning: true },
+		{ provider: "openai", id: "gpt-4o", reasoning: true },
+	];
+	const c = atSearchableModel(models);
+	pressAndRender(c, DOWN); // select the long-id row so the detail shows it
+	// Narrow terminal: rows keep the provider and the distinguishing id tail, cut head-first with a visible ellipsis.
+	const narrow = stripAnsi(rendered(c, 36));
+	assert.match(narrow, /…/, "truncation is marked with a visible ellipsis");
+	assert.match(narrow, /openai\/…/, "provider stays on truncated rows");
+	assert.match(narrow, /openai\/…5\.2-codex-2025-07-01-rc1/, "the distinguishing id suffix survives truncation");
+	assert.match(narrow, /openai\/…2025-04-16-nightly-build/, "second row keeps its own tail");
+	assert.match(narrow, /openai\/gpt-4o/, "short ids stay untouched");
+	assert.match(narrow, /Selected:/);
+	// The detail block shows the full id whenever it fits the terminal (width 44 here).
+	const mid = stripAnsi(rendered(c, 44));
+	assert.match(mid, /openai\/gpt-5\.2-codex-2025-07-01-rc1/, "detail shows the full id even when the row truncates");
+	// Wide terminal: rows and the detail show the full identity.
+	const wide = stripAnsi(rendered(c, 100));
+	assert.doesNotMatch(wide, /…/, "no ellipsis when everything fits");
+	assert.match(wide, /openai\/gpt-5\.2-codex-2025-07-01-rc1/);
+	assert.match(wide, /openai\/o3-pro-2025-04-16-nightly-build/);
+	assert.match(wide, /GPT-5\.2 Codex/, "detail shows the display name");
+});
+
+test("model groups TUI model picker detail keeps a width-bounded fixed line count and hides with no matches", () => {
+	const models = [
+		{ provider: "openai", id: "gpt-5.2-codex-2025-07-01-rc1", name: "GPT-5.2 Codex", reasoning: true },
+		{ provider: "openai", id: "o3-pro-2025-04-16-nightly-build", name: "O3 Pro", reasoning: true },
+	];
+	const c = atSearchableModel(models);
+	const wideLines = c.render(200);
+	const narrowLines = c.render(12);
+	assert.equal(narrowLines.length, wideLines.length, "detail block must not wrap: same line count at any width");
+	assert.ok(narrowLines.every((line) => visibleWidth(line) <= 12), "every line bounded at 12 cols");
+	assert.match(stripAnsi(narrowLines.join("\n")), /…/);
+	assert.match(stripAnsi(wideLines.join("\n")), /openai\/gpt-5\.2-codex-2025-07-01-rc1/);
+	// No matches: the detail block disappears.
+	pressAndRender(c, ..."zzz");
+	assert.match(rendered(c), /No matching models/);
+	assert.doesNotMatch(rendered(c), /Selected:/);
+});
+
 test("model groups TUI persistence notifications escape each hostile dynamic field", () => {
 	const notifications: string[] = [];
 	const raw = "\n\u001b]8;;https://example.test\u0007field";

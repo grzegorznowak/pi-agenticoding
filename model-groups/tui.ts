@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel, type Api } from "@earendil-works/pi-ai";
-import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type TUI } from "@earendil-works/pi-tui";
+import { Container, fuzzyFilter, Input, Key, matchesKey, SelectList, sliceByColumn, truncateToWidth, visibleWidth, type Component, type Focusable, type SelectItem, type SelectListLayoutOptions, type SelectListTruncatePrimaryContext, type TUI } from "@earendil-works/pi-tui";
 import {
 	createGroup,
 	deleteGroup,
@@ -587,13 +587,53 @@ export function createModelGroupsComponent(
 		activeSelect = models.length > 0 ? buildModelSelect(models) : null;
 	}
 
+	// Model rows are "provider/id" labels; the library's default truncation cuts the
+	// tail silently (no marker). Instead, keep the distinguishing id tail behind a
+	// visible ellipsis and dim the provider prefix on non-selected rows.
+	const MODEL_ROW_ELLIPSIS = "…";
+
+	function tailOfWidth(text: string, maxWidth: number): string {
+		const width = visibleWidth(text);
+		if (width <= maxWidth) return text;
+		return sliceByColumn(text, Math.max(0, width - maxWidth), maxWidth, true);
+	}
+
+	function truncateModelRow(context: SelectListTruncatePrimaryContext): string {
+		const { text, maxWidth, isSelected } = context;
+		if (maxWidth <= 0) return "";
+		if (visibleWidth(text) <= maxWidth) {
+			const slash = text.lastIndexOf("/");
+			if (isSelected || slash < 0) return text;
+			return `${dim(text.slice(0, slash + 1))}${text.slice(slash + 1)}`;
+		}
+		const slash = text.lastIndexOf("/");
+		const provider = slash >= 0 ? text.slice(0, slash + 1) : "";
+		const id = slash >= 0 ? text.slice(slash + 1) : text;
+		const providerWidth = visibleWidth(provider);
+		const ellipsisWidth = visibleWidth(MODEL_ROW_ELLIPSIS);
+		let keptProvider = "";
+		let tailBudget = maxWidth - ellipsisWidth;
+		if (providerWidth > 0 && providerWidth + ellipsisWidth < maxWidth) {
+			keptProvider = isSelected ? provider : dim(provider);
+			tailBudget = maxWidth - providerWidth - ellipsisWidth;
+		}
+		const tail = tailOfWidth(id, tailBudget);
+		return tail ? `${keptProvider}${MODEL_ROW_ELLIPSIS}${tail}` : `${keptProvider}${MODEL_ROW_ELLIPSIS}`;
+	}
+
 	function buildModelSelect(models: Model<Api>[]): SelectList {
 		const items = models.map((model, index) => ({
 			value: String(index),
 			label: modelDisplay(model),
 			description: modalityLetterRun(getModalitiesModelFact(model)),
 		}));
-		const select = new SelectList(items, 10, selectTheme);
+		const select = new SelectList(items, 10, selectTheme, {
+			// A wider primary column keeps common ids visible; rows still truncate
+			// tail-first through truncateModelRow when the terminal is narrow.
+			minPrimaryColumnWidth: 24,
+			maxPrimaryColumnWidth: 48,
+			truncatePrimary: truncateModelRow,
+		});
 		select.setSelectedIndex(Math.min(state.row, Math.max(0, items.length - 1)));
 		select.onSelectionChange = (item) => { state.row = Number(item.value); syncInputFocus(); };
 		select.onSelect = (item) => {
@@ -735,6 +775,25 @@ export function createModelGroupsComponent(
 		return container;
 	}
 
+	function selectedModelDetailComponent(model: Model<Api>): Component {
+		return {
+			render: (width: number) => {
+				const full = `${escapeDisplayLabel(model.provider)}/${escapeDisplayLabel(model.id)}`;
+				const name = model.name ? escapeDisplayLabel(model.name) : undefined;
+				const lines = [dim("Selected:")];
+				if (width > 2) {
+					lines.push(truncateToWidth(`  ${theme.fg("accent", full)}`, width, MODEL_ROW_ELLIPSIS));
+					if (name !== undefined) lines.push(truncateToWidth(`  ${dim(name)}`, width, MODEL_ROW_ELLIPSIS));
+				} else {
+					lines.push(theme.fg("accent", full));
+					if (name !== undefined) lines.push(dim(name));
+				}
+				return lines;
+			},
+			invalidate: () => {},
+		};
+	}
+
 	function renderWizardComponent(): Component {
 		const container = new Container();
 		let title: string;
@@ -752,6 +811,7 @@ export function createModelGroupsComponent(
 				container.addChild(textLine(theme.fg("dim", "  No matching models")));
 			} else {
 				container.addChild(buildModelSelect(models));
+				container.addChild(selectedModelDetailComponent(models[Math.min(state.row, models.length - 1)]));
 			}
 			return container;
 		} else {
