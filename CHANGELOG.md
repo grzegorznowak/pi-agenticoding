@@ -7,22 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-21
+
 ### Added
 
 - **Model Groups manager** — added `/model-groups` with durable project/global JSON persistence, boot validation, CRUD TUI flows, per-model thinking levels, and operator notifications for invalid configs or unavailable model refs.
 - **Model Groups spawn routing** — `spawn` can route children through an optional exact Model Group name with names-only prompt guidance, `#group` autocomplete sugar that shows model/thinking details, authenticated random entry selection, thinking inheritance/clamping, and routed/fallback result identity lines.
 - **Capability-aware spawn routing** — a Model Group now carries a capability set (currently input modalities: `text` and `image`) derived from its configured, authenticated members, with the option to narrow it via an explicit override capped at the member union. A `spawn` call can declare `constraints` the delegated task needs; the router checks the group and the exact selected model and fails before any child would be created when the requirement can't be met. The main-session prompt lists each group's capabilities.
 - **Pluggable capability kernel** — added a small constraint system so each capability is one descriptor (read fact → aggregate → reconcile override → satisfy check → present). Modalities are the first, and only, production capability; a synthetic test-only descriptor exercises the full extension point so a future capability (e.g. min context window) needs no edits to config load, spawn routing, or UI render.
+- **Frontmatter-driven model selection** — skills and prompts can declare `model`, `model-group`, and `thinking` frontmatter to control model routing and reasoning level per invocation. Resolved during idle input and visibly blocked while streaming; an explicit `model` overrides `model-group`; multi-slash model IDs are supported; invalid values block command expansion with operator notifications, and invalid thinking warns while a valid model still applies.
+- **Handoff `discardPages`** — the handoff tool accepts `discardPages` to prune stale notebook pages, staged transactionally via a sequential epoch and committed only after compaction succeeds; interrupted or failed discards retain pages. Notebook rehydration is branch-scoped with generation markers and an epoch watermark, ignores future-format entries, and handoff now verifies notebook completeness first and reports completion truthfully after the discard commit.
 
 ### Changed
 
-- Improved Model Groups editing with a searchable complete-result, ten-visible-row add-model picker and a prompt-free inline group-name editor.
-- Migrated child spawning to Pi's public selected-model and child-owned runtime APIs, added `max` thinking support, and disposed every created child session exactly once across completion, failure, abort, and reset races. Pi 0.82.0 and Node 22.19.0 are now the documented minimums; parent-only transient provider/auth state fails explicitly without model fallback.
+- **Model Groups editing** — searchable complete-result and ten-visible-row add-model pickers, plus a prompt-free inline group-name editor.
+- **Spawn lifecycle** — migrated child spawning to Pi's public selected-model and child-owned runtime APIs, added `max` thinking support, and disposed every created child session exactly once across completion, failure, abort, and reset races. Pi 0.84.1 and Node 22.19.0 are now the documented minimums; parent-only transient provider/auth state fails explicitly without model fallback.
 - **Model Group editing** — the editor now shows per-member capability chips (T/I) and lets users narrow the automatically derived modality set with an explicit override; group capability summaries also appear in `#group` autocomplete.
 
 ### Fixed
 
-- Model Groups add-model navigation now uses Pi's key matcher for Escape/left-arrow handling and filters provider/model choices to authenticated models.
+- **Model Groups add-model navigation** — now uses Pi's key matcher for Escape/left-arrow handling and filters provider/model choices to authenticated models.
 
 ## [0.4.0] - 2026-07-22
 
@@ -149,7 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Comprehensive test suite** — 50+ tests covering spawn execution and rendering (concurrency, cancellation, truncation, stale detection, ownership lifecycle, microtask batching), ledger tools (add/get/list, staleness, rehydration, empty states, prompt hints), handoff (tool, command, compaction), watchdog (nudge injection, enforcement), and extension lifecycle.
 - **MIT licensed** — open-source permissive license.
 
-[Unreleased]: https://github.com/agenticoding/pi-agenticoding/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/agenticoding/pi-agenticoding/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/agenticoding/pi-agenticoding/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/agenticoding/pi-agenticoding/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/agenticoding/pi-agenticoding/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/agenticoding/pi-agenticoding/compare/v0.1.0...v0.2.0
