@@ -359,7 +359,7 @@ export function createChildTools(
 export type SpawnConstraintRequirements = Record<string, unknown>;
 export interface SpawnParameters { prompt: string; group?: string; constraints?: SpawnConstraintRequirements; thinking?: ThinkingValue }
 
-/** Decode the public constraint envelope once, rejecting unknown keys before routing. */
+/** Validate the public constraint envelope once, rejecting unknown keys before routing. */
 export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constraints">, registry: ConstraintRegistry = productionConstraintRegistry): SpawnConstraintRequirements {
 	const raw = params.constraints;
 	if (raw !== undefined && (!raw || typeof raw !== "object" || Array.isArray(raw))) throw new Error("Spawn constraints must be an object.");
@@ -369,7 +369,10 @@ export function normalizeSpawnRequirements(params: Pick<SpawnParameters, "constr
 		if (!descriptor) throw new Error(`Unknown spawn constraint requirement '${key}'.`);
 		const decoded = descriptor.requirement.decode(value, `constraints.${key}`);
 		if (!decoded.ok) throw new Error(decoded.message);
-		normalized[key] = decoded.value;
+		// Keep the envelope shape: resolveSpawnModelRoute is the single decoder of
+		// requirement values (schema-shaped envelope in, engine value out), so the
+		// router never sees raw/partial shapes that could bypass descriptor validation.
+		normalized[key] = value;
 	}
 	return normalized;
 }
@@ -408,7 +411,6 @@ export function executeSpawn(
 			parentThinking: inheritedChildThinking,
 			modelRegistry: ctx.modelRegistry,
 			constraintRegistry,
-			routeCursor: state.spawnRouteCursors,
 		});
 		const childModel = route.model;
 		const requestedChildThinking: ThinkingValue = route.thinking;

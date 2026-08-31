@@ -20,7 +20,11 @@ export function __setModelGroupsFsForTests(next: Partial<FsOps> | null): void { 
 export function modelGroupsPath(scope: ModelGroupScope, cwd: string, projectConfigDirName = CONFIG_DIR_NAME): string { return scope === "global" ? path.join(homedir(), ".pi", "agent", "pi-agenticoding", "model-groups.json") : path.join(cwd, projectConfigDirName, "pi-agenticoding", "model-groups.json"); }
 function ownGroups(): Record<string, ModelGroupDef> { return Object.create(null) as Record<string, ModelGroupDef>; }
 function cloneDef(def: ModelGroupDef): ModelGroupDef {
-	const constraints = def.constraints === undefined ? undefined : { ...def.constraints, ...(Array.isArray(def.constraints.modalities) ? { modalities: [...def.constraints.modalities] } : {}) };
+	// Deep-clone the constraint envelope: persisted constraint values are
+	// JSON-serializable by contract, so structuredClone is safe and keeps
+	// opaque/future constraint values (not just the known modalities array)
+	// from aliasing between the store and caller-held views.
+	const constraints = def.constraints === undefined ? undefined : structuredClone(def.constraints);
 	return { ...def, models: def.models.map((model) => ({ ...model })), ...(constraints === undefined ? {} : { constraints }) };
 }
 function defineGroup(groups: Record<string, ModelGroupDef>, name: string, def: ModelGroupDef): void { Object.defineProperty(groups, name, { value: cloneDef(def), enumerable: true, writable: true, configurable: true }); }

@@ -91,7 +91,6 @@ type SpawnRouteOptions = {
 	modelRegistry: Pick<ModelRegistry, "find" | "hasConfiguredAuth">;
 	constraintRegistry?: ConstraintRegistry;
 	rng?: () => number;
-	routeCursor?: Map<string, number>;
 };
 type DeclaredRequirement = { descriptor: AnyConstraintDescriptor; requirement: unknown };
 type RoutedMember = { entry: ResolvedModelGroup["models"][number]; model: Model<Api> };
@@ -101,7 +100,7 @@ function decodeDeclared(registry: ConstraintRegistry, requirements: Readonly<Rec
 	return () => declaredRequirements ??= Object.entries(requirements).map(([key, rawRequirement]) => {
 		const descriptor = registry.get(key);
 		if (!descriptor) throw new Error(`Unknown spawn constraint requirement '${key}'.`);
-		const decoded = Array.isArray(rawRequirement) ? { ok: true as const, value: rawRequirement } : descriptor.requirement.decode(rawRequirement, `constraints.${key}`);
+		const decoded = descriptor.requirement.decode(rawRequirement, `constraints.${key}`);
 		if (!decoded.ok) throw new Error(decoded.message);
 		return { descriptor, requirement: decoded.value };
 	});
@@ -127,17 +126,12 @@ function usableMembers(group: ResolvedModelGroup, modelRegistry: SpawnRouteOptio
 		.filter((entry): entry is RoutedMember => Boolean(entry));
 }
 
-function selectMember(group: ResolvedModelGroup, usable: RoutedMember[], declared: readonly DeclaredRequirement[], options: Pick<SpawnRouteOptions, "rng" | "routeCursor">): RoutedMember {
+function selectMember(usable: RoutedMember[], declared: readonly DeclaredRequirement[], rng?: () => number): RoutedMember {
 	const capable = declared.length
 		? usable.filter(({ model }) => declared.every(({ descriptor, requirement }) => descriptor.modelSatisfies({ fact: descriptor.modelFact(model), requirement }).satisfied))
 		: usable;
 	const pool = capable.length ? capable : usable;
-	if (options.routeCursor && declared.length && capable.length && capable.length < usable.length) {
-		const index = options.routeCursor.get(group.name) ?? 0;
-		options.routeCursor.set(group.name, (index + 1) % pool.length);
-		return pool[index % pool.length];
-	}
-	const randomIndex = Math.min(pool.length - 1, Math.max(0, Math.floor((options.rng ?? Math.random)() * pool.length)));
+	const randomIndex = Math.min(pool.length - 1, Math.max(0, Math.floor((rng ?? Math.random)() * pool.length)));
 	return pool[randomIndex];
 }
 
@@ -219,7 +213,7 @@ export function resolveSpawnModelRoute(options: SpawnRouteOptions): SpawnModelRo
 		if (group.models.length === 0) throw new SpawnRouteError(group.name, "empty");
 		const usable = usableMembers(group, options.modelRegistry);
 		if (!usable.length) throw new SpawnRouteError(group.name, "no-usable-models");
-		const selected = selectMember(group, usable, getDeclaredRequirements(), options);
+		const selected = selectMember(usable, getDeclaredRequirements(), options.rng);
 		route = buildRoutedRoute(group, requestedGroup!, usable, selected, options);
 	}
 	const resolution = group ? resolveConstraintMembers(group.models, options.modelRegistry) : { members: [] };

@@ -244,7 +244,7 @@ test("spawn execute composes Model Group routing with readonly child guards", as
 	assert.deepEqual(result.details.route, { status: "routed", group: "review", provider: "openai", modelId: "gpt-routed" });
 });
 
-test("spawn round-robins across capable members via the session cursor", async () => {
+test("spawn routes capability requirements to capable members via random selection on the filtered pool", async () => {
 	const pi = createTestPI();
 	pi.setActiveTools(["read", "bash", "spawn"]);
 	const state = createState();
@@ -268,9 +268,18 @@ test("spawn round-robins across capable members via the session cursor", async (
 		find: (_p: string, id: string) => id === "gpt-cap-a" ? capA : id === "gpt-cap-b" ? capB : id === "gpt-text" ? textOnly : undefined,
 		hasConfiguredAuth: (m: any) => m === capA || m === capB || m === textOnly,
 	} } as any;
-	await pi.tools.get("spawn").execute("spawn-a", { prompt: "t", group: "multi", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, ctx);
-	await pi.tools.get("spawn").execute("spawn-b", { prompt: "t", group: "multi", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, ctx);
-	assert.deepEqual(seenModels.sort(), ["gpt-cap-a", "gpt-cap-b"].sort(), "two image-required spawns should alternate across the two capable members");
+	// Deterministic random draws: first spawn lands on the first capable member,
+	// the second on the second — proving selection is random over the filtered pool.
+	const originalRandom = Math.random;
+	let draw = 0;
+	Math.random = () => (draw++ === 0 ? 0.05 : 0.95);
+	try {
+		await pi.tools.get("spawn").execute("spawn-a", { prompt: "t", group: "multi", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, ctx);
+		await pi.tools.get("spawn").execute("spawn-b", { prompt: "t", group: "multi", constraints: { modalities: { required: ["image"] } } }, undefined, undefined, ctx);
+	} finally {
+		Math.random = originalRandom;
+	}
+	assert.deepEqual(seenModels, ["gpt-cap-a", "gpt-cap-b"], "each spawn draws a capable member from the filtered pool; non-capable members are never selected");
 });
 
 test("spawn injects a capability ceiling notice for a routed group with image disabled", async () => {
@@ -933,9 +942,9 @@ test("registered spawn tool schema accepts injected scalar requirements", () => 
 	);
 });
 
-test("spawn requirements normalize the canonical envelope", () => {
-	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image", "text"] } } }), { modalities: ["text", "image"] });
-	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } } }), { modalities: ["image"] });
+test("spawn requirements validate the canonical envelope and keep its shape", () => {
+	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image", "text"] } } }), { modalities: { required: ["image", "text"] } });
+	assert.deepEqual(normalizeSpawnRequirements({ constraints: { modalities: { required: ["image"] } } }), { modalities: { required: ["image"] } });
 	assert.throws(() => normalizeSpawnRequirements({ constraints: { unknown: {} } }), /Unknown spawn constraint/);
 	assert.throws(() => normalizeSpawnRequirements({ constraints: "{\"modalities\":{\"required\":[\"text\"]}}" as any }), /must be an object/);
 	assert.throws(() => normalizeSpawnRequirements({ constraints: { modalities: ["text"] } }), /must be an object with required modalities/);

@@ -76,7 +76,7 @@ test("automatic mixed groups default effective to the union so a capability rout
 	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "mixed-auto-noreasoning", constraints: { modalities: { required: ["reasoning"] } }, groups: [routed2], parentModel: parent, parentThinking: "low", modelRegistry: reg2 }), (error: unknown) => error instanceof SpawnRouteError && error.reason === "missing-modality" && error.missingFromGroup[0] === "reasoning");
 });
 
-test("capability pre-selection excludes unauthenticated capable models and round-robins the capable set", () => {
+test("capability pre-selection excludes unauthenticated capable models and picks randomly from the capable set", () => {
 	const parent = model("p", "parent");
 	const capA = model("p", "cap-a", { input: ["text", "image"] });
 	const capB = model("p", "cap-b", { input: ["text", "image"] });
@@ -91,16 +91,18 @@ test("capability pre-selection excludes unauthenticated capable models and round
 	routed.modalities = { common: ["text"], supported: ["text", "image"], effective: ["text", "image"] };
 	// cap-unavailable is not auth-configured, so it must be excluded from the capable pool.
 	const reg = registry([parent, capA, capB, text], new Set(["p:cap-a", "p:cap-b", "p:text"]));
-	const cursor = new Map();
-	const pick = (rng: () => number) => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, routeCursor: cursor, rng }).modelId;
+	let draws = 0;
+	// Random selection over the filtered pool: alternating draws land on each capable member.
+	const pick = () => resolveSpawnModelRoute({ requestedGroup: "mixed", constraints: { modalities: { required: ["image"] } }, groups: [routed], parentModel: parent, parentThinking: "low", modelRegistry: reg, rng: () => (draws++ % 2 === 0 ? 0.05 : 0.95) }).modelId;
 	const seen = new Set<string>();
 	for (let i = 0; i < 6; i++) {
-		const id = pick(() => 0); // rng is ignored when a capability cursor is present
+		const id = pick();
 		assert.ok(id !== "text", "must never pick the non-capable member");
 		assert.ok(id !== "cap-unavailable", "must never pick the unauthenticated member");
 		seen.add(id);
 	}
-	assert.ok(seen.has("cap-a") && seen.has("cap-b"), `expected both capable members to be reached, got ${[...seen]}`);
+	assert.equal(draws, 6, "every selection must consult the RNG — no cursor short-circuit");
+	assert.ok(seen.has("cap-a") && seen.has("cap-b"), `expected random selection to reach both capable members, got ${[...seen]}`);
 });
 
 test("known group missing effective modality and inherited fallback reject requirements", () => {
@@ -131,11 +133,16 @@ test("generic scalar requirements narrow mixed groups in both comparison directi
 	assert.deepEqual(budgetRoute.groupCapabilityCeilings, ["Maximum output budget is capped at 1 credits for this group."]);
 });
 
-test("routed empty modality requirements use uniform RNG instead of the capability cursor", () => {
+test("bare-array constraint requirements are rejected by the descriptor codec", () => {
+	const parent = model("p", "parent");
+	const text = model("p", "text");
+	assert.throws(() => resolveSpawnModelRoute({ requestedGroup: "g", constraints: { modalities: ["image"] } as any, groups: [group("g", { models: [{ provider: "p", modelId: "text" }] })], parentModel: parent, parentThinking: "low", modelRegistry: registry([parent, text]) }), /must be an object with required modalities/);
+});
+
+test("routed empty modality requirements select by RNG across usable members", () => {
 	const parent = model("p", "parent");
 	const first = model("p", "first");
 	const second = model("p", "second");
-	const cursor = new Map<string, number>();
 	let rngCalls = 0;
 	const route = resolveSpawnModelRoute({
 		requestedGroup: "routed",
@@ -144,12 +151,10 @@ test("routed empty modality requirements use uniform RNG instead of the capabili
 		parentModel: parent,
 		parentThinking: "medium",
 		modelRegistry: registry([parent, first, second]),
-		routeCursor: cursor,
 		rng: () => { rngCalls++; return 0.75; },
 	});
 	assert.equal(route.modelId, "second", "the RNG-selected member wins when no members are narrowed out");
-	assert.equal(rngCalls, 1, "an empty requirement must consult RNG instead of the cursor");
-	assert.equal(cursor.size, 0, "an empty requirement must not advance a group cursor");
+	assert.equal(rngCalls, 1, "exactly one RNG draw for the member selection");
 });
 
 test("plain inherited route honors requiredModalities with empty-array no-op", () => {

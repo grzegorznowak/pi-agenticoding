@@ -336,6 +336,19 @@ test("low-level save permits shape-valid overrides while CRUD rejects union-cap-
 	__setModelGroupsFsForTests(null);
 }));
 
+test("opaque constraint values are deep-cloned on load — no aliasing between store and merged views", () => withTemp(({ cwd }) => {
+	const a = access(cwd);
+	// An opaque (unknown to the registry) nested constraint value passes through
+	// persistence untouched; the store and merged views must not share it by reference.
+	const nested = { min: 5, tags: ["a", "b"] };
+	saveModelGroups("project", a, { version: 2, groups: { deep: { models: [{ provider: "openai", modelId: "gpt-5" }], constraints: { testMinContext: nested } } } });
+	const loaded = loadModelGroups(a);
+	const merged = loaded.merged.find((g) => g.name === "deep")!;
+	(merged.constraints!.testMinContext as { min: number }).min = 99;
+	assert.equal((loaded.configs.project.groups.deep.constraints!.testMinContext as { min: number }).min, 5, "mutating the merged view must not alias the store copy");
+	assert.notEqual(merged.constraints!.testMinContext, (loaded.configs.project.groups.deep.constraints!.testMinContext as unknown), "nested constraint values must be distinct objects");
+}));
+
 test("v2 config load rejects non-array, duplicate, and out-of-vocabulary modality constraints", () => withTemp(({ cwd }) => {
 	const projectPath = modelGroupsPath("project", cwd);
 	fs.mkdirSync(path.dirname(projectPath), { recursive: true });
