@@ -312,8 +312,9 @@ export function createModelGroupsComponent(
 		if (!editor) return [];
 		// The modalities hand-edit screen is rebuilt around disabling capabilities
 		// from the union: only the toggleable media rows remain (no Automatic
-		// selector row). Text is the always-present required base and reasoning is
-		// handled per-model (thinkingLevel), so both are excluded from toggles.
+		// selector row). Text is the required base when the group's members support
+		// it and reasoning is handled per-model (thinkingLevel), so both are
+		// excluded from toggles.
 		return constraintEditorRows(editor.descriptor, editor.evaluation, state.editDraft?.constraints?.[editor.descriptor.key]).filter(
 			(row) => row.kind === "toggle" && row.value !== "reasoning" && row.value !== "text",
 		);
@@ -735,8 +736,13 @@ export function createModelGroupsComponent(
 		const effective = (editor?.evaluation.effective ?? []) as ModelGroupModality[];
 		const rows = modalityEditorRows();
 		container.addChild(textLine(theme.fg("accent", `Modalities — ${escapeDisplayLabel(current?.name ?? "")}`)));
-		// Text is the always-present base capability, not toggleable.
-		container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  [required]")}`));
+		// Text is the required base capability — not toggleable — but only when the
+		// group's members actually support it: empty groups derive no supported
+		// modalities, so they must not claim text (the empty state below speaks).
+		const supportedModalities = (editor?.evaluation.aggregate as { supported?: readonly string[] } | undefined)?.supported;
+		if (supportedModalities?.includes("text")) {
+			container.addChild(textLine(`  ${theme.fg(MODALITY_FG.text, MODALITY_LETTER.text)}${dim(" text  [required]")}`));
+		}
 		for (const [index, row] of rows.entries()) {
 			if (row.kind !== "toggle") continue;
 			const modality = row.value as ModelGroupModality;

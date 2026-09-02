@@ -338,6 +338,26 @@ test("model groups TUI text-only modalities screen is inert and states Automatic
 	assert.equal(updateCalls, 0);
 });
 
+test("model groups TUI empty-group modalities screen claims no capabilities", () => {
+	const empty = group("empty", { scope: "project" }); // models: [] — no member-derived capabilities
+	const store = {
+		updateGroup: () => { throw new Error("empty group must not commit edits"); },
+		listResolvedModelGroups: () => boot([empty]),
+	};
+	const { c } = component({ groups: [empty], store });
+	press(c, ENTER);
+	selectRenderedLabel(c, "Modalities:");
+	press(c, ENTER);
+	const screen = stripAnsi(rendered(c));
+	// The engine derives no supported/effective modalities for zero members, so the
+	// editor must not claim the text base capability — the empty state is the truth.
+	assert.match(screen, /Modalities — empty/);
+	assert.doesNotMatch(screen, /text  \[required\]/, "empty groups must not claim the text base capability");
+	assert.match(screen, /No optional media capabilities available/);
+	assert.match(screen, /Automatic — using every capability its members support/);
+	assert.match(screen, /Esc back/);
+});
+
 test("model groups TUI computes unique new-group names and opens editor after create", () => {
 	let groups = [group("new-group", { scope: "project" })];
 	const calls: string[] = [];
