@@ -70,6 +70,9 @@ export const modalitiesConstraint: ConstraintDescriptor<"modalities", ModelGroup
 	groupSatisfies({ effective, requirement }) { return satisfaction(ordered(requirement.filter((modality) => !effective.includes(modality)))); },
 	modelSatisfies({ fact, requirement }) { return satisfaction(ordered(requirement.filter((modality) => !fact.includes(modality)))); },
 	persistence: { override: modalityCodec() },
+	assertOverrideSupported({ evaluation, override }) {
+		assertModalitiesOverrideSupported(evaluation, override);
+	},
 	requirement: {
 		decode(value, path) {
 			if (!value || typeof value !== "object" || Array.isArray(value) || !("required" in value)) return { ok: false, message: `${path} must be an object with required modalities` };

@@ -28,6 +28,12 @@ export const testMinContext: ConstraintDescriptor<"testMinContext", number, Test
 	groupSatisfies: ({ effective, requirement }) => effective !== null && effective >= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
 	modelSatisfies: ({ fact, requirement }) => fact >= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
 	persistence: { override: positiveIntegerCodec },
+	assertOverrideSupported({ evaluation, override }) {
+		if (override === undefined) return;
+		if (evaluation.diagnostics.some((diagnostic) => diagnostic.code === "unsupported-override")) {
+			throw new Error(`Model group testMinContext override ${override} exceeds the supported context for this group.`);
+		}
+	},
 	requirement: positiveIntegerCodec,
 	editor: { kind: "number", label: "Test minimum context", unit: "tokens", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective },
 	present: {
@@ -59,6 +65,12 @@ export const testMaxBudget: ConstraintDescriptor<"testMaxBudget", number, TestMa
 	groupSatisfies: ({ effective, requirement }) => effective !== null && effective <= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
 	modelSatisfies: ({ fact, requirement }) => fact <= requirement ? { satisfied: true } : { satisfied: false, unsatisfied: requirement },
 	persistence: { override: positiveIntegerCodec },
+	assertOverrideSupported({ evaluation, override }) {
+		if (override === undefined) return;
+		if (evaluation.diagnostics.some((diagnostic) => diagnostic.code === "unsupported-override")) {
+			throw new Error(`Model group testMaxBudget override ${override} exceeds the supported budget for this group.`);
+		}
+	},
 	requirement: positiveIntegerCodec,
 	editor: { kind: "number", label: "Test maximum budget", unit: "credits", min: 1, step: 1, automatic: () => "Automatic", value: (evaluation) => evaluation.effective },
 	present: {

@@ -17,6 +17,8 @@ import {
 	validateModelGroups,
 } from "../../model-groups/store.js";
 import { ModelGroupsPersistenceError, type ModelGroupScope, type ModelGroupsAccess } from "../../model-groups/types.js";
+import { createConstraintRegistry } from "../../model-groups/constraints/registry.js";
+import { testMinContext } from "./model-groups-constraints-fixture.js";
 import { withTemp } from "./model-groups-helpers.js";
 
 function access(cwd: string, policy: ModelGroupsAccess["policy"] = "global-project"): ModelGroupsAccess { return { cwd, policy }; }
@@ -334,6 +336,60 @@ test("low-level save permits shape-valid overrides while CRUD rejects union-cap-
 	assert.equal(writes2, 0, "rejected update must not write");
 	assert.equal(fs.readFileSync(modelGroupsPath("project", cwd), "utf8"), before);
 	__setModelGroupsFsForTests(null);
+}));
+
+test("injected descriptors get persisted validation and CRUD cap enforcement through the registry", () => withTemp(({ cwd }) => {
+	const a = access(cwd);
+	const injected = createConstraintRegistry([testMinContext]);
+	// A model with a concrete contextWindow so the injected descriptor can evaluate it.
+	const ctxModel = { provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 };
+	const reg = registry();
+	const modelRegistry: any = { ...reg, find: (provider: string, id: string) => id === "gpt-ctx" ? ctxModel : reg.find(provider, id) };
+	// Valid override: normalized through CRUD and persisted.
+	createGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 5 } }, modelRegistry, injected);
+	assert.deepEqual(read("project", cwd).groups.deep.constraints, { testMinContext: 5 });
+	// Load with the same registry decodes/validates the persisted value.
+	const loaded = loadModelGroups(a, injected);
+	assert.equal(loaded.issues.length, 0);
+	assert.equal(loaded.configs.project.groups.deep.constraints?.testMinContext, 5);
+	// Boot validation with the same registry carries the injected descriptor's evaluation.
+	const resolved = validateModelGroups(loaded, modelRegistry, injected);
+	assert.ok(resolved[0].evaluations?.some((evaluation) => evaluation.key === "testMinContext"), "injected evaluation must be present in boot validation");
+	// Unknown keys stay opaque even under an injected registry.
+	updateGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 5, futureKey: { nested: true } } }, modelRegistry, injected);
+	assert.deepEqual(read("project", cwd).groups.deep.constraints, { testMinContext: 5, futureKey: { nested: true } });
+}));
+
+test("injected persisted values are validated on save and malformed values trigger schema-invalid load recovery", () => withTemp(({ cwd }) => {
+	const a = access(cwd);
+	const injected = createConstraintRegistry([testMinContext]);
+	const sourcePath = modelGroupsPath("project", cwd);
+	fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+	// Save-side rejection: an invalid injected value cannot be persisted.
+	assert.throws(() => saveModelGroups("project", a, { version: 2, groups: { g: { models: [], constraints: { testMinContext: -3 } } } }, injected), (error: unknown) => error instanceof ModelGroupsPersistenceError && /testMinContext must be a positive safe integer/.test(error.message));
+	// Load-side recovery: a hand-edited malformed value is schema-invalid and backed up.
+	fs.writeFileSync(sourcePath, JSON.stringify({ version: 2, groups: { g: { models: [], constraints: { testMinContext: "nope" } } } }), "utf8");
+	const loaded = loadModelGroups(a, injected);
+	assert.equal(loaded.issues.length, 1);
+	assert.equal(loaded.issues[0].kind, "schema-invalid");
+	assert.match(loaded.issues[0].message, /testMinContext must be a positive safe integer/);
+	assert.ok(fs.existsSync(`${sourcePath}.bak`), "malformed injected value must back up like any schema-invalid config");
+}));
+
+test("CRUD rejects unsupported injected overrides before any write", () => withTemp(({ cwd }) => {
+	const a = access(cwd);
+	const injected = createConstraintRegistry([testMinContext]);
+	const ctxModel = { provider: "openai", id: "gpt-ctx", input: ["text"], reasoning: false, contextWindow: 100 };
+	const reg = registry();
+	const modelRegistry: any = { ...reg, find: (provider: string, id: string) => id === "gpt-ctx" ? ctxModel : reg.find(provider, id) };
+	let writes = 0;
+	__setModelGroupsFsForTests({ writeFileSync: (_p?: unknown, _d?: unknown, ..._r: unknown[]) => { writes++; fs.writeFileSync(_p as any, _d as any, ...(_r as any)); } });
+	try {
+		assert.throws(() => createGroup("project", a, "deep", { models: [{ provider: "openai", modelId: "gpt-ctx" }], constraints: { testMinContext: 200 } }, modelRegistry, injected), /testMinContext override 200 exceeds/);
+		assert.equal(writes, 0, "rejected injected override must not write");
+	} finally {
+		__setModelGroupsFsForTests(null);
+	}
 }));
 
 test("opaque constraint values are deep-cloned on load — no aliasing between store and merged views", () => withTemp(({ cwd }) => {

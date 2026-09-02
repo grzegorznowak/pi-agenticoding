@@ -53,6 +53,8 @@ export interface ConstraintDescriptor<K extends string, Fact, Aggregate, Overrid
 	groupSatisfies(input: { aggregate: Aggregate; effective: Effective; requirement: Requirement }): ConstraintSatisfaction;
 	modelSatisfies(input: { fact: Fact; requirement: Requirement }): ConstraintSatisfaction;
 	persistence: { override: ConstraintCodec<Override> };
+	/** Optional CRUD-time cap: the store invokes it after evaluating an authored override against the group's members; throw to reject unsupported overrides before any write. */
+	assertOverrideSupported?(input: { evaluation: ConstraintEvaluation<Aggregate, Effective>; override: Override | undefined }): void;
 	requirement: ConstraintCodec<Requirement>;
 	editor: ConstraintEditorSpec<Aggregate, Effective>;
 	present: {
